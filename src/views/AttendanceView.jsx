@@ -1,0 +1,853 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from '../supabaseClient';
+import ExportButton from '../components/ExportButton';
+import * as faceapi from 'face-api.js';
+import { pipeline } from '@huggingface/transformers';
+
+const determineYoloVersion = () => {
+  const hardwareConcurrency = navigator.hardwareConcurrency ? parseInt(navigator.hardwareConcurrency, 10) : 0;
+  const deviceMemory = parseFloat(navigator.deviceMemory);
+  if (deviceMemory < 4 || hardwareConcurrency <= 4) return 'nano';
+  if (deviceMemory >= 8 && hardwareConcurrency > 4) return 'medium';
+  return 'nano';
+};
+
+const YOLO_MODEL_IDS = {
+  nano: 'Xenova/yolov8n-face',
+  medium: 'Xenova/yolov8n-face' 
+};
+
+const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile }) => {
+    const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
+    const YOLO_LOCAL_PATH = import.meta.env.VITE_YOLO_LOCAL_PATH || '/models/yolov8n-face';
+    const FACE_MATCH_THRESHOLD = 0.5;
+    const YOLO_FACE_THRESHOLD = 0.35;
+    const ATTENDANCE_TABLE = 'attendance';
+    const FACE_SCAN_INTERVAL_MS = 1800;
+    const FACE_DETECT_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.15 });
+
+    const [isLoading, setIsLoading] = useState(false); 
+    const [liveDistance, setLiveDistance] = useState(null); 
+    const [isInRange, setIsInRange] = useState(false); 
+    const [currentCoords, setCurrentCoords] = useState(null); 
+    const [isCameraReady, setIsCameraReady] = useState(false); 
+    const [cameraStatus, setCameraStatus] = useState('idle'); 
+    const [faceStatus, setFaceStatus] = useState('idle'); 
+    const [biometricStatus, setBiometricStatus] = useState('Initializing Scanner...');
+    const [clockInAt, setClockInAt] = useState('');
+    const [clockInSource, setClockInSource] = useState('none');
+    const [disableYolo, setDisableYolo] = useState(false); // Default to false to enable advanced YOLO features
+    const [currentModelVersion, setCurrentModelVersion] = useState(null);
+    const [registeredFaceSource, setRegisteredFaceSource] = useState('none');
+    const [faceOverlayBox, setFaceOverlayBox] = useState(null);
+    const [hasStoredFace, setHasStoredFace] = useState(false);
+    const [faceMatchDistance, setFaceMatchDistance] = useState(null);
+    const [faceDetectionMode, setFaceDetectionMode] = useState('idle');
+    const [isFaceVerified, setIsFaceVerified] = useState(false); // 🟩 ADD THIS MISSING STATE LINE!
+
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterSource, setFilterSource] = useState('all');
+    const [filterMode, setFilterMode] = useState('all');
+    const [filterStatus, setFilterStatus] = useState('all');
+    const [sortBy, setSortBy] = useState('name-az');
+
+    const today = new Date().toISOString().split('T')[0]; 
+    const attendanceRows = Array.isArray(attendance) ? attendance : [];
+    const todayRecord = attendanceRows.find(record => record.employee_id === userProfile.id && record.date === today);
+
+    const WORK_START_TIME = '08:00:00'; 
+    const OFFICE_LOCATION = { lat: -6.20651363, lng: 106.87604852 };
+    const ALLOWED_RADIUS_METERS = 2000; 
+
+    const webcamVideoRef = useRef(null);
+    const referenceDescriptorRef = useRef(null);
+    const faceScanTimerRef = useRef(null);
+    const faceScanBusyRef = useRef(false);
+    const yoloDetectorRef = useRef(null);
+    const yoloDetectorPromiseRef = useRef(null);
+    const autoClockInGuardRef = useRef(false);
+    const webcamStreamRef = useRef(null);
+
+    const parseStoredDescriptor = (value) => {
+        if (!value) return null;
+        let parsed = value;
+        if (typeof value === 'string') {
+            try { parsed = JSON.parse(value); } catch { return null; }
+        }
+        if (Array.isArray(parsed)) return new Float32Array(parsed);
+        if (parsed && Array.isArray(parsed.data)) return new Float32Array(parsed.data);
+        return null;
+    };
+
+    const normalizeDescriptorArray = (descriptor) => {
+        const values = Array.from(descriptor || []).map(v => Number(v)).filter(v => Number.isFinite(v));
+        if (values.length !== 128) return null;
+        return values;
+    };
+
+    const descriptorToVectorLiteral = (descriptor) => {
+        const values = normalizeDescriptorArray(descriptor);
+        if (!values) return null;
+        return `[${values.join(',')}]`;
+    };
+
+    const getRecordClockInTime = (record) => record?.clock_in || record?.created_at || '';
+
+    const normalizeBoundingBox = (box) => {
+        if (!box) return null;
+        const x = Number(box.xmin ?? box.x ?? 0);
+        const y = Number(box.ymin ?? box.y ?? 0);
+        const width = Number(box.width ?? ((box.xmax ?? 0) - (box.xmin ?? 0)));
+        const height = Number(box.height ?? ((box.ymax ?? 0) - (box.ymin ?? 0)));
+        if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+        return { x, y, width, height };
+    };
+
+    const detectWithFaceApi = async (canvasOrImage) => {
+        const detections = await faceapi.detectAllFaces(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptors();
+        if (detections.length > 0) {
+            return detections.sort((a, b) => (b.detection.score || 0) - (a.detection.score || 0))[0];
+        }
+        return faceapi.detectSingleFace(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+    };
+
+    const detectFaceFromImage = async (imageEl) => {
+        if (!imageEl) return null;
+        const isVideo = imageEl.tagName === 'VIDEO';
+        const ready = isVideo ? imageEl.readyState >= 2 : imageEl.complete;
+        const width = isVideo ? imageEl.videoWidth : imageEl.naturalWidth;
+        const height = isVideo ? imageEl.videoHeight : imageEl.naturalHeight;
+
+        if (!ready || width === 0 || height === 0) return null;
+
+        const sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = width;
+        sourceCanvas.height = height;
+        const sourceContext = sourceCanvas.getContext('2d');
+        if (!sourceContext) return null;
+        sourceContext.drawImage(imageEl, 0, 0, width, height);
+
+        if (!disableYolo) {
+            try {
+                const detector = await ensureYoloFaceDetector();
+                const detections = await detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD });
+                const bestDetection = detections.sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+
+                if (bestDetection?.box) {
+                    const cropCanvas = cropFaceCanvas(sourceCanvas, bestDetection.box);
+                    if (cropCanvas) {
+                        const croppedDetection = await detectWithFaceApi(cropCanvas);
+                        if (croppedDetection) {
+                            return { ...croppedDetection, source: 'yolo', box: normalizeBoundingBox(bestDetection.box) };
+                        }
+                    }
+                }
+            } catch (error) {
+                console.info('YOLO fallback to face-api full frame.');
+            }
+        }
+
+        const fallbackDetection = await detectWithFaceApi(sourceCanvas);
+        if (!fallbackDetection) return null;
+        return { ...fallbackDetection, source: 'faceapi', box: normalizeBoundingBox(fallbackDetection.detection?.box || fallbackDetection.box) };
+    };
+
+    const cropFaceCanvas = (sourceCanvas, box) => {
+        if (!sourceCanvas || !box) return null;
+        const x = Math.max(0, Math.floor(box.xmin ?? box.x ?? 0));
+        const y = Math.max(0, Math.floor(box.ymin ?? box.y ?? 0));
+        const width = Math.max(1, Math.floor(box.width ?? ((box.xmax ?? 0) - (box.xmin ?? 0))));
+        const height = Math.max(1, Math.floor(box.height ?? ((box.ymax ?? 0) - (box.ymin ?? 0))));
+        const safeWidth = Math.min(width, sourceCanvas.width - x);
+        const safeHeight = Math.min(height, sourceCanvas.height - y);
+
+        if (safeWidth <= 1 || safeHeight <= 1) return null;
+
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = safeWidth;
+        cropCanvas.height = safeHeight;
+        const cropContext = cropCanvas.getContext('2d');
+        if (!cropContext) return null;
+        cropContext.drawImage(sourceCanvas, x, y, safeWidth, safeHeight, 0, 0, safeWidth, safeHeight);
+        return cropCanvas;
+    };
+
+    const ensureYoloFaceDetector = async () => {
+        if (yoloDetectorRef.current) return yoloDetectorRef.current;
+        if (!yoloDetectorPromiseRef.current) {
+            const selectedModelVersion = determineYoloVersion();
+            const modelId = selectedModelVersion === 'nano' ? YOLO_MODEL_IDS.nano : YOLO_MODEL_IDS.medium;
+
+            yoloDetectorPromiseRef.current = pipeline('object-detection', modelId)
+                .then(detector => {
+                    yoloDetectorRef.current = detector;
+                    setCurrentModelVersion(selectedModelVersion);
+                    return detector;
+                })
+                .catch(async (err) => {
+                    const localDetector = await pipeline('object-detection', YOLO_LOCAL_PATH);
+                    yoloDetectorRef.current = localDetector;
+                    return localDetector;
+                });
+        }
+        return yoloDetectorPromiseRef.current;
+    };
+
+    // HISTORY SUMMARY CALCULATIONS
+    const myHistory = attendanceRows.filter(a => a.employee_id === userProfile.id);
+    const totalDays = myHistory.length;
+    const onTimeDays = myHistory.filter(a => a.status === 'Present').length;
+    const lateDays = myHistory.filter(a => a.status === 'Late').length;
+    const punctualityScore = totalDays > 0 ? ((onTimeDays / totalDays) * 100).toFixed(0) : 0;
+
+    const activeEmployees = allUsers.filter(u => u.role === 'employee');
+    const clockedInTodayCount = activeEmployees.filter(emp => 
+        attendanceRows.some(a => a.employee_id === emp.id && a.date === today)
+    ).length;
+    const wfhAssignmentCount = activeEmployees.filter(emp => emp.work_mode === 'WFH').length;
+    const wfoAssignmentCount = activeEmployees.filter(emp => (emp.work_mode || 'WFO') === 'WFO').length;
+
+    const uniqueSources = Array.from(
+        new Set(
+            allUsers
+                .filter(u => u.role === 'employee')
+                .map(u => u.source || u.university || 'President University')
+        )
+    );
+
+    const processedInterns = allUsers
+        .filter(u => u.role === 'employee')
+        .filter(emp => {
+            const matchesSearch = emp.name.toLowerCase().includes(searchTerm.toLowerCase());
+            const empSource = emp.source || emp.university || 'President University';
+            const matchesSource = filterSource === 'all' || empSource === filterSource;
+            const empMode = emp.work_mode || 'WFO';
+            const matchesMode = filterMode === 'all' || empMode === filterMode;
+            
+            const empTodayRecord = attendanceRows.find(a => a.employee_id === emp.id && a.date === today);
+            let matchesStatus = true;
+            if (filterStatus === 'clocked_in') matchesStatus = !!empTodayRecord;
+            if (filterStatus === 'not_clocked_in') matchesStatus = !empTodayRecord;
+
+            return matchesSearch && matchesSource && matchesMode && matchesStatus;
+        })
+        .sort((a, b) => {
+            if (sortBy === 'name-az') return a.name.localeCompare(b.name);
+            if (sortBy === 'name-za') return b.name.localeCompare(a.name);
+            if (sortBy === 'status-active') {
+                const aClocked = attendanceRows.some(att => att.employee_id === a.id && att.date === today);
+                const bClocked = attendanceRows.some(att => att.employee_id === b.id && att.date === today);
+                return bClocked - aClocked;
+            }
+            return 0;
+        });
+
+    const exportDataFiltered = processedInterns.flatMap(emp => 
+        attendanceRows.filter(a => a.employee_id === emp.id).map(record => ({
+            Date: record.date,
+            Employee: emp.name,
+            Institution: emp.source || emp.university || 'President University',
+            "Assigned Mode": emp.work_mode || 'WFO',
+            Status: record.status,
+            "Check In": getRecordClockInTime(record),
+            "Check Out": record.clock_out
+        }))
+    );
+
+    // ==========================================
+    // GEOLOCATION STREAM LOGIC
+    // ==========================================
+    useEffect(() => {
+        if (!navigator.geolocation || !userProfile) return;
+
+        const watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                try {
+                    const { latitude, longitude } = position.coords;
+                    setCurrentCoords({ latitude, longitude }); 
+
+                    const earthRadius = 6371000; 
+                    const dLat = (OFFICE_LOCATION.lat - latitude) * Math.PI / 180;
+                    const dLon = (OFFICE_LOCATION.lng - longitude) * Math.PI / 180;
+                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(latitude * Math.PI / 180) * Math.cos(OFFICE_LOCATION.lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                    const dist = earthRadius * c;
+                    
+                    setLiveDistance(dist);
+                    
+                    if (userProfile.role === 'supervisor') {
+                        setIsInRange(true); 
+                    } else {
+                        const assignedMode = userProfile.work_mode || 'WFO';
+                        if (assignedMode === 'WFH') {
+                            setIsInRange(true); 
+                        } else {
+                            setIsInRange(dist <= ALLOWED_RADIUS_METERS); 
+                        }
+                    }
+                } catch (e) {
+                    console.info(e);
+                }
+            },
+            (err) => {
+                setCurrentCoords(null);
+                setLiveDistance(null);
+                setIsInRange(false);
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+
+        return () => navigator.geolocation.clearWatch(watchId);
+    }, [userProfile]);
+
+    // ==========================================
+    // VIDEO LIFE CYCLE CONTROLLER
+    // ==========================================
+    useEffect(() => {
+        if (!userProfile || userProfile.role === 'supervisor') return;
+        let isCancelled = false;
+        let stream = null;
+
+        const startWebcam = async () => {
+            setCameraStatus('loading');
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                if (isCancelled) {
+                    stream.getTracks().forEach(track => track.stop());
+                    return;
+                }
+                webcamStreamRef.current = stream;
+                if (webcamVideoRef.current) {
+                    webcamVideoRef.current.srcObject = stream;
+                }
+                setIsCameraReady(true);
+                setCameraStatus('ready');
+            } catch (error) {
+                setCameraStatus('error');
+            }
+        };
+
+        startWebcam();
+
+        return () => {
+            isCancelled = true;
+            if (stream) stream.getTracks().forEach(track => track.stop());
+        };
+    }, [userProfile]);
+
+    // ==========================================
+    // NEURAL MODEL ENGINE WEIGHT LOADER
+    // ==========================================
+    useEffect(() => {
+        if (!userProfile || userProfile.role === 'supervisor') return;
+
+        async function loadModels() {
+            setFaceStatus('loading-models');
+            setBiometricStatus('Loading network weights...');
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+                faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
+                faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
+            ]);
+            const savedDescriptor = parseStoredDescriptor(userProfile.face_descriptor);
+            if (savedDescriptor) {
+                referenceDescriptorRef.current = savedDescriptor;
+                setHasStoredFace(true);
+                setFaceStatus('scanning');
+                setBiometricStatus('Align face with camera');
+            } else {
+                setFaceStatus('error');
+                setBiometricStatus('Missing Face Profile Data');
+            }
+        }
+        loadModels();
+    }, [userProfile, disableYolo]);
+
+    // ==========================================
+    // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
+    // ==========================================
+    useEffect(() => {
+        if (!isCameraReady || faceStatus !== 'scanning' || todayRecord) return;
+
+        const timer = setInterval(async () => {
+            if (faceScanBusyRef.current || !webcamVideoRef.current) return;
+            faceScanBusyRef.current = true;
+
+            try {
+                // 🟩 CORRECTED: Calls your deep yolo/faceapi abstraction layer wrapper directly
+                const liveDet = await detectFaceFromImage(webcamVideoRef.current);
+
+                if (liveDet) {
+                    // Update bounding box positions for visual injection
+                    if (liveDet.box) {
+                        setFaceOverlayBox({
+                            ...liveDet.box,
+                            imageWidth: webcamVideoRef.current.videoWidth,
+                            imageHeight: webcamVideoRef.current.videoHeight,
+                            source: liveDet.source
+                        });
+                    }
+
+                    if (referenceDescriptorRef.current) {
+                        const dist = faceapi.euclideanDistance(liveDet.descriptor, referenceDescriptorRef.current);
+                        const isMatch = dist <= FACE_MATCH_THRESHOLD;
+
+                        setFaceMatchDistance(dist);
+                        setFaceStatus(isMatch ? 'matched' : 'mismatch');
+                        setFaceDetectionMode(liveDet.source || 'faceapi');
+
+                        if (isMatch) {
+                            if (userProfile.work_mode === 'WFO' && !isInRange) {
+                                setBiometricStatus('ACCESS DENIED: Outside office range!');
+                            } else if (!autoClockInGuardRef.current) {
+                                autoClockInGuardRef.current = true;
+                                setBiometricStatus('Match verified! Logging attendance...');
+                                clearInterval(timer);
+                                await handleClockIn('face-match');
+                            }
+                        } else {
+                            setBiometricStatus('Wajah tidak dikenali');
+                        }
+                    }
+                } else {
+                    setFaceOverlayBox(null);
+                    setFaceMatchDistance(null);
+                    setBiometricStatus('Scanning for frontal matrix...');
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            faceScanBusyRef.current = false;
+        }, 1200);
+
+        return () => {
+            clearInterval(timer);
+            setFaceOverlayBox(null);
+        };
+    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo]);
+
+    // ==========================================
+    // MATHEMATICAL MATRIX POSITION CALCULATOR
+    // ==========================================
+    const getFaceOverlayStyle = () => {
+        if (!faceOverlayBox || !webcamVideoRef.current) return null;
+
+        const videoEl = webcamVideoRef.current;
+        const naturalWidth = videoEl.videoWidth || faceOverlayBox.imageWidth;
+        const naturalHeight = videoEl.videoHeight || faceOverlayBox.imageHeight;
+        const viewportWidth = videoEl.clientWidth || 0;
+        const viewportHeight = videoEl.clientHeight || 0;
+
+        if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) return null;
+
+        const naturalRatio = naturalWidth / naturalHeight;
+        const viewportRatio = viewportWidth / viewportHeight;
+
+        let displayedWidth = viewportWidth;
+        let displayedHeight = viewportHeight;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (viewportRatio > naturalRatio) {
+            displayedHeight = viewportHeight;
+            displayedWidth = viewportHeight * naturalRatio;
+            offsetX = (viewportWidth - displayedWidth) / 2;
+        } else {
+            displayedWidth = viewportWidth;
+            displayedHeight = viewportWidth / naturalRatio;
+            offsetY = (viewportHeight - displayedHeight) / 2;
+        }
+
+        const scaleX = displayedWidth / naturalWidth;
+        const scaleY = displayedHeight / naturalHeight;
+
+        const boxWidth = faceOverlayBox.width * scaleX;
+        const boxHeight = faceOverlayBox.height * scaleY;
+        
+        // 🟩 MIRROR STYLING CORRECTION: Computes position relative to flipped canvas limits
+        const standardLeft = offsetX + (faceOverlayBox.x * scaleX);
+        const mirroredLeft = viewportWidth - standardLeft - boxWidth;
+
+        return {
+            left: `${mirroredLeft}px`,
+            top: `${offsetY + (faceOverlayBox.y * scaleY)}px`,
+            width: `${boxWidth}px`,
+            height: `${boxHeight}px`,
+        };
+    };
+
+    const handleClockIn = async (source = 'manual') => {
+        if (userProfile.role !== 'supervisor' && !currentCoords) {
+            alert("Waiting for secure GPS coordinates...");
+            return false;
+        }
+        if (userProfile.role !== 'supervisor' && !isInRange) {
+            alert(`Geofence rejection exception: Outside boundary.`);
+            return false;
+        }
+
+        setIsLoading(true);
+        try {
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-GB', { hour12: false });
+            const status = time > WORK_START_TIME ? 'Late' : 'Present';
+
+            const { error } = await supabase.from(ATTENDANCE_TABLE).insert([{ 
+                employee_id: userProfile.id,
+                date: today,
+                status,
+                clock_in: time,
+                latitude: currentCoords ? currentCoords.latitude : null,
+                longitude: currentCoords ? currentCoords.longitude : null,
+            }]);
+
+            if (error) {
+                alert('Database submission error: ' + error.message);
+                return false;
+            }
+
+            setClockInAt(time);
+            setClockInSource(source);
+            await fetchAttendance();
+            return true;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleClockOut = async () => {
+        setIsLoading(true); 
+        const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        await supabase.from(ATTENDANCE_TABLE).update({ clock_out: time }).eq('id', todayRecord.id);
+        await fetchAttendance(); 
+        setIsLoading(false); 
+    };
+
+    const handleToggleWorkMode = async (employeeId, currentMode) => {
+        const nextMode = currentMode === 'WFH' ? 'WFO' : 'WFH';
+        await supabase.from('profiles').update({ work_mode: nextMode }).eq('id', employeeId);
+        window.location.reload(); 
+    };
+
+  const openMap = (lat, lng) => {
+        if (!lat || !lng) return;
+        // 🟩 FIX: Standardized the Google Maps coordinate query URL
+        window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+    };
+
+   const handleEnrollFaceFromStream = async () => {
+        if (!webcamVideoRef.current) return;
+        
+        const det = await detectFaceFromImage(webcamVideoRef.current);
+        
+        if (det) {
+            // 🟩 FIX: Stringify the array before updating the profile
+            const stringifiedDescriptor = JSON.stringify(Array.from(det.descriptor));
+            
+            const { error } = await supabase
+                .from('profiles')
+                .update({ face_descriptor: stringifiedDescriptor })
+                .eq('id', userProfile.id);
+                
+            if (error) {
+                alert('Database update failed: ' + error.message);
+            } else {
+                alert('Face matrix enrolled successfully!');
+                fetchProfile?.();
+            }
+        } else {
+            alert('Failed to detect face. Please align properly with the camera.');
+        }
+    };
+
+    const handleResetEnrolledFace = async () => {
+        await supabase.from('profiles').update({ face_descriptor: null }).eq('id', userProfile.id);
+        alert('Face cleared.');
+        fetchProfile?.();
+    };
+
+    const statusBadge = (status, clockOut, date) => {
+        if (!clockOut && date !== today) {
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">Incomplete</span>;
+        }
+        if (!clockOut) {
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse">In Progress</span>;
+        }
+        const styles = status === 'Present' 
+            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${styles}`}>{status}</span>;
+    };
+
+    return (
+        <div className="p-8 max-w-7xl mx-auto space-y-6 text-slate-100">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight text-white">
+                        {userProfile.role === 'supervisor' ? 'Intern Tracking Portal' : 'My Attendance Logs'}
+                    </h1>
+                    <p className="text-sm text-slate-400 mt-1">
+                        {userProfile.role === 'supervisor' ? 'Real-time operational dashboard for intern monitoring and compliance logs.' : 'Log your location token details and inspect verification metrics.'}
+                    </p>
+                </div>
+                {userProfile.role === 'supervisor' && (
+                    <ExportButton data={exportDataFiltered} filename="Intern_Attendance_Roster" label="Export Clean Sheet" />
+                )}
+            </div>
+
+            {userProfile.role === 'supervisor' ? (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Registered Interns</div>
+                            <div className="text-4xl font-black text-white mt-2 flex items-baseline gap-2">
+                                {activeEmployees.length} <span className="text-xs font-bold text-slate-500 uppercase font-sans">Officers</span>
+                            </div>
+                        </div>
+                        <div className="bg-gradient-to-br from-blue-600/20 to-indigo-600/10 border border-blue-500/30 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <div className="text-xs font-bold text-blue-400 uppercase tracking-widest">Active Clocked-In Today</div>
+                            <div className="text-4xl font-black text-blue-400 mt-2 flex items-baseline gap-2">
+                                {clockedInTodayCount} <span className="text-xs font-bold text-blue-500 uppercase font-sans animate-pulse">Live Now</span>
+                            </div>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col justify-center">
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Duty Mode Distribution</div>
+                            <div className="flex gap-2">
+                                <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏢 {wfoAssignmentCount} WFO</span>
+                                <span className="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏠 {wfhAssignmentCount} WFH</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 shadow-inner">
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Search Intern</label>
+                            <input 
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Type search term..."
+                                className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white placeholder-slate-500 font-medium"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Origin Institution</label>
+                            <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">All Campuses</option>
+                                {uniqueSources.map(src => <option key={src} value={src}>{src}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Assigned Mode</label>
+                            <select value={filterMode} onChange={(e) => setFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">All Modes</option>
+                                <option value="WFO">🏢 Office (WFO)</option>
+                                <option value="WFH">🏠 Remote (WFH)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Roster State</label>
+                            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">All Statuses</option>
+                                <option value="clocked_in">Active (Clocked In)</option>
+                                <option value="not_clocked_in">Inactive (Not In)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Sort Configuration</label>
+                            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="name-az">Name (A → Z)</option>
+                                <option value="name-za">Name (Z → A)</option>
+                                <option value="status-active">Clocked In First</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/20 rounded-2xl border border-slate-800 shadow-2xl overflow-hidden backdrop-blur-sm">
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead className="bg-slate-800/60 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                                    <tr>
+                                        <th className="p-4">Intern Fullname</th>
+                                        <th className="p-4">Institution / Origin</th>
+                                        <th className="p-4">Operational Duty Mode</th>
+                                        <th className="p-4">Today's Timestamp Status</th>
+                                        <th className="p-4 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/60 text-xs font-semibold text-slate-200">
+                                    {processedInterns.map(emp => {
+                                        const empToday = attendance.find(a => a.employee_id === emp.id && a.date === today);
+                                        return (
+                                            <tr key={emp.id} className="hover:bg-slate-800/30 transition-all duration-150">
+                                                <td className="p-4 font-bold text-white">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center font-black text-white text-xs border border-blue-400/20">
+                                                            {emp.name?.charAt(0).toUpperCase()}
+                                                        </div>
+                                                        <span>{emp.name}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4">
+                                                    <span className="bg-slate-900/80 text-slate-400 border border-slate-700/60 px-2.5 py-1 rounded-lg text-[10px] uppercase font-mono tracking-wide">
+                                                        {emp.source || emp.university || 'President University'}
+                                                    </span>
+                                                </td>
+                                                <td className="p-4">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleToggleWorkMode(emp.id, emp.work_mode || 'WFO')}
+                                                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl font-bold border text-[10px] uppercase tracking-wider ${
+                                                            emp.work_mode === 'WFH' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                                        }`}
+                                                    >
+                                                        {emp.work_mode === 'WFH' ? '🏠 WFH (Remote)' : '🏢 WFO (On-Site)'}
+                                                    </button>
+                                                </td>
+                                                <td className="p-4">
+                                                    {empToday ? (
+                                                        <div className="flex flex-col items-start gap-1">
+                                                            {statusBadge(empToday.status, empToday.clock_out, empToday.date)}
+                                                            <span className="text-[10px] font-bold text-slate-500 font-mono">IN: {getRecordClockInTime(empToday)}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-900 text-slate-600 border border-slate-800">Not Clocked In</span>
+                                                    )}
+                                                </td>
+                                                <td className="p-4 text-right">
+                                                    {empToday?.latitude && (
+                                                        <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-slate-700 rounded-xl bg-slate-900/60 text-slate-300 hover:text-white hover:bg-slate-800 shadow-md transition">
+                                                            🗺️ View Map Location
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-bold text-slate-400 text-xs tracking-wider">
+                        <div className="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-2xl p-5 text-white shadow-xl">
+                            <p className="text-blue-200 text-xs font-black uppercase tracking-widest mb-1">My Personal Punctuality</p>
+                            <h3 className="text-4xl font-black tracking-tight">{punctualityScore}%</h3>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <p className="mb-1 text-slate-400">Total Account Present Days</p>
+                            <h3 className="text-4xl font-black text-white mt-1">{totalDays} <span className="text-xs font-bold text-slate-500 uppercase">Days</span></h3>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <p className="mb-1 text-slate-400">Late Overdue Arrivals</p>
+                            <h3 className={`text-4xl font-black ${lateDays > 0 ? 'text-amber-400' : 'text-white'} mt-1`}>{lateDays} <span className="text-xs font-bold text-slate-500 uppercase">Days</span></h3>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/40 p-5 rounded-2xl border border-slate-700/50 shadow-xl flex flex-col md:flex-row justify-between items-center gap-4 backdrop-blur-md">
+                         <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${isInRange ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse'}`}>
+                                {(userProfile.work_mode || 'WFO') === 'WFO' ? '🏢' : '🏠'}
+                            </div>
+                            <div>
+                                <h2 className="text-base font-bold text-white">Assigned Duty Profile: {(userProfile.work_mode || 'WFO') === 'WFO' ? 'Office Boundary (WFO)' : 'Remote Home (WFH)'}</h2>
+                                <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {(userProfile.work_mode || 'WFO') === 'WFO' 
+                                        ? (liveDistance !== null ? `📍 Coordinates tracked: ${liveDistance.toFixed(0)} meters from base gates` : '🔍 Capturing GPS tracking lock...')
+                                        : '🔒 Remote geofence bypass verified'}
+                                </p>
+                            </div>
+                         </div>
+                         
+                         <div className="flex gap-3 w-full md:w-auto">
+                            {!todayRecord && (
+                                <button 
+                                    type="button"
+                                    onClick={() => handleClockIn('manual')} 
+                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified} 
+                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified ? 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
+                                >
+                                    {isLoading ? 'Processing...' : (isFaceVerified ? 'Clock In Shift' : 'Verify Biometrics Below')}
+                                </button>
+                            )}
+                            {todayRecord && !todayRecord.clock_out && (
+                                <button type="button" onClick={handleClockOut} disabled={isLoading} className="w-full md:w-auto px-8 py-3 rounded-xl font-black text-white bg-red-600 hover:bg-red-500 transition-all shadow-md hover:-translate-y-0.5 uppercase text-xs tracking-widest">
+                                    Clock Out Shift
+                                </button>
+                            )}
+                            {todayRecord && todayRecord.clock_out && (
+                                <div className="w-full md:w-auto px-8 py-3 bg-slate-900 border border-slate-800 text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">✓ Shift Completed</div>
+                            )}
+                         </div>
+                    </div>
+
+                    <div className="bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
+                        <div className="px-5 py-4 border-b border-slate-700/60 bg-slate-800/20">
+                            <h3 className="text-sm font-bold text-white">Live Verification Scanner Gate</h3>
+                            <p className="text-[11px] text-slate-400 mt-0.5">Maintain visibility to automate shift logging parameters.</p>
+                        </div>
+                        <div className="p-5 flex flex-col items-center">
+                            {/* LIVE VIDEO FRAME HOUSING WITH RESTORED OVERLAY MAPPERS */}
+                            <div className="relative w-full max-w-md aspect-video bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden group shadow-2xl">
+                                <video
+                                    ref={webcamVideoRef}
+                                    autoPlay
+                                    playsInline
+                                    muted
+                                    className="absolute inset-0 w-full h-full object-cover"
+                                    style={{ transform: 'scaleX(-1)' }}
+                                />
+                                
+                                {/* 🟩 RESTORED: Pure geometric YOLO-style HTML wireframe bounding box */}
+                                {faceOverlayBox && isCameraReady && (
+                                    <div
+                                        className={`absolute border-2 rounded-xl z-20 pointer-events-none transition-all duration-75 ${
+                                            faceStatus === 'matched' ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                                        }`}
+                                        style={getFaceOverlayStyle() || { display: 'none' }}
+                                    >
+                                        <div className={`absolute -top-6 left-0 text-[9px] font-black tracking-widest px-2 py-0.5 rounded-md text-white font-mono uppercase shadow-md ${
+                                            faceStatus === 'matched' ? 'bg-emerald-500' : 'bg-blue-500'
+                                        }`}>
+                                            {faceOverlayBox.source === 'yolo' ? '⚡ YOLOv8 FACE' : '🔍 FACE-API'}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-blue-500/30 backdrop-blur-md text-[10px] font-mono font-bold text-blue-400 px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap z-30 animate-pulse shadow-2xl">
+                                    {biometricStatus}
+                                </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
+                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">Enroll Facial Matrix</button>
+                                <button type="button" onClick={handleResetEnrolledFace} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all">Reset Matrix</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-inner">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {myHistory.slice(0, 9).map(record => (
+                                <div key={record.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col justify-between shadow-sm">
+                                    <div className="flex items-center justify-between mb-1.5 border-b border-slate-800 pb-1.5">
+                                        <span className="text-[11px] font-bold text-white font-mono">{record.date}</span>
+                                        <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">LOG TOKEN</span>
+                                    </div>
+                                    <div className="space-y-0.5 text-[11px] text-slate-400 font-mono">
+                                        <div>IN TIME : <span className="text-white font-bold">{getRecordClockInTime(record)}</span></div>
+                                        <div>OUT TIME: <span className="text-white font-bold">{record.clock_out || '--:--:--'}</span></div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
+
+export default AttendanceView;
