@@ -30,7 +30,7 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
         try {
             setUploading(true);
 
-            const rateLimit = checkRateLimit('settings-avatar-upload', 30000);
+            const rateLimit = await checkRateLimit('avatar-upload', { maxRequests: 5, windowSeconds: 30 });
             if (!rateLimit.allowed) {
                 alert(formatRateLimitMessage(rateLimit.retryAfterMs));
                 return;
@@ -95,7 +95,7 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
             return;
         }
 
-        const rateLimit = checkRateLimit('settings-password-change', 60000);
+        const rateLimit = await checkRateLimit('password-change', { maxRequests: 5, windowSeconds: 60 });
         if (!rateLimit.allowed) {
             alert(formatRateLimitMessage(rateLimit.retryAfterMs));
             return;

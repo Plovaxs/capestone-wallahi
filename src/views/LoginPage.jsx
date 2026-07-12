@@ -44,10 +44,7 @@ export default function LoginPage() {
   const isEyeClosedRef = useRef(false);
   const isRedirectingRef = useRef(false); 
 
-  const [allProfiles, setAllProfiles] = useState([]);
   const [modelsLoaded, setModelsLoaded] = useState(false); 
-  const profilesRef = useRef([]);
-  const [blinkCount, setBlinkCount] = useState(0);
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -67,35 +64,6 @@ export default function LoginPage() {
     }
     loadNeuralModels();
   }, []);
-
-  useEffect(() => {
-    async function fetchProfiles() {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, name, role, initials, face_descriptor')
-        .not('face_descriptor', 'is', null);
-
-      if (error) return;
-
-      const formatted = data.map(p => {
-        let parsedDescriptor = p.face_descriptor;
-        if (typeof parsedDescriptor === 'string') {
-           try { parsedDescriptor = JSON.parse(parsedDescriptor); } catch { parsedDescriptor = []; }
-        }
-        return {
-          ...p,
-          descriptor: new Float32Array(parsedDescriptor)
-        };
-      });
-
-      setAllProfiles(formatted);
-      profilesRef.current = formatted;
-    }
-
-    if (modelsLoaded) {
-      fetchProfiles();
-    }
-  }, [authMode, modelsLoaded]);
 
   useEffect(() => {
     let localStream = null;
@@ -199,32 +167,32 @@ export default function LoginPage() {
   }, [allProfiles, authMode, modelsLoaded]);
 
   const executeBiometricLogin = async (liveDescriptor) => {
-    let bestMatch = null;
-    
-    // 🟩 FIX 1: TIGHTENED EUCLIDEAN THRESHOLD
-    // 0.42 guarantees strict 1-to-1 matches and kills false positives
-    let lowestDistance = 0.42; 
+       isRedirectingRef.current = true;
+   setBiometricStatus('Verifying with server...');
 
-    if (profilesRef.current.length === 0) return;
+   const { data, error } = await supabase.functions.invoke('biometric-login', {
+     body: { descriptor: Array.from(liveDescriptor) },
+   });
 
-    for (const profile of profilesRef.current) {
-      if (!profile.descriptor) continue;
-      const dist = faceapi.euclideanDistance(liveDescriptor, profile.descriptor);
-      
-      if (dist < lowestDistance) {
-        lowestDistance = dist;
-        bestMatch = profile;
-      }
-    }
+   if (error || !data?.token_hash) {
+     isRedirectingRef.current = false;
+     setBiometricStatus('Unknown face');
+     setError('Wajah tidak dikenali, atau terlalu banyak percobaan.');
+     return;
+   }
 
-    if (bestMatch) {
-      isRedirectingRef.current = true; 
-      setBiometricStatus('Face matched. Continue with password sign-in.');
-      setMessage(`Face match found for ${bestMatch.name}.`);
-    } else {
-      setBiometricStatus('Unknown face');
-      setError('Wajah tidak dikenali dalam records.');
-    }
+   // Exchange the server-issued token for a real, verified session.
+   const { error: verifyError } = await supabase.auth.verifyOtp({
+     token_hash: data.token_hash,
+     type: 'magiclink',
+   });
+
+   if (verifyError) {
+     isRedirectingRef.current = false;
+     setError('Session verification failed. Please try again.');
+     return;
+   }
+   // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
   };
 
   const handleSubmit = async (e) => {

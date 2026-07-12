@@ -104,21 +104,12 @@ const handleCreateThread = async () => {
 
         setSubmittingReplyId(postId);
         
-        // Assembles a customized node index tracking item payload mapping
-        const nextReplyObject = {
-            id: `reply-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-            author_id: userProfile.id,
-            message: text.trim(),
-            timestamp: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-        };
-
         // Combines existing historical loops alongside your new comment element trace
         const updatedRepliesArray = [...currentReplies, nextReplyObject];
 
         const { error } = await supabase
-            .from('contributions')
-            .update({ replies: updatedRepliesArray })
-            .eq('id', postId);
+         .from('contribution_replies')
+         .insert({ post_id: postId, author_id: userProfile.id, message: text.trim() });
 
         if (error) {
             alert("Failed to submit reply: " + error.message);

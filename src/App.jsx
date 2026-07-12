@@ -99,8 +99,19 @@ export default function App() {
 
   const fetchContributions = async () => {
     const { data, error } = await supabase.from('contributions').select('*').order('date', { ascending: false });
-    if (error) console.error("fetchContributions DB Error:", error.message);
-    setContributions(data || []);
+   if (error) { console.error("fetchContributions DB Error:", error.message); return; }
+
+   const { data: replies, error: repliesError } = await supabase
+     .from('contribution_replies')
+     .select('id, post_id, author_id, message, created_at')
+     .order('created_at', { ascending: true });
+   if (repliesError) console.error("fetchReplies DB Error:", repliesError.message);
+
+   const merged = (data || []).map(post => ({
+     ...post,
+     replies: (replies || []).filter(r => r.post_id === post.id),
+   }));
+   setContributions(merged);
   };
 
   // 🟩 ROBUST FIX: Corrected table name to 'performance_evaluations'
@@ -169,31 +180,20 @@ export default function App() {
     ]);
   };
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) fetchProfile(session.user.id);
-    });
+   useEffect(() => {
+   supabase.auth.getSession().then(({ data: { session } }) => {
+     setSession(session);
+     if (session?.user) fetchProfile(session.user.id);
+   });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
-      
-      if (event === 'SIGNED_OUT') {
-        setUserProfile(null);
-        return;
-      }
+   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+     setSession(session);
+     if (session?.user) fetchProfile(session.user.id);
+     else setUserProfile(null);
+   });
 
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setUserProfile(null);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
+   return () => subscription.unsubscribe();
+ }, []);
 
   useEffect(() => {
     if (userProfile) loadAllAppData(userProfile);
