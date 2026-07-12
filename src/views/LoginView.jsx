@@ -184,17 +184,7 @@ const LoginView = () => {
       if (bestMatch) {
         setBiometricStatus('Authenticated! Redirecting...');
         setMessage(`Welcome, ${bestMatch.email}`);
-
-        const biometricAuth = {
-          user_id: bestMatch.user_id,
-          email: bestMatch.email,
-          role: bestMatch.role || 'employee',
-          isBiometricAuthenticated: true,
-          timestamp: Date.now()
-        };
-
-        localStorage.setItem('biometric_auth', JSON.stringify(biometricAuth));
-        window.dispatchEvent(new CustomEvent('biometric_login_success', { detail: biometricAuth }));
+        setMessage(`Face match found for ${bestMatch.email}. Complete password sign-in to open the portal.`);
 
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
@@ -281,6 +271,7 @@ const LoginView = () => {
 
       setBiometricStatus('Registrasi Berhasil!');
       toast.success('🔥 Akun + Wajah berhasil terdaftar!');
+      setMessage('Face registration saved. Use your password to sign in.');
       setIsRegisterMode(false); // Kembali ke mode login
     } else {
       // =======================

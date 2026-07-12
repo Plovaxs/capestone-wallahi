@@ -1,9 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-// Initialize Gemini
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const genAI = API_KEY ? new GoogleGenerativeAI(API_KEY) : null;
 
 const ChatBot = ({ userProfile, tasks = [] }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -41,10 +36,6 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
 
     const handleSend = async () => {
         if (!input.trim()) return;
-        if (!genAI) {
-            setMessages(prev => [...prev, { role: 'model', text: "Error: API Key missing." }]);
-            return;
-        }
 
         const userMessage = { role: 'user', text: input };
         setMessages(prev => [...prev, userMessage]);
@@ -76,18 +67,22 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
                 3. Be helpful, proactive, and professional.
             `;
 
-            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-            
-            const chat = model.startChat({
-                history: [
-                    { role: "user", parts: [{ text: systemPrompt }] },
-                    { role: "model", parts: [{ text: "Understood. I will help with specific tasks or provide general customs-related suggestions if needed." }] },
-                ],
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    systemPrompt,
+                    input,
+                    userId: userProfile?.id || null,
+                }),
             });
 
-            const result = await chat.sendMessage(input);
-            const response = await result.response;
-            const text = response.text();
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload?.error || 'Chat request failed.');
+            }
+
+            const text = payload?.text || 'No response returned.';
 
             setMessages(prev => [...prev, { role: 'model', text: text }]);
 

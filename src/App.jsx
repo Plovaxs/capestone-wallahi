@@ -179,33 +179,19 @@ export default function App() {
       setSession(session);
       
       if (event === 'SIGNED_OUT') {
-        localStorage.removeItem('c_space_user_id');
         setUserProfile(null);
-        console.log("🎯 App.jsx: Clean biometric state teardown completed.");
         return;
       }
 
       if (session?.user) {
         fetchProfile(session.user.id);
       } else {
-        const currentUid = localStorage.getItem('c_space_user_id');
-        if (currentUid) fetchProfile(currentUid);
-        else setUserProfile(null);
+        setUserProfile(null);
       }
     });
 
-    const handleBiometricSuccess = async (e) => {
-      const { user_id } = e.detail;
-      setSession({ user: { id: user_id } });
-      await fetchProfile(user_id);
-      toast.success('Login Biometrik Sukses, Wir! 🦅');
-    };
-
-    window.addEventListener('biometric_login_success', handleBiometricSuccess);
-
     return () => {
       subscription.unsubscribe();
-      window.removeEventListener('biometric_login_success', handleBiometricSuccess);
     };
   }, []);
 
@@ -214,13 +200,12 @@ export default function App() {
   }, [userProfile]);
 
   const handleLogout = async () => {
-    localStorage.removeItem('c_space_user_id');
     await supabase.auth.signOut();
     setUserProfile(null);
     setSession(null);
   };
 
-  if (!session && !localStorage.getItem('c_space_user_id')) {
+  if (!session) {
     return (
       <>
         <Toaster position="top-right" />

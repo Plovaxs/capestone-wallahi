@@ -219,8 +219,8 @@ export default function LoginPage() {
 
     if (bestMatch) {
       isRedirectingRef.current = true; 
-      localStorage.setItem('c_space_user_id', bestMatch.id);
-      window.dispatchEvent(new CustomEvent('biometric_login_success', { detail: { user_id: bestMatch.id } }));
+      setBiometricStatus('Face matched. Continue with password sign-in.');
+      setMessage(`Face match found for ${bestMatch.name}.`);
     } else {
       setBiometricStatus('Unknown face');
       setError('Wajah tidak dikenali dalam records.');
@@ -284,18 +284,11 @@ export default function LoginPage() {
         setBiometricStatus('Registrasi berhasil!');
         alert('🔥 High-Fidelity Face Matrix synchronized successfully!');
         
-        localStorage.setItem('c_space_user_id', newUser.id);
-        window.dispatchEvent(new CustomEvent('biometric_login_success', { detail: { user_id: newUser.id } }));
+        setMessage('Face registration saved. Use your password to sign in.');
 
       } else {
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
         if (loginError) throw loginError;
-        
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          localStorage.setItem('c_space_user_id', user.id);
-          window.dispatchEvent(new CustomEvent('biometric_login_success', { detail: { user_id: user.id } }));
-        }
       }
     } catch (err) {
       setError(err.message);
