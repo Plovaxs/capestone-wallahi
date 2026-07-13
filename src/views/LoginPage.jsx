@@ -261,6 +261,7 @@ export default function LoginPage() {
           .upsert([{
             id: newUser.id,
             name,
+            email,
             role: 'employee',
             initials: initials.toUpperCase(),
             face_descriptor: stringifiedDescriptor
