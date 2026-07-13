@@ -1,9 +1,16 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app", // tighten to your actual domain in production
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const allowedOrigins = [
+  "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app",
+];
+
+function corsHeadersFor(origin: string | null) {
+  const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  };
+}
 
 function euclideanDistance(a: number[], b: number[]): number {
   let sum = 0;
@@ -14,6 +21,7 @@ function euclideanDistance(a: number[], b: number[]): number {
 const MATCH_THRESHOLD = 0.42;
 
 Deno.serve(async (req) => {
+  const corsHeaders = corsHeadersFor(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const admin = createClient(
