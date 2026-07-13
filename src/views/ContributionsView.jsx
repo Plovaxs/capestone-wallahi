@@ -50,8 +50,7 @@ const handleCreateThread = async () => {
                 employee_id: userProfile.id,
                 date: new Date().toISOString().split('T')[0],
                 contribution: newPost.trim(),
-                category: category,
-                replies: [] 
+                category: category
             });
 
             // 🟩 NEW: If they select Help or Blocker, ping the supervisors!

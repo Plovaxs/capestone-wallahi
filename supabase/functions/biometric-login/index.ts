@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app/", // tighten to your actual domain in production
+  "Access-Control-Allow-Origin": "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app", // tighten to your actual domain in production
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
