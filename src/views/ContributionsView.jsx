@@ -103,9 +103,6 @@ const handleCreateThread = async () => {
 
         setSubmittingReplyId(postId);
         
-        // Combines existing historical loops alongside your new comment element trace
-        const updatedRepliesArray = [...currentReplies, nextReplyObject];
-
         const { error } = await supabase
          .from('contribution_replies')
          .insert({ post_id: postId, author_id: userProfile.id, message: text.trim() });
