@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "capstone-final-mxbr.vercel.app", // tighten to your actual domain in production
+  "Access-Control-Allow-Origin": "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app/", // tighten to your actual domain in production
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     if (rlError) throw rlError;
     if (!rl.allowed) {
       return new Response(
-        JSON.stringify({ error: "Too many attempts. Please wait and try again." }),
+        JSON.stringify({ error: "rate_limited", retry_after_ms: rl.retry_after_ms }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
     });
 
     if (!bestMatch) {
-      return new Response(JSON.stringify({ error: "No match found" }), {
+      return new Response(JSON.stringify({ error: "no_match" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

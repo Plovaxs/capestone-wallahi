@@ -43,9 +43,12 @@ export default function LoginPage() {
   const videoRef = useRef(null);
   const isEyeClosedRef = useRef(false);
   const isRedirectingRef = useRef(false); 
+  const lastAttemptRef = useRef(0);
+  const ATTEMPT_COOLDOWN_MS = 4000;
 
   const [modelsLoaded, setModelsLoaded] = useState(false); 
   const [blinkCount, setBlinkCount] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -137,8 +140,15 @@ export default function LoginPage() {
             setBlinkCount(p => p + 1);
             
             if (authMode === 'login') {
-              setBiometricStatus('Liveness verified. Matching...');
-              await executeBiometricLogin(detection.descriptor);
+              const now = Date.now();
+             if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
+               // Ignore blinks/noise while still cooling down from the last attempt
+               setBiometricStatus('Please wait a moment...');
+             } else {
+               lastAttemptRef.current = now;
+               setBiometricStatus('Liveness verified. Matching...');
+               await executeBiometricLogin(detection.descriptor);
+             }
             } else {
               setBiometricStatus('Matrix verified. Ready to register.');
             }
@@ -159,6 +169,11 @@ export default function LoginPage() {
     };
 
     if (modelsLoaded) {
+      if (Date.now() < cooldownUntil) {
+       setBiometricStatus(`Please wait ${Math.ceil((cooldownUntil - Date.now()) / 1000)}s...`);
+       rafId = requestAnimationFrame(detectLoop);
+       return;
+     }
       rafId = requestAnimationFrame(detectLoop);
     }
 
@@ -175,12 +190,15 @@ export default function LoginPage() {
      body: { descriptor: Array.from(liveDescriptor) },
    });
 
-   if (error || !data?.token_hash) {
-     isRedirectingRef.current = false;
-     setBiometricStatus('Unknown face');
-     setError('Wajah tidak dikenali, atau terlalu banyak percobaan.');
-     return;
-   }
+   const now = Date.now();
+             if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
+               // Ignore blinks/noise while still cooling down from the last attempt
+               setBiometricStatus('Please wait a moment...');
+             } else {
+               lastAttemptRef.current = now;
+               setBiometricStatus('Liveness verified. Matching...');
+               await executeBiometricLogin(detection.descriptor);
+             }
 
    // Exchange the server-issued token for a real, verified session.
    const { error: verifyError } = await supabase.auth.verifyOtp({
