@@ -45,6 +45,7 @@ export default function LoginPage() {
   const isRedirectingRef = useRef(false); 
 
   const [modelsLoaded, setModelsLoaded] = useState(false); 
+  const [blinkCount, setBlinkCount] = useState(0);
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -157,14 +158,14 @@ export default function LoginPage() {
       rafId = requestAnimationFrame(detectLoop);
     };
 
-    if (allProfiles.length > 0 && modelsLoaded) {
+    if (modelsLoaded) {
       rafId = requestAnimationFrame(detectLoop);
     }
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [allProfiles, authMode, modelsLoaded]);
+  }, [authMode, modelsLoaded]);
 
   const executeBiometricLogin = async (liveDescriptor) => {
        isRedirectingRef.current = true;
