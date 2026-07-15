@@ -332,8 +332,23 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         setUploading(taskId);
         const ext = sanitizeTaskSubmissionExtension(file.name);
         const filePath = `${userProfile.id}/${taskId}/${Date.now()}.${ext}`;
-        await supabase.storage.from('task_submission').upload(filePath, file);
-        await supabase.from('tasks').update({ submitted_file_path: filePath, status: 'Completed', feedback: null }).eq('id', taskId);
+        
+        const { error: uploadError } = await supabase.storage.from('task_submission').upload(filePath, file);
+        if (uploadError) {
+            showUserError('Failed to upload task submission', uploadError);
+            setUploading(null);
+            return;
+        }
+
+        const { error: updateError } = await supabase
+            .from('tasks')
+            .update({ submitted_file_path: filePath, status: 'Completed', feedback: null })
+            .eq('id', taskId);
+        if (updateError) {
+            showUserError('Failed to mark task as submitted', updateError);
+            setUploading(null);
+            return;
+        }
 
         fetchTasks();
         setUploading(null);

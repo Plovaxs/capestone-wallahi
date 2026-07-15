@@ -54,12 +54,18 @@ const handleCreateThread = async () => {
                return;
            }
 
-            await supabase.from('contributions').insert({
+            const { error } = await supabase.from('contributions').insert({
                 employee_id: userProfile.id,
                 date: new Date().toISOString().split('T')[0],
                 contribution: newPost.trim(),
                 category: category
             });
+
+            if (error) {
+                showUserError('Failed to create post', error);
+                return;
+            }
+
 
             // 🟩 NEW: If they select Help or Blocker, ping the supervisors!
             if (category.includes('Help') || category.includes('Blocker')) {
@@ -73,7 +79,7 @@ const handleCreateThread = async () => {
             setNewPost('');
             fetchContributions(); 
         } catch (error) {
-            console.error("Error creating post:", error);
+            showUserError('Failed to create post', error);
         } finally {
             setIsSubmitting(false);
         }

@@ -31,7 +31,7 @@ export const sanitizeUserInput = (value, { maxLength = 500 } = {}) => {
 
 export const sanitizeTaskSubmissionExtension = (fileName) => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  const allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt'];
+  const allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'];
   if (!allowed.includes(ext)) {
     return 'bin'; // unrecognized extension — falls back to a generic, non-executable label
   }
