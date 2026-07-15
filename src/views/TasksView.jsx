@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Modal from '../components/Modal';
 import ExportButton from '../components/ExportButton';
+import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
+import { validateTaskSubmissionFile } from '../utils/validateMime';
+import { sanitizeTaskSubmissionExtension } from '../utils/sanitize';
 
 /**
  * SUB-COMPONENT: UserAvatar
@@ -313,16 +316,23 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         const file = selectedFiles[taskId];
         if (!file) return;
 
+        const validation = validateTaskSubmissionFile(file);
+        if (!validation.valid) {
+            alert(`File Upload Error: ${validation.error}`);
+            return;
+        }
+
+        const rateLimit = await checkRateLimit('task-submission-upload', { maxRequests: 5, windowSeconds: 30 });
+        if (!rateLimit.allowed) {
+           alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+           return;
+        }
+
         setUploading(taskId);
-        const filePath = `${userProfile.id}/${taskId}/${Date.now()}.${file.name.split('.').pop()}`;
+        const ext = sanitizeTaskSubmissionExtension(file.name);
+        const filePath = `${userProfile.id}/${taskId}/${Date.now()}.${ext}`;
         await supabase.storage.from('task_submission').upload(filePath, file);
         await supabase.from('tasks').update({ submitted_file_path: filePath, status: 'Completed', feedback: null }).eq('id', taskId);
-        
-        // 🟩 NEW: Ping all supervisors that a task is ready for review
-        const supervisors = allUsers.filter(u => u.role === 'supervisor');
-        supervisors.forEach(async (sup) => {
-            await createNotification(sup.id, `📌 Task Ready for Review: ${userProfile.name} has submitted "${currentTask.title}".`);
-        });
 
         fetchTasks();
         setUploading(null);
