@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 
 /**
  * COMPONENT: ContributionsView
@@ -46,6 +47,12 @@ const handleCreateThread = async () => {
         if (!newPost.trim()) return;
         setIsSubmitting(true);
         try {
+            const rateLimit = await checkRateLimit('forum-post', { maxRequests: 5, windowSeconds: 60 });
+           if (!rateLimit.allowed) {
+               alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+               return;
+           }
+
             await supabase.from('contributions').insert({
                 employee_id: userProfile.id,
                 date: new Date().toISOString().split('T')[0],
@@ -102,6 +109,13 @@ const handleCreateThread = async () => {
         if (!text || !text.trim()) return;
 
         setSubmittingReplyId(postId);
+
+        const rateLimit = await checkRateLimit('forum-reply', { maxRequests: 10, windowSeconds: 60 });
+       if (!rateLimit.allowed) {
+           alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+           setSubmittingReplyId(null);
+           return;
+       }
         
         const { error } = await supabase
          .from('contribution_replies')
