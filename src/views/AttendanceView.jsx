@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
 import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
+import { showUserError } from '../utils/errorHandling';
 
 const determineYoloVersion = () => {
   const hardwareConcurrency = navigator.hardwareConcurrency ? parseInt(navigator.hardwareConcurrency, 10) : 0;
@@ -502,7 +503,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }]);
 
             if (error) {
-                alert('Database submission error: ' + error.message);
+                showUserError('Failed to record attendance', error);
                 return false;
             }
 
@@ -550,7 +551,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 .eq('id', userProfile.id);
                 
             if (error) {
-                alert('Database update failed: ' + error.message);
+                showUserError('Failed to enroll face', error);
             } else {
                 alert('Face matrix enrolled successfully!');
                 fetchProfile?.();

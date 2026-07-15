@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { sanitizeFileExtension } from '../utils/sanitize';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateAvatarFile } from '../utils/validateMime';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * COMPONENT: SettingsView
@@ -77,8 +78,7 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
             alert('Profile picture updated cleanly!');
             fetchProfile(); // Invalidates core app level layout caches to trigger live visual re-renders
         } catch (error) {
-            console.error("Upload process error logging:", error);
-            alert('Error uploading tracking image: ' + error.message);
+            showUserError('Failed to upload profile image', error);
         } finally {
             setUploading(false);
         }
@@ -110,7 +110,7 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
         const { error } = await supabase.auth.updateUser({ password: password });
 
         if (error) {
-            alert("Error updating security layer credentials: " + error.message);
+            showUserError('Failed to update password', error);
         } else {
             alert("Account password changed successfully!");
             setPassword('');

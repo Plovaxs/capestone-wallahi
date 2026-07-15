@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -107,8 +108,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         const { data, error } = await supabase.from('performance_evaluations').select('*').order('created_at', { ascending: false });
         
         if (error) {
-            console.error("fetchEvaluations error:", error.message);
-            alert("Database Error fetching reviews: " + error.message);
+            showUserError('Failed to load performance reviews', error);
         }
         
         let filtered = data || [];
@@ -233,7 +233,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         setIsSubmitting(true);
        if (editingEvalId) {
             const { error } = await supabase.from('performance_evaluations').update({ scores, final_score: pointTotal, comments }).eq('id', editingEvalId);
-            if (error) alert("Update failed: " + error.message);
+            if (error) showUserError('Failed to update review', error);
             else {
                 alert("Appraisal updated cleanly.");
                 // 🟩 ADD THIS LINE
@@ -245,7 +245,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             const { error } = await supabase.from('performance_evaluations').insert({
                 employee_id: selectedUserId, supervisor_id: userProfile.id, scores, final_score: pointTotal, comments
             });
-            if (error) alert("Submission failed: " + error.message);
+            if (error) showUserError('Failed to submit review', error);
             else {
                 alert("Performance appraisal submitted successfully!");
                 // 🟩 ADD THIS LINE
@@ -268,7 +268,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     const handleDeleteEvaluation = async (id) => {
         if (!confirm("Are you sure you want to permanently delete this assessment record?")) return;
         const { error } = await supabase.from('performance_evaluations').delete().eq('id', id);
-        if (error) alert("Deletion failed: " + error.message);
+        if (error) showUserError('Failed to delete review', error);
         else {
             alert("Record deleted successfully.");
             fetchEvaluations();

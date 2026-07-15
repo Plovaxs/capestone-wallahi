@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * COMPONENT: ContributionsView
@@ -92,7 +93,7 @@ const handleCreateThread = async () => {
             .eq('id', postId);
 
         if (error) {
-            alert("Failed to delete thread: " + error.message);
+            showUserError('Failed to delete thread', error);
         } else {
             fetchContributions(); // Refresh live view feeds state cache
         }
@@ -122,7 +123,7 @@ const handleCreateThread = async () => {
          .insert({ post_id: postId, author_id: userProfile.id, message: text.trim() });
 
         if (error) {
-            alert("Failed to submit reply: " + error.message);
+            showUserError('Failed to submit reply', error);
         } else {
             // Flushes the specific input buffer target field trace cleanly upon success
             setReplyInputs(prev => ({ ...prev, [postId]: '' })); 

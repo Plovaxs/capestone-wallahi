@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient'; 
 import ExportButton from '../components/ExportButton';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * COMPONENT: LeaveView
@@ -95,7 +96,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         });
 
         if (error) {
-            alert(`Error transmitting request: ${error.message}`);
+            showUserError('Failed to submit leave request', error);
         } else {
             // 🟩 FIX: Ping all supervisors that a new leave form is waiting
             const supervisors = allUsers.filter(u => u.role === 'supervisor');
@@ -138,7 +139,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                 .eq('id', selectedTargetUser);
 
             if (error) {
-                alert("Failed to adjust allocations: " + error.message);
+                showUserError('Failed to update leave allocation', error);
             } else {
                 alert(`Successfully allocated updated balances for ${targetProfile.name}!`);
                 window.location.reload(); // Performs a clean context sync to flush visual tracking states
@@ -164,7 +165,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             .eq('id', id);
 
         if (updateError) {
-            alert('Error updating row parameters: ' + updateError.message);
+            showUserError('Failed to update leave request', updateError);
             return;
         }
 

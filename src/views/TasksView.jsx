@@ -5,6 +5,7 @@ import ExportButton from '../components/ExportButton';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateTaskSubmissionFile } from '../utils/validateMime';
 import { sanitizeTaskSubmissionExtension } from '../utils/sanitize';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * SUB-COMPONENT: UserAvatar
@@ -206,7 +207,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             status: 'To Do', 
             is_extended: false
         });
-        if (error) alert('Error: ' + error.message);
+        if (error) showUserError('Failed to create task', error);
         else {
             newTask.assigned_to.forEach(async (userId) => await createNotification(userId, `New Task Assigned: ${newTask.title}`));
             alert('Task assigned successfully.');
@@ -228,7 +229,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             .eq('id', task.id);
 
         if (error) {
-            alert("Database Error during approval: " + error.message);
+            showUserError('Failed to update task status', error);
         } else {
             (task.assigned_to || []).forEach(async (userId) => {
                 await createNotification(userId, `🎉 Task Approved: Your submission for "${task.title}" has been successfully approved!`);
@@ -274,7 +275,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             setExtensionTask(null);
             fetchTasks();
         } else {
-            alert("Database transmission error: " + error.message);
+            showUserError('Failed to submit task', error);
         }
     };
 
@@ -318,7 +319,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
 
         const validation = validateTaskSubmissionFile(file);
         if (!validation.valid) {
-            alert(`File Upload Error: ${validation.error}`);
+            showUserError('Failed to upload task submission', { message: validation.error });
             return;
         }
 
