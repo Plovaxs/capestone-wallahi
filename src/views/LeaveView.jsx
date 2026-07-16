@@ -85,7 +85,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         .filter(req => exportEmployeeId === 'all' || req.employee_id === exportEmployeeId)
         .map(req => ({
         Date: req.created_at ? new Date(req.created_at).toLocaleDateString('en-GB') : 'N/A',
-        Intern: getUserName(req.employee_id),
+        "Outsourcing Staff": getUserName(req.employee_id),
         Origin: getUserCampus(req.employee_id),
         Category: req.type,
         Duration: `${req.start_date} to ${req.end_date}`,
@@ -164,7 +164,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      */
     const handleAdjustBalances = async (e) => {
         e.preventDefault();
-        if (!selectedTargetUser) return alert("Please highlight an intern entry to adjust.");
+        if (!selectedTargetUser) return alert("Please highlight an outsourcing staff entry to adjust.");
 
         setIsAdjusting(true);
         const targetProfile = allUsers.find(u => u.id === selectedTargetUser);
@@ -381,18 +381,18 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                     {userProfile.role === 'supervisor' ? (
                         /* ================= SUPERVISOR ALLOCATION CONSOLE ================= */
                         <>
-                            <h2 className="text-lg font-bold mb-1 text-gray-800 dark:text-gray-100">⚖️ Intern Balance Allowance Matrix</h2>
+                            <h2 className="text-lg font-bold mb-1 text-gray-800 dark:text-gray-100">⚖️ Outsourcing Staff Balance Allowance Matrix</h2>
                             <p className="text-xs text-gray-400 mb-4">Allocate new monthly balances (+1, +2 days) or reset quotas directly inside the portal layout.</p>
                             <form onSubmit={handleAdjustBalances} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end text-xs font-semibold text-gray-500 dark:text-gray-400">
                                 <div className="sm:col-span-3 space-y-1">
-                                    <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider pl-1">Target Intern student</label>
+                                    <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider pl-1">Target Outsourcing Staff Member</label>
                                     <select
                                         value={selectedTargetUser}
                                         onChange={e => setSelectedTargetUser(e.target.value)}
                                         className="w-full p-2.5 border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none font-bold text-xs"
                                         required
                                     >
-                                        <option value="">Select an intern...</option>
+                                        <option value="">Select an outsourcing staff member...</option>
                                         {employeeUsers.map(emp => (
                                             <option key={emp.id} value={emp.id}>
                                                 {emp.name} (Vac: {emp.vacation_days || 0} | Sick: {emp.sick_days || 0})
@@ -510,7 +510,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                     <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
-                            {userProfile.role === 'supervisor' ? 'Search Intern / Keyword' : 'Search Reason / Keyword'}
+                            {userProfile.role === 'supervisor' ? 'Search Outsourcing Staff / Keyword' : 'Search Reason / Keyword'}
                         </label>
                         <input 
                             type="text"
@@ -559,7 +559,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                      <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-50/80 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
-                                <th className="p-4">Intern Name</th>
+                                <th className="p-4">Outsourcing Staff Name</th>
                                 <th className="p-4">Category</th>
                                 <th className="p-4">Calendar Boundaries</th>
                                 <th className="p-4">Reason Context</th>

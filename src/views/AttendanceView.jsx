@@ -608,10 +608,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-white">
-                        {userProfile.role === 'supervisor' ? 'Intern Tracking Portal' : 'My Attendance Logs'}
+                        {userProfile.role === 'supervisor' ? 'Outsourcing Staff Tracking Portal' : 'My Attendance Logs'}
                     </h1>
                     <p className="text-sm text-slate-400 mt-1">
-                        {userProfile.role === 'supervisor' ? 'Real-time operational dashboard for intern monitoring and compliance logs.' : 'Log your location token details and inspect verification metrics.'}
+                        {userProfile.role === 'supervisor' ? 'Real-time operational dashboard for outsourcing staff monitoring and compliance logs.' : 'Log your location token details and inspect verification metrics.'}
                     </p>
                 </div>
                 {userProfile.role === 'supervisor' && (
@@ -624,7 +624,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             <option value="all">All Employees</option>
                             {processedInterns.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
-                        <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Intern_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Clean Sheet" />
+                        <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Outsourcing_Staff_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Clean Sheet" />
                     </div>
                 )}
             </div>
@@ -633,7 +633,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Registered Interns</div>
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Registered Outsourcing Staff</div>
                             <div className="text-4xl font-black text-white mt-2 flex items-baseline gap-2">
                                 {activeEmployees.length} <span className="text-xs font-bold text-slate-500 uppercase font-sans">Officers</span>
                             </div>
@@ -655,7 +655,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 shadow-inner">
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Search Intern</label>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Search Outsourcing Staff</label>
                             <input 
                                 type="text"
                                 value={searchTerm}
@@ -702,7 +702,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-800/60 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                                     <tr>
-                                        <th className="p-4">Intern Fullname</th>
+                                        <th className="p-4">Outsourcing Staff Fullname</th>
                                         <th className="p-4">Institution / Origin</th>
                                         <th className="p-4">Operational Duty Mode</th>
                                         <th className="p-4">Today's Timestamp Status</th>

@@ -228,7 +228,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
     // --- MUTATION HANDLING ENDPOINTS (DB DISPATCH CHANNELS) ---
     const handleSubmitEvaluation = async () => {
-        if (!selectedUserId) return alert("Please select an intern.");
+        if (!selectedUserId) return alert("Please select an outsourcing staff member.");
         if (totalAnsweredQuestions < totalQuestionsCount) {
             return alert(`Incomplete Rubric: Missing ${totalQuestionsCount - totalAnsweredQuestions} criteria flags.`);
         }
@@ -315,13 +315,13 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                     {/* SIDEBAR NAVIGATION LIST ROSTER */}
                     <div className="space-y-4">
                         <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-3">
-                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Active Intern Roster</h3>
+                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Active Outsourcing Staff Roster</h3>
                             <div className="space-y-2">
                                 <input 
                                     type="text"
                                     value={searchIntern}
                                     onChange={(e) => setSearchIntern(e.target.value)}
-                                    placeholder="🔍 Search intern..."
+                                    placeholder="🔍 Search outsourcing staff..."
                                     className="w-full p-2 text-[11px] border border-gray-100 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none"
                                 />
                                 <select 
@@ -349,7 +349,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                     >
                                         <span>{emp.name}</span>
                                         <span className={`text-[9px] px-2 py-0.5 rounded-lg border uppercase ${selectedUserId === emp.id ? 'bg-white/20 border-white/10' : 'bg-gray-200/60 text-gray-400 dark:bg-gray-800'}`}>
-                                            {emp.source?.split(' ')[0] || 'Intern'}
+                                            {emp.source?.split(' ')[0] || 'Staff'}
                                         </span>
                                     </button>
                                 ))}
@@ -474,7 +474,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         ) : (
                             <div className="bg-gray-50 border border-dashed border-gray-200 rounded-2xl h-64 flex flex-col justify-center items-center text-center p-6 text-gray-400 dark:bg-gray-800 dark:border-gray-700">
                                 <span className="text-2xl mb-1">📋</span>
-                                <h4 className="font-bold text-xs text-gray-700 dark:text-gray-300">No Target Intern Highlighted</h4>
+                                <h4 className="font-bold text-xs text-gray-700 dark:text-gray-300">No Target Outsourcing Staff Highlighted</h4>
                                 <p className="text-[11px] max-w-xs leading-normal mt-0.5">Select a staff entry from the roster menu to initialize grading channels.</p>
                             </div>
                         )}
@@ -494,7 +494,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         <thead className="bg-gray-50/80 dark:bg-gray-700/40 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
                                 <th className="p-4">Date Issued</th>
-                                <th className="p-4">Intern Name</th>
+                                <th className="p-4">Outsourcing Staff Name</th>
                                 <th className="p-4">Accredited Index</th>
                                 <th className="p-4">Evaluation Remarks Summary</th>
                                 <th className="p-4 text-right">Actions</th>

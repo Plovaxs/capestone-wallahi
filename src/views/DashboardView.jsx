@@ -197,7 +197,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         onChange={(e) => setSelectedEmployee(e.target.value)}
                         className="p-2 text-xs border border-gray-200 rounded-xl shadow-sm bg-gray-50 dark:bg-gray-900 dark:border-gray-600 dark:text-white focus:outline-none font-bold"
                     >
-                        <option value="all">All Intern Roster Entries</option>
+                        <option value="all">All Outsourcing Staff Roster Entries</option>
                         {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                     </select>
                 </div>

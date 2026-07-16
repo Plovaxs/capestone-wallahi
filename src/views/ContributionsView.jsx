@@ -156,7 +156,7 @@ const handleCreateThread = async () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-700 pb-4">
                 <div>
                     <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                        💬 Intern Discussion Forum & Help Desk
+                        💬 Outsourcing Staff Discussion Forum & Help Desk
                     </h1>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
                         Ask questions, declare blockers, and collaborate with team members and supervisors.

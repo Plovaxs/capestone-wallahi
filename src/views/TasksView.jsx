@@ -591,14 +591,14 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 </div>
 
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Assigned Intern</label>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Assigned Outsourcing Staff</label>
                     {userProfile.role === 'supervisor' ? (
                         <select
                             value={filterEmployee}
                             onChange={(e) => setFilterEmployee(e.target.value)}
                             className="w-full p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50 dark:bg-gray-700 dark:text-white"
                         >
-                            <option value="all">All Interns</option>
+                            <option value="all">All Outsourcing Staff</option>
                             {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
                     ) : (
