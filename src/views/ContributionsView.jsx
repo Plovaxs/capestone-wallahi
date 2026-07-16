@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { showUserError } from '../utils/errorHandling';
+import { sanitizeUserInput } from '../utils/sanitize';
 
 /**
  * COMPONENT: ContributionsView
@@ -9,7 +10,7 @@ import { showUserError } from '../utils/errorHandling';
  * DESIGN PATTERN: Flattened thread timeline mapping nested comment nodes via a single JSONB array column.
  * SECURITY: Enforces item-level role tracking so employees can only eliminate rows they personally created.
  */
-const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions }) => {
+const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions, createNotification }) => {
     // --- POST COMPOSER FORUM STATES ---
     const [newPost, setNewPost] = useState('');
     const [category, setCategory] = useState('General Discussion');
@@ -57,7 +58,7 @@ const handleCreateThread = async () => {
             const { error } = await supabase.from('contributions').insert({
                 employee_id: userProfile.id,
                 date: new Date().toISOString().split('T')[0],
-                contribution: newPost.trim(),
+                contribution: sanitizeUserInput(newPost, { maxLength: 2000 }),
                 category: category
             });
 
@@ -111,7 +112,7 @@ const handleCreateThread = async () => {
      * CRITICAL LOGIC: Pulls current cached comment references, expands the dataset with a distinct 
      * randomized reply node key pointer, and performs an absolute row update mutation payload.
      */
-    const handleSendReply = async (postId, currentReplies = []) => {
+    const handleSendReply = async (postId) => {
         const text = replyInputs[postId];
         if (!text || !text.trim()) return;
 
@@ -126,7 +127,7 @@ const handleCreateThread = async () => {
         
         const { error } = await supabase
          .from('contribution_replies')
-         .insert({ post_id: postId, author_id: userProfile.id, message: text.trim() });
+         .insert({ post_id: postId, author_id: userProfile.id, message: sanitizeUserInput(text, { maxLength: 1000 }) });
 
         if (error) {
             showUserError('Failed to submit reply', error);
@@ -325,13 +326,13 @@ const handleCreateThread = async () => {
                                     type="text"
                                     value={replyInputs[post.id] || ''}
                                     onChange={(e) => setReplyInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
-                                    onKeyPress={(e) => e.key === 'Enter' && handleSendReply(post.id, postReplies)}
+                                    onKeyPress={(e) => e.key === 'Enter' && handleSendReply(post.id)}
                                     placeholder={userProfile.role === 'supervisor' ? "Provide guidance or feedback..." : "Write a comment or answer..."}
                                     className="flex-1 p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50/50 dark:bg-gray-900/40 dark:text-white"
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => handleSendReply(post.id, postReplies)}
+                                    onClick={() => handleSendReply(post.id)}
                                     disabled={submittingReplyId === post.id || !(replyInputs[post.id] || '').trim()}
                                     className="bg-gray-800 text-white hover:bg-gray-900 text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition disabled:opacity-50 dark:bg-blue-600 dark:hover:bg-blue-700"
                                 >

@@ -28,29 +28,30 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const FACE_DETECT_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.15 });
 
     const [isLoading, setIsLoading] = useState(false); 
+    const [isEnrolling, setIsEnrolling] = useState(false); // 🟩 NEW: guards against rapid re-clicks on Enroll Facial Matrix
     const [liveDistance, setLiveDistance] = useState(null); 
     const [isInRange, setIsInRange] = useState(false); 
     const [currentCoords, setCurrentCoords] = useState(null); 
     const [isCameraReady, setIsCameraReady] = useState(false); 
-    const [cameraStatus, setCameraStatus] = useState('idle'); 
+    const [, setCameraStatus] = useState('idle'); // cameraStatus itself is never read, only tracked
     const [faceStatus, setFaceStatus] = useState('idle'); 
     const [biometricStatus, setBiometricStatus] = useState('Initializing Scanner...');
-    const [clockInAt, setClockInAt] = useState('');
-    const [clockInSource, setClockInSource] = useState('none');
-    const [disableYolo, setDisableYolo] = useState(false); // Default to false to enable advanced YOLO features
-    const [currentModelVersion, setCurrentModelVersion] = useState(null);
-    const [registeredFaceSource, setRegisteredFaceSource] = useState('none');
+    const [, setClockInAt] = useState(''); // write-only, never displayed
+    const [, setClockInSource] = useState('none'); // write-only, never displayed
+    const [disableYolo] = useState(false); // setter was never called anywhere — always stays false
+    const [, setCurrentModelVersion] = useState(null); // write-only, never displayed
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
-    const [faceMatchDistance, setFaceMatchDistance] = useState(null);
-    const [faceDetectionMode, setFaceDetectionMode] = useState('idle');
-    const [isFaceVerified, setIsFaceVerified] = useState(false); // 🟩 ADD THIS MISSING STATE LINE!
+    const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
+    const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
+    const [isFaceVerified, setIsFaceVerified] = useState(false);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterSource, setFilterSource] = useState('all');
     const [filterMode, setFilterMode] = useState('all');
     const [filterStatus, setFilterStatus] = useState('all');
     const [sortBy, setSortBy] = useState('name-az');
+    const [historyStatusFilter, setHistoryStatusFilter] = useState('all'); // 🟩 NEW: On Time / Late filter for the personal log grid
 
     const today = new Date().toISOString().split('T')[0]; 
     const attendanceRows = Array.isArray(attendance) ? attendance : [];
@@ -62,7 +63,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const webcamVideoRef = useRef(null);
     const referenceDescriptorRef = useRef(null);
-    const faceScanTimerRef = useRef(null);
     const faceScanBusyRef = useRef(false);
     const yoloDetectorRef = useRef(null);
     const yoloDetectorPromiseRef = useRef(null);
@@ -78,18 +78,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         if (Array.isArray(parsed)) return new Float32Array(parsed);
         if (parsed && Array.isArray(parsed.data)) return new Float32Array(parsed.data);
         return null;
-    };
-
-    const normalizeDescriptorArray = (descriptor) => {
-        const values = Array.from(descriptor || []).map(v => Number(v)).filter(v => Number.isFinite(v));
-        if (values.length !== 128) return null;
-        return values;
-    };
-
-    const descriptorToVectorLiteral = (descriptor) => {
-        const values = normalizeDescriptorArray(descriptor);
-        if (!values) return null;
-        return `[${values.join(',')}]`;
     };
 
     const getRecordClockInTime = (record) => record?.clock_in || record?.created_at || '';
@@ -143,7 +131,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         }
                     }
                 }
-            } catch (error) {
+            } catch (_error) {
                 console.info('YOLO fallback to face-api full frame.');
             }
         }
@@ -185,7 +173,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setCurrentModelVersion(selectedModelVersion);
                     return detector;
                 })
-                .catch(async (err) => {
+                .catch(async (_err) => {
                     const localDetector = await pipeline('object-detection', YOLO_LOCAL_PATH);
                     yoloDetectorRef.current = localDetector;
                     return localDetector;
@@ -200,6 +188,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const onTimeDays = myHistory.filter(a => a.status === 'Present').length;
     const lateDays = myHistory.filter(a => a.status === 'Late').length;
     const punctualityScore = totalDays > 0 ? ((onTimeDays / totalDays) * 100).toFixed(0) : 0;
+
+    // 🟩 NEW: Lets an intern filter their own log by On Time / Late instead of
+    // scanning every card manually.
+    const filteredMyHistory = myHistory.filter(a => historyStatusFilter === 'all' || a.status === historyStatusFilter);
 
     const activeEmployees = allUsers.filter(u => u.role === 'employee');
     const clockedInTodayCount = activeEmployees.filter(emp => 
@@ -243,7 +235,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             return 0;
         });
 
-    const exportDataFiltered = processedInterns.flatMap(emp => 
+    const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
+
+    const exportDataFiltered = processedInterns
+        .filter(emp => exportEmployeeId === 'all' || emp.id === exportEmployeeId)
+        .flatMap(emp => 
         attendanceRows.filter(a => a.employee_id === emp.id).map(record => ({
             Date: record.date,
             Employee: emp.name,
@@ -290,7 +286,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     console.info(e);
                 }
             },
-            (err) => {
+            (_err) => {
                 setCurrentCoords(null);
                 setLiveDistance(null);
                 setIsInRange(false);
@@ -299,7 +295,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         );
 
         return () => navigator.geolocation.clearWatch(watchId);
-    }, [userProfile]);
+    }, [userProfile, OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]);
 
     // ==========================================
     // VIDEO LIFE CYCLE CONTROLLER
@@ -323,7 +319,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 }
                 setIsCameraReady(true);
                 setCameraStatus('ready');
-            } catch (error) {
+            } catch (_error) {
                 setCameraStatus('error');
             }
         };
@@ -362,7 +358,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }
         }
         loadModels();
-    }, [userProfile, disableYolo]);
+    }, [userProfile, disableYolo, FACE_MODEL_URL]);
 
     // ==========================================
     // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
@@ -396,6 +392,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         setFaceMatchDistance(dist);
                         setFaceStatus(isMatch ? 'matched' : 'mismatch');
                         setFaceDetectionMode(liveDet.source || 'faceapi');
+                        // 🟩 FIX: isFaceVerified was read by the manual "Clock In Shift"
+                        // button but its setter was never called anywhere, so the
+                        // button stayed permanently disabled regardless of match status.
+                        setIsFaceVerified(isMatch);
 
                         if (isMatch) {
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
@@ -413,6 +413,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 } else {
                     setFaceOverlayBox(null);
                     setFaceMatchDistance(null);
+                    setIsFaceVerified(false);
                     setBiometricStatus('Scanning for frontal matrix...');
                 }
             } catch (err) {
@@ -425,6 +426,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             clearInterval(timer);
             setFaceOverlayBox(null);
         };
+        // Intentional: detectFaceFromImage and handleClockIn are redefined every
+        // render (not memoized), so listing them here would tear down and
+        // recreate the scan interval on every render instead of letting it run
+        // steadily. userProfile.work_mode is read fresh via closure each tick;
+        // work_mode changes are rare enough that a full remount isn't needed.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo]);
 
     // ==========================================
@@ -538,33 +545,49 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
    const handleEnrollFaceFromStream = async () => {
         if (!webcamVideoRef.current) return;
-        
-        const det = await detectFaceFromImage(webcamVideoRef.current);
-        
-        if (det) {
-            // 🟩 FIX: Stringify the array before updating the profile
-            const stringifiedDescriptor = JSON.stringify(Array.from(det.descriptor));
-            
-            const { error } = await supabase
-                .from('profiles')
-                .update({ face_descriptor: stringifiedDescriptor })
-                .eq('id', userProfile.id);
-                
-            if (error) {
-                showUserError('Failed to enroll face', error);
+        // 🟩 FIX: Without this guard, clicking the button rapidly fired a fresh
+        // detect+update call on every click (no disable-while-processing state),
+        // which can burst enough concurrent Supabase requests to trip its auth
+        // rate limiter.
+        if (isEnrolling) return;
+        setIsEnrolling(true);
+
+        try {
+            const det = await detectFaceFromImage(webcamVideoRef.current);
+
+            if (det) {
+                // 🟩 FIX: Stringify the array before updating the profile
+                const stringifiedDescriptor = JSON.stringify(Array.from(det.descriptor));
+
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({ face_descriptor: stringifiedDescriptor })
+                    .eq('id', userProfile.id);
+
+                if (error) {
+                    showUserError('Failed to enroll face', error);
+                } else {
+                    alert('Face matrix enrolled successfully!');
+                    fetchProfile?.();
+                }
             } else {
-                alert('Face matrix enrolled successfully!');
-                fetchProfile?.();
+                alert('Failed to detect face. Please align properly with the camera.');
             }
-        } else {
-            alert('Failed to detect face. Please align properly with the camera.');
+        } finally {
+            setIsEnrolling(false);
         }
     };
 
     const handleResetEnrolledFace = async () => {
-        await supabase.from('profiles').update({ face_descriptor: null }).eq('id', userProfile.id);
-        alert('Face cleared.');
-        fetchProfile?.();
+        if (isEnrolling) return;
+        setIsEnrolling(true);
+        try {
+            await supabase.from('profiles').update({ face_descriptor: null }).eq('id', userProfile.id);
+            alert('Face cleared.');
+            fetchProfile?.();
+        } finally {
+            setIsEnrolling(false);
+        }
     };
 
     const statusBadge = (status, clockOut, date) => {
@@ -592,7 +615,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     </p>
                 </div>
                 {userProfile.role === 'supervisor' && (
-                    <ExportButton data={exportDataFiltered} filename="Intern_Attendance_Roster" label="Export Clean Sheet" />
+                    <div className="flex items-center gap-2">
+                        <select
+                            value={exportEmployeeId}
+                            onChange={(e) => setExportEmployeeId(e.target.value)}
+                            className="text-xs font-bold bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 focus:outline-none focus:border-blue-500"
+                        >
+                            <option value="all">All Employees</option>
+                            {processedInterns.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                        </select>
+                        <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Intern_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Clean Sheet" />
+                    </div>
                 )}
             </div>
 
@@ -823,19 +856,37 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             </div>
 
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
-                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">Enroll Facial Matrix</button>
-                                <button type="button" onClick={handleResetEnrolledFace} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all">Reset Matrix</button>
+                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? 'Enrolling...' : 'Enroll Facial Matrix'}</button>
+                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">Reset Matrix</button>
                             </div>
                         </div>
                     </div>
 
                     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-inner">
+                        <div className="flex items-center justify-between mb-4">
+                            <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Personal Clock Log</span>
+                            <select
+                                value={historyStatusFilter}
+                                onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                                className="text-[10px] font-bold uppercase tracking-wider bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="all">All Records</option>
+                                <option value="Present">On Time Only</option>
+                                <option value="Late">Late Only</option>
+                            </select>
+                        </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {myHistory.slice(0, 9).map(record => (
+                            {filteredMyHistory.slice(0, 9).map(record => (
                                 <div key={record.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col justify-between shadow-sm">
                                     <div className="flex items-center justify-between mb-1.5 border-b border-slate-800 pb-1.5">
                                         <span className="text-[11px] font-bold text-white font-mono">{record.date}</span>
-                                        <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">LOG TOKEN</span>
+                                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                                            record.status === 'Late'
+                                                ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                                                : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                                        }`}>
+                                            {record.status === 'Late' ? 'Late' : 'On Time'}
+                                        </span>
                                     </div>
                                     <div className="space-y-0.5 text-[11px] text-slate-400 font-mono">
                                         <div>IN TIME : <span className="text-white font-bold">{getRecordClockInTime(record)}</span></div>
@@ -843,6 +894,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     </div>
                                 </div>
                             ))}
+                            {filteredMyHistory.length === 0 && (
+                                <p className="col-span-full text-center text-xs text-slate-500 italic py-6">No records match this filter.</p>
+                            )}
                         </div>
                     </div>
                 </>

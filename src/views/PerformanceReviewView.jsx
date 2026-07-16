@@ -122,6 +122,9 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
     useEffect(() => {
         if (userProfile) fetchEvaluations();
+        // Intentional: only re-run when userProfile changes. fetchEvaluations isn't
+        // memoized, so including it would refetch on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userProfile]);
 
     /**
@@ -537,8 +540,14 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             {/* POPUP FULL READ-ONLY MODAL OVERLAY (FIXED INTERN DISPLAY TRANSCRIPTS)    */}
             {/* ========================================================================= */}
             {selectedHistoricalEval && (
-                <div className="fixed -top-16 -left-64 right-0 bottom-0 pl-64 pt-16 bg-slate-950/40 backdrop-blur-md z-[9999] flex justify-center items-center p-4">
-                    <div className="bg-white dark:bg-gray-800 w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col max-h-[85vh] overflow-hidden animate-scale-up">
+                <div
+                    className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex justify-center items-center p-4"
+                    onClick={() => setSelectedHistoricalEval(null)}
+                >
+                    <div
+                        className="bg-white dark:bg-gray-800 w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col max-h-[85vh] overflow-hidden animate-scale-up"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         
                         {/* STICKY TRANSCRIPT HEADER */}
                         <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/40 shrink-0">
@@ -629,4 +638,4 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     );
 };
 
-export default PerformanceReviewView; 
+export default PerformanceReviewView;

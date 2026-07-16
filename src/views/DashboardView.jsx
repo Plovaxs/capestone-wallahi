@@ -9,7 +9,7 @@ import {
  * PURPOSE: Executive Telemetry Dashboard Aggregator.
  * FIXED: Shifted month index processing from (Jul-Dec) to (Jan-Jun) to perfectly match active internship timeline data.
  */
-const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [] }) => {
+const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView }) => {
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
 
@@ -84,33 +84,49 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // 📈 FIXED CALENDAR CHART DATA PROCESSING ENGINE
     // =========================================================================
     const processChartData = () => {
-        // FIXED: Shifted sequence to target the correct operational half of the year
-        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+        // 🟩 FIX: Rolling 6-month window ending at the current month, instead of
+        // a hardcoded Jan-Jun range. The old range silently excluded whatever
+        // month it actually is right now — which is exactly where most live
+        // attendance/task activity lives — making the chart look disconnected
+        // from real data even though the underlying rows were fine.
+        const now = new Date();
+        const monthWindow = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            monthWindow.push({
+                label: d.toLocaleString('en-US', { month: 'short' }),
+                year: d.getFullYear(),
+                month: d.getMonth(),
+            });
+        }
+
         const users = allUsers.filter(u => u.role === 'employee');
 
         const attData = [];
         const taskData = [];
 
-        months.forEach((month, index) => {
-            // FIXED: index mapped directly (0 = Jan, 1 = Feb, etc.) to match native JavaScript .getMonth() values
-            const targetMonth = index; 
-            const attMonth = { name: month };
-            const taskMonth = { name: month };
+        monthWindow.forEach(({ label, year, month }) => {
+            const attMonth = { name: label };
+            const taskMonth = { name: label };
 
             users.forEach(u => {
                 // Accumulates monthly employee attendance rows
-                const presentCount = attendance.filter(a =>
-                    a.employee_id === u.id &&
-                    new Date(a.date).getMonth() === targetMonth &&
-                    (a.status === 'Present' || a.status === 'Late')
-                ).length;
-                
+                const presentCount = attendance.filter(a => {
+                    const d = new Date(a.date);
+                    return a.employee_id === u.id &&
+                        d.getMonth() === month &&
+                        d.getFullYear() === year &&
+                        (a.status === 'Present' || a.status === 'Late');
+                }).length;
+
                 // Accumulates monthly completed/approved items
-                const completedCount = tasks.filter(t => 
-                    (t.assigned_to || []).includes(u.id) && 
-                    t.status === 'Approved' && 
-                    new Date(t.due_date).getMonth() === targetMonth
-                ).length;
+                const completedCount = tasks.filter(t => {
+                    const d = new Date(t.due_date);
+                    return (t.assigned_to || []).includes(u.id) &&
+                        t.status === 'Approved' &&
+                        d.getMonth() === month &&
+                        d.getFullYear() === year;
+                }).length;
 
                 if (selectedEmployee === 'all' || selectedEmployee === u.id) {
                     attMonth[u.name] = presentCount;
@@ -285,7 +301,12 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                 const truncatedText = textToDisplay.length > 100 ? textToDisplay.substring(0, 100) + '...' : textToDisplay;
 
                                 return (
-                                    <div key={review.id} className="border-b pb-4 last:border-b-0 last:pb-0 border-gray-50 dark:border-gray-700/60 animate-fade-in">
+                                    <button
+                                        key={review.id}
+                                        type="button"
+                                        onClick={() => setActiveView && setActiveView('reviews')}
+                                        className="w-full text-left border-b pb-4 last:border-b-0 last:pb-0 border-gray-50 dark:border-gray-700/60 animate-fade-in group hover:bg-gray-50/60 dark:hover:bg-gray-700/20 rounded-lg transition-colors -mx-2 px-2"
+                                    >
                                         <div className="flex justify-between items-start gap-4 mb-2 text-xs">
                                             <div className="space-y-1">
                                                 <p className="font-bold text-gray-800 dark:text-gray-200">
@@ -309,7 +330,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <p className="text-gray-600 dark:text-gray-300 text-xs italic pl-1 leading-relaxed bg-gray-50/40 dark:bg-gray-900/20 p-3 rounded-xl border border-dashed dark:border-gray-700/40">
                                             "{truncatedText}"
                                         </p>
-                                    </div>
+                                        <span className="mt-2 inline-block text-[10px] font-bold text-blue-600 dark:text-blue-400 group-hover:underline">
+                                            View Full Rubric Report →
+                                        </span>
+                                    </button>
                                 );
                             })}
                         </div>

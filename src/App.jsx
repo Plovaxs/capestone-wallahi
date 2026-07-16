@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Toaster, toast } from 'react-hot-toast';
-import * as faceapi from 'face-api.js';
+import { Toaster } from 'react-hot-toast';
 
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -21,7 +20,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'dashboard': return <DashboardView {...props} userProfile={userProfile} />;
     case 'attendance': return <AttendanceView {...props} userProfile={userProfile} />;
     case 'tasks': return <TasksView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
-    case 'contributions': return <ContributionsView {...props} userProfile={userProfile} />;
+    case 'contributions': return <ContributionsView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
     case 'leave': return <LeaveView {...props} userProfile={userProfile} createNotification={props.createNotification} fetchProfile={props.fetchProfile} />;
     case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
@@ -193,11 +192,33 @@ export default function App() {
    });
 
    return () => subscription.unsubscribe();
+   // Intentional run-once mount effect; fetchProfile isn't memoized, so listing
+   // it here would re-subscribe the auth listener every render.
+   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
 
   useEffect(() => {
     if (userProfile) loadAllAppData(userProfile);
+    // Intentional: only re-run when userProfile changes. loadAllAppData isn't
+    // memoized, so including it would refetch everything on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile]);
+
+  // 🟩 NEW: Notifications only ever loaded once (on login/mount). If someone
+  // else's action (e.g. a leave request or approval) creates a notification
+  // for this user while their tab is already open, they'd never see it
+  // without reloading the page. Poll periodically instead. Deliberately
+  // scoped to userProfile?.id (a stable primitive), not the whole userProfile
+  // object, so this doesn't restart every time the profile object reference
+  // changes from an unrelated fetch.
+  useEffect(() => {
+    if (!userProfile?.id) return;
+    const intervalId = setInterval(() => {
+      fetchNotifications(userProfile);
+    }, 20000);
+    return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userProfile?.id]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -237,6 +258,7 @@ export default function App() {
         <main className="flex-1 overflow-y-auto p-0 relative">
           <MainContent
             view={activeView}
+            setActiveView={setActiveView}
             userProfile={userProfile}
             allUsers={allUsers}
             tasks={tasks}

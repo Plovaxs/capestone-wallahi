@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const allowedOrigins = [
   "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app",
+  "http://localhost:5173",
 ];
 
 function corsHeadersFor(origin: string | null) {

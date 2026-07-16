@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient'; 
 import ExportButton from '../components/ExportButton';
 import { showUserError } from '../utils/errorHandling';
+import { sanitizeUserInput } from '../utils/sanitize';
 
 /**
  * COMPONENT: LeaveView
@@ -29,8 +30,24 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     const [adjustSickAmount, setAdjustSickAmount] = useState(1);
     const [isAdjusting, setIsAdjusting] = useState(false);
 
+    // 🟩 NEW: Lets users browse the leave calendar to other months instead of
+    // being locked to whatever month it currently is.
+    const [calendarDate, setCalendarDate] = useState(() => {
+        const now = new Date();
+        return { year: now.getFullYear(), month: now.getMonth() };
+    });
+
     // Filters active employee rows for supervisor form drop-downs
     const employeeUsers = (allUsers || []).filter(u => u.role === 'employee');
+
+    // 🟩 FIX: The "My Remaining Allowance" card reads userProfile.vacation_days /
+    // sick_days directly, but userProfile was only ever refreshed at login.
+    // If a supervisor approved this leave elsewhere, the balance in this
+    // session went stale even though the DB was correct. Refresh on mount.
+    useEffect(() => {
+        if (fetchProfile) fetchProfile();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     /**
      * HELPER UTILITY: statusColor
@@ -63,7 +80,10 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     });
 
     // Reformats filtered leave objects before passing data into Excel exports
-    const leaveExportPayload = filteredLeaveRequests.map(req => ({
+    const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
+    const leaveExportPayload = filteredLeaveRequests
+        .filter(req => exportEmployeeId === 'all' || req.employee_id === exportEmployeeId)
+        .map(req => ({
         Date: req.created_at ? new Date(req.created_at).toLocaleDateString('en-GB') : 'N/A',
         Intern: getUserName(req.employee_id),
         Origin: getUserCampus(req.employee_id),
@@ -87,10 +107,36 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             alert('Please fill out all dates.');
             return;
         }
-        
+
+        const start = new Date(newRequest.start_date);
+        const end = new Date(newRequest.end_date);
+        const requestedDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+        if (requestedDays <= 0) {
+            alert('End date must be on or after the start date.');
+            return;
+        }
+
+        // 🟩 QUOTA GUARD: Paid Holiday and Sick Leave draw from the intern's
+        // profile balance. Block the submission client-side if it would
+        // exceed what they currently have — supervisors can still override
+        // shortfalls later at approval time if there's a genuine emergency.
+        const isQuotaType = newRequest.type === 'Paid Holiday' || newRequest.type === 'Sick Leave';
+        if (isQuotaType) {
+            const leaveType = newRequest.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
+            const available = userProfile[leaveType] || 0;
+            const label = leaveType === 'sick_days' ? 'sick' : 'vacation';
+
+            if (requestedDays > available) {
+                alert(`You're requesting ${requestedDays} day(s) but only have ${available} ${label} day(s) left. Adjust your dates or ask your supervisor to raise your quota first.`);
+                return;
+            }
+        }
+
         setLoading(true);
         const { error } = await supabase.from('leave_requests').insert({
             ...newRequest,
+            reason: sanitizeUserInput(newRequest.reason, { maxLength: 500 }),
             employee_id: userProfile.id,
             status: 'Pending' 
         });
@@ -101,7 +147,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             // 🟩 FIX: Ping all supervisors that a new leave form is waiting
             const supervisors = allUsers.filter(u => u.role === 'supervisor');
             supervisors.forEach(async (sup) => {
-                await createNotification(sup.id, `📅 Leave Request: ${userProfile.name} has submitted a new ${newRequest.type} form.`);
+                await createNotification(sup.id, `📅 Leave Request: ${userProfile.name} has submitted a new ${newRequest.type} form (${newRequest.start_date} to ${newRequest.end_date}).`);
             });
 
             setNewRequest({ type: 'Paid Holiday', start_date: '', end_date: '', reason: '' });
@@ -158,7 +204,47 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      * 3. Deducts the requested days using strict constraints to protect against allocation overflows.
      */
     const handleApproval = async (id, status, request) => {
-        if (!confirm(`Are you sure you want to ${status} this request?`)) return;
+        const isQuotaType = request.type === 'Paid Holiday' || request.type === 'Sick Leave';
+        let daysDiff = 0;
+        let leaveType = null;
+        let currentDays = null;
+
+        // 🟩 QUOTA GUARD: for quota-drawing types, check the balance BEFORE
+        // committing the status change. If the request overruns the
+        // intern's remaining days, the supervisor gets an explicit warning
+        // and has to knowingly confirm the override — the system no longer
+        // silently approves-and-clamps-to-zero.
+        if (status === 'Approved' && isQuotaType) {
+            const start = new Date(request.start_date);
+            const end = new Date(request.end_date);
+            // Computes explicit timeline differences including the active baseline start cell day
+            daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+            leaveType = request.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
+
+            const { data: targetProfile, error: fetchError } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', request.employee_id)
+                .single();
+
+            if (targetProfile && !fetchError) {
+                currentDays = targetProfile[leaveType] || 0;
+            }
+
+            const overageDays = currentDays !== null ? daysDiff - currentDays : 0;
+            const label = leaveType === 'sick_days' ? 'sick' : 'vacation';
+
+            if (overageDays > 0) {
+                const overrideConfirmed = confirm(
+                    `⚠️ ${getUserName(request.employee_id)} only has ${currentDays} ${label} day(s) left, but this request is for ${daysDiff} day(s) — ${overageDays} over quota.\n\nApprove anyway? This overrides their quota and sets their balance to 0.`
+                );
+                if (!overrideConfirmed) return;
+            } else {
+                if (!confirm(`Are you sure you want to approve this request?`)) return;
+            }
+        } else {
+            if (!confirm(`Are you sure you want to ${status} this request?`)) return;
+        }
 
         const { error: updateError } = await supabase.from('leave_requests')
             .update({ status: status })
@@ -170,34 +256,18 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         }
 
         // Runs dynamic allowance deduction if the supervisor grants approval
-        if (status === 'Approved' && (request.type === 'Paid Holiday' || request.type === 'Sick Leave')) {
-            const start = new Date(request.start_date);
-            const end = new Date(request.end_date);
-            // Computes explicit timeline differences including the active baseline start cell day
-            const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1; 
+        if (status === 'Approved' && isQuotaType && leaveType && currentDays !== null) {
+            const newDays = Math.max(0, currentDays - daysDiff); // Locks deductions to positive coordinates
 
-            const leaveType = request.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
-            
-            const { data: targetProfile, error: fetchError } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', request.employee_id)
-                .single();
-            
-            if (targetProfile && !fetchError) {
-                const currentDays = targetProfile[leaveType] || 0;
-                const newDays = Math.max(0, currentDays - daysDiff); // Locks deductions to positive coordinates
+            const { error: profileError } = await supabase.from('profiles')
+                .update({ [leaveType]: newDays })
+                .eq('id', request.employee_id);
 
-                const { error: profileError } = await supabase.from('profiles')
-                    .update({ [leaveType]: newDays })
-                    .eq('id', request.employee_id);
-
-                if (profileError) console.error('Error deducting days:', profileError);
-            }
+            if (profileError) console.error('Error deducting days:', profileError);
         }
         
         // 🟩 FIX: Send notification back to the intern about the decision!
-        await createNotification(request.employee_id, `📅 Leave Request Update: Your request for ${request.type} has been ${status}.`);
+        await createNotification(request.employee_id, `📅 Leave Request Update: Your request for ${request.type} (${request.start_date} to ${request.end_date}) has been ${status}.`);
 
         await fetchLeaveRequests(); 
         if (request.employee_id === userProfile.id) {
@@ -210,10 +280,29 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      * PURPOSE: Dynamically draws shared workspace calendar cells for the active month.
      * LOGIC: Checks loop iterations against valid start/end intervals to map intern indicators safely.
      */
+    const goToPrevMonth = () => {
+        setCalendarDate(prev => {
+            const newMonth = prev.month === 0 ? 11 : prev.month - 1;
+            const newYear = prev.month === 0 ? prev.year - 1 : prev.year;
+            return { year: newYear, month: newMonth };
+        });
+    };
+
+    const goToNextMonth = () => {
+        setCalendarDate(prev => {
+            const newMonth = prev.month === 11 ? 0 : prev.month + 1;
+            const newYear = prev.month === 11 ? prev.year + 1 : prev.year;
+            return { year: newYear, month: newMonth };
+        });
+    };
+
+    const goToCurrentMonth = () => {
+        const now = new Date();
+        setCalendarDate({ year: now.getFullYear(), month: now.getMonth() });
+    };
+
     const renderCalendar = () => {
-        const today = new Date();
-        const year = today.getFullYear();
-        const month = today.getMonth(); 
+        const { year, month } = calendarDate;
         
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         const firstDayOfMonth = new Date(year, month, 1).getDay(); 
@@ -260,7 +349,17 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                     <p className="text-sm text-gray-500 dark:text-gray-400">Request leaves, review rosters, and export historical logs.</p>
                 </div>
                 {userProfile.role === 'supervisor' && (
-                    <ExportButton data={leaveExportPayload} filename="Handpicked_Leave_Report" label="Export Leave Logs" />
+                    <div className="flex items-center gap-2">
+                        <select
+                            value={exportEmployeeId}
+                            onChange={(e) => setExportEmployeeId(e.target.value)}
+                            className="text-xs font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl px-2 py-2 focus:outline-none focus:border-blue-500"
+                        >
+                            <option value="all">All Employees</option>
+                            {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                        </select>
+                        <ExportButton data={leaveExportPayload} filename={exportEmployeeId === 'all' ? "Handpicked_Leave_Report" : `Leave_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Leave Logs" />
+                    </div>
                 )}
             </div>
 
@@ -389,7 +488,16 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
 
             {/* --- SECTION 2: GRID SCHEDULE CALENDAR OVERVIEW --- */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
-                <h2 className="text-sm font-bold text-gray-800 mb-4 dark:text-gray-100 uppercase tracking-wider text-gray-400">Leave Calendar Overview (Current Month)</h2>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                    <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100 uppercase tracking-wider text-gray-400">
+                        Leave Calendar Overview — {new Date(calendarDate.year, calendarDate.month, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={goToPrevMonth} className="p-2 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">← Prev</button>
+                        <button type="button" onClick={goToCurrentMonth} className="px-3 py-2 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Today</button>
+                        <button type="button" onClick={goToNextMonth} className="p-2 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Next →</button>
+                    </div>
+                </div>
                 <div className="grid grid-cols-7 gap-0 border border-gray-200 dark:border-gray-700 rounded-2xl overflow-hidden shadow-sm">
                     {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
                         <div key={d} className="bg-gray-50 p-2.5 text-center text-xs font-bold text-gray-400 border-b border-gray-200 dark:bg-gray-700/60 dark:text-gray-400 dark:border-gray-600">{d}</div>
@@ -399,10 +507,11 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             </div>
 
             {/* --- SECTION 3: REVISION FILTERS ROW HUB --- */}
-            {userProfile.role === 'supervisor' && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                     <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Search Intern / Keyword</label>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            {userProfile.role === 'supervisor' ? 'Search Intern / Keyword' : 'Search Reason / Keyword'}
+                        </label>
                         <input 
                             type="text"
                             value={searchTerm}
@@ -437,8 +546,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                             <option value="Denied">Denied</option>
                         </select>
                     </div>
-                </div>
-            )}
+            </div>
 
             {/* --- SECTION 4: HISTORICAL DATA TABLE LISTS --- */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden dark:bg-gray-800 dark:border-gray-700">

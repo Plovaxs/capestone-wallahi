@@ -5,6 +5,7 @@ import ExportButton from '../components/ExportButton';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateTaskSubmissionFile } from '../utils/validateMime';
 import { sanitizeTaskSubmissionExtension } from '../utils/sanitize';
+import { sanitizeUserInput } from '../utils/sanitize';
 import { showUserError } from '../utils/errorHandling';
 
 /**
@@ -42,11 +43,6 @@ const UserAvatar = ({ user, size = "w-6 h-6", textSize = "text-[9px]" }) => {
  * ACCESS ROLES: Employees view personal streams; Supervisors modify target parameters globally.
  */
 const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createNotification }) => {
-    
-    // Safety check ensuring authentication state is resolved before mounting DOM branches
-    if (!userProfile) {
-        return <div className="p-8 text-gray-500">Initializing Task System...</div>;
-    }
 
     // --- VIEWPORT VIEW CONFIGURATIONS ---
     const [viewMode, setViewMode] = useState('board'); // Toggles layout profiles ('board' vs 'timeline')
@@ -72,10 +68,26 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     const [selectedFiles, setSelectedFiles] = useState({}); // Indexes files locally before upload validation
     const [uploading, setUploading] = useState(null); // Keeps track of active loading states per row ID
 
+    // 🟩 NEW: Lets the timeline scroll forward/backward instead of being
+    // permanently locked to "today + 7 days".
+    const [timelineOffsetDays, setTimelineOffsetDays] = useState(0);
+
     // --- SEARCH FILTERS AND CONTROLS ---
     const [searchTerm, setSearchTerm] = useState('');
     const [filterEmployee, setFilterEmployee] = useState('all');
     const [filterPriority, setFilterPriority] = useState('all');
+    const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
+
+    // 🟩 FIX: This guard used to sit ABOVE all the useState calls, which meant
+    // React ran 0 hooks while userProfile was still loading and then suddenly
+    // ~14 hooks once it resolved — a Rules-of-Hooks violation that throws
+    // "Rendered fewer/more hooks than expected" and crashes the view whenever
+    // userProfile transitions from null to loaded while this is mounted.
+    // Hooks must always run in the same order every render, so the guard now
+    // comes after every hook declaration instead of before.
+    if (!userProfile) {
+        return <div className="p-8 text-gray-500">Initializing Task System...</div>;
+    }
 
     // Filters active employee roster records for select option loops
     const employeeUsers = (allUsers || []).filter(u => u.role === 'employee');
@@ -162,7 +174,9 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     };
 
     // Formats filtered parameters into a sanitized format before generating spreadsheet reports
-    const exportData = processedTasks.map(t => ({
+    const exportData = processedTasks
+        .filter(t => exportEmployeeId === 'all' || (t.assigned_to || []).includes(exportEmployeeId))
+        .map(t => ({
         Task: t.title,
         Description: t.description,
         Priority: t.priority,
@@ -173,16 +187,20 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         Feedback: t.feedback || 'None'
     }));
 
-    // Generates a forward-facing 7-day row block array to construct layout cells for the timeline view
+    // Generates a 7-day row block array to construct layout cells for the timeline view,
+    // shifted by timelineOffsetDays so the view can scroll to other weeks/months.
     const timelineDates = (() => {
         const days = [];
         for (let i = 0; i < 7; i++) {
             const d = new Date();
-            d.setDate(d.getDate() + i);
+            d.setDate(d.getDate() + timelineOffsetDays + i);
             days.push(d.toISOString().split('T')[0]);
         }
         return days;
     })();
+
+    const shiftTimeline = (deltaDays) => setTimelineOffsetDays(prev => prev + deltaDays);
+    const resetTimelineToToday = () => setTimelineOffsetDays(0);
 
     // =========================================================================
     // ⚙️ CORE BACKEND MUTATION CONTROLLERS (SUPABASE DISPATCH PIPELINES)
@@ -200,7 +218,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         }
         const { error } = await supabase.from('tasks').insert({
             title: newTask.title,
-            description: newTask.description,
+            description: sanitizeUserInput(newTask.description, { maxLength: 2000 }),
             assigned_to: newTask.assigned_to, 
             due_date: newTask.due_date,
             priority: newTask.priority,
@@ -262,7 +280,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 return;
             }
             updatePayload.status = 'Revision Needed';
-            updatePayload.feedback = extensionFeedback.trim();
+            updatePayload.feedback = sanitizeUserInput(extensionFeedback, { maxLength: 1000 });
             noticeText = `Revision Required for "${extensionTask.title}". Extended Target: ${extensionDate}`;
         } else {
             noticeText = `🎉 Breathing Room: Deadline extended for "${extensionTask.title}" to ${extensionDate}.`;
@@ -305,9 +323,26 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             e.target.value = null; 
             return;
         }
-        if (e.target.files?.[0]) {
-            setSelectedFiles(prev => ({ ...prev, [taskId]: e.target.files[0] })); 
+
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // 🟩 FIX: Validate the moment a file is picked, not just when the user
+        // clicks Send. Previously any file type (.exe, .stl, anything) could
+        // sit selected with zero feedback until the later Send-time check.
+        const validation = validateTaskSubmissionFile(file);
+        if (!validation.valid) {
+            showUserError('Wrong file type', { message: validation.error });
+            e.target.value = null;
+            setSelectedFiles(prev => {
+                const next = { ...prev };
+                delete next[taskId];
+                return next;
+            });
+            return;
         }
+
+        setSelectedFiles(prev => ({ ...prev, [taskId]: file })); 
     };
 
    const handleFileUpload = async (taskId) => {
@@ -436,7 +471,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                                 {(task.status === 'In Progress' || task.status === 'Revision Needed') && (
                                     <label className="cursor-pointer text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">
                                         {uploading === task.id ? '...' : (task.status === 'Revision Needed' ? 'Re-Upload' : 'Upload')}
-                                        <input type="file" className="hidden" onChange={(e) => handleFileChange(e, task.id)} />
+                                        <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" className="hidden" onChange={(e) => handleFileChange(e, task.id)} />
                                         {selectedFiles[task.id] && <button onClick={() => handleFileUpload(task.id)} className="ml-1 underline font-bold text-indigo-600 dark:text-indigo-400">Send</button>}
                                     </label>
                                 )}
@@ -516,7 +551,17 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 
                 <div className="flex flex-wrap gap-2 items-center w-full md:w-auto justify-end">
                     {userProfile.role === 'supervisor' && (
-                        <ExportButton data={exportData} filename="Handpicked_Task_Report" label="Export Hand-Picked Tasks" />
+                        <>
+                            <select
+                                value={exportEmployeeId}
+                                onChange={(e) => setExportEmployeeId(e.target.value)}
+                                className="text-xs font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl px-2 py-2 focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="all">All Employees</option>
+                                {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                            </select>
+                            <ExportButton data={exportData} filename={exportEmployeeId === 'all' ? "Handpicked_Task_Report" : `Tasks_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Hand-Picked Tasks" />
+                        </>
                     )}
 
                     <div className="flex gap-2 bg-gray-100 p-1 rounded-xl dark:bg-gray-700 border dark:border-gray-600">
@@ -701,6 +746,18 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             {/* --- VIEW COMPONENT 2: TIMELINE GRID PROFILE --- */}
             {viewMode === 'timeline' && (
                 <div className="space-y-8 animate-fade-in-down">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                            {new Date(timelineDates[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — {new Date(timelineDates[6]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" onClick={() => shiftTimeline(-30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">« Month</button>
+                            <button type="button" onClick={() => shiftTimeline(-7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">‹ Week</button>
+                            <button type="button" onClick={resetTimelineToToday} className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition">Today</button>
+                            <button type="button" onClick={() => shiftTimeline(7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Week ›</button>
+                            <button type="button" onClick={() => shiftTimeline(30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Month »</button>
+                        </div>
+                    </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto dark:bg-gray-800 dark:border-gray-700">
                         <div className="min-w-[800px]">
                             <div className="grid grid-cols-8 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">

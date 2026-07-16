@@ -48,7 +48,6 @@ export default function LoginPage() {
 
   const [modelsLoaded, setModelsLoaded] = useState(false); 
   const [blinkCount, setBlinkCount] = useState(0);
-  const [cooldownUntil, setCooldownUntil] = useState(0);
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -90,7 +89,7 @@ export default function LoginPage() {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(e => console.error(e));
         }
-      } catch (err) {
+      } catch (_err) {
         setBiometricStatus('Webcam stream unreachable');
       }
     }
@@ -163,17 +162,13 @@ export default function LoginPage() {
           setBiometricStatus('No face detected. Align your face.');
         }
       } catch (err) {
+        console.error('Face detection error:', err);
       }
 
       rafId = requestAnimationFrame(detectLoop);
     };
 
     if (modelsLoaded) {
-      if (Date.now() < cooldownUntil) {
-       setBiometricStatus(`Please wait ${Math.ceil((cooldownUntil - Date.now()) / 1000)}s...`);
-       rafId = requestAnimationFrame(detectLoop);
-       return;
-     }
       rafId = requestAnimationFrame(detectLoop);
     }
 
@@ -190,15 +185,11 @@ export default function LoginPage() {
      body: { descriptor: Array.from(liveDescriptor) },
    });
 
-   const now = Date.now();
-             if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
-               // Ignore blinks/noise while still cooling down from the last attempt
-               setBiometricStatus('Please wait a moment...');
-             } else {
-               lastAttemptRef.current = now;
-               setBiometricStatus('Liveness verified. Matching...');
-               await executeBiometricLogin(detection.descriptor);
-             }
+   if (error || !data?.token_hash) {
+     isRedirectingRef.current = false;
+     setError('Face not recognized on server. Please try again.');
+     return;
+   }
 
    // Exchange the server-issued token for a real, verified session.
    const { error: verifyError } = await supabase.auth.verifyOtp({
@@ -287,11 +278,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen w-full flex font-sans">
-      <div className="w-1/2 bg-slate-900 flex items-center justify-center p-8">
+    <div className="relative min-h-screen w-full flex flex-col md:flex-row font-sans">
+      <div className="w-full md:w-1/2 bg-slate-900 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
-            <img src={LoginLogo} alt="Logo" className="h-16 mx-auto mb-4" />
+            <img src={LoginLogo} alt="Logo" className="h-14 sm:h-16 mx-auto mb-4" />
             <h2 className="text-2xl font-bold text-white mb-1">Bea Cukai</h2>
             <p className="text-blue-200 text-xs uppercase tracking-wider">Employee Monitoring System</p>
           </div>
@@ -363,12 +354,12 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="w-1/2 bg-gradient-to-br from-blue-900 via-slate-950 to-indigo-950 flex flex-col items-center p-8 justify-center">
-        <div className="absolute top-4 right-4">
+      <div className="relative w-full md:w-1/2 bg-gradient-to-br from-blue-900 via-slate-950 to-indigo-950 flex flex-col items-center p-6 sm:p-8 py-10 justify-center">
+        <div className="hidden md:block absolute top-4 right-4">
           <img src={LoginLogo} alt="Logo" className="h-10 w-auto opacity-60" />
         </div>
 
-        <div className="relative w-72 h-72 bg-black rounded-full border-4 border-dashed border-blue-400 overflow-hidden flex items-center justify-center mb-6 shadow-[0_0_35px_rgba(59,130,246,0.2)]">
+        <div className="relative w-52 h-52 sm:w-64 sm:h-64 md:w-72 md:h-72 bg-black rounded-full border-4 border-dashed border-blue-400 overflow-hidden flex items-center justify-center mb-6 shadow-[0_0_35px_rgba(59,130,246,0.2)]">
           <video
             ref={videoRef}
             autoPlay
@@ -377,13 +368,13 @@ export default function LoginPage() {
             className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[10px] font-bold text-blue-400 px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap z-20">
+          <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
             {biometricStatus}
           </div>
         </div>
 
-        <h3 className="text-lg font-bold text-white mb-1">Zero-Touch Biometric Gate</h3>
-        <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono">
+        <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">Zero-Touch Biometric Gate</h3>
+        <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono px-4">
           {blinkCount > 0 ? '✅ LIVE USER VERIFIED' : '🔒 Silahkan berkedip untuk masuk'}
         </p>
       </div>
