@@ -305,7 +305,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         <div className="p-8 max-w-7xl mx-auto space-y-6">
             <div>
                 <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Performance Assessment</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Formal assessment engine mapped directly to university appraisal frameworks.</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Formal assessment form for employee work performance.</p>
             </div>
 
             {/* SUPERVISOR PANEL INTERFACE SHEETS */}
@@ -331,7 +331,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                 >
                                     <option value="name-az">Sort: Alphabetical (A-Z)</option>
                                     <option value="name-za">Sort: Alphabetical (Z-A)</option>
-                                    <option value="campus">Sort: Campus / Origin</option>
+                                    <option value="campus">Sort: By Institution</option>
                                 </select>
                             </div>
 
