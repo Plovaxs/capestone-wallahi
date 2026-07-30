@@ -667,7 +667,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Origin Institution</label>
                             <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
-                                <option value="all">All Campuses</option>
+                                <option value="all">All Companies/Institutions</option>
                                 {uniqueSources.map(src => <option key={src} value={src}>{src}</option>)}
                             </select>
                         </div>
