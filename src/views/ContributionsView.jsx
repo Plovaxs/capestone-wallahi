@@ -20,6 +20,10 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
     const [replyInputs, setReplyInputs] = useState({}); // Stores key-value tracking texts per card ID
     const [submittingReplyId, setSubmittingReplyId] = useState(null); // Local loading state for reply dispatches
 
+    // --- INLINE POST EDIT TRACKING (typo/fix support for the original author) ---
+    const [editingPostId, setEditingPostId] = useState(null);
+    const [editPostText, setEditPostText] = useState('');
+
     // --- TIMELINE FILTER SELECTION CONTROLS ---
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('all');
@@ -68,14 +72,9 @@ const handleCreateThread = async () => {
             }
 
 
-            // 🟩 NEW: If they select Help or Blocker, ping the supervisors!
-            if (category.includes('Help') || category.includes('Blocker')) {
-                const supervisors = allUsers.filter(u => u.role === 'supervisor');
-                supervisors.forEach(async (sup) => {
-                    // The smart parser will catch the "action required" keyword and turn it red/alert mode!
-                    await createNotification(sup.id, `🚨 Action Required: ${userProfile.name} posted an urgent ${category} in the forum.`);
-                });
-            }
+            // Notifying supervisors on Help/Blocker posts is now handled
+            // server-side by the notify_urgent_contribution trigger — the
+            // client can no longer insert into notifications directly (RLS).
 
             setNewPost('');
             fetchContributions(); 
@@ -103,6 +102,27 @@ const handleCreateThread = async () => {
             showUserError('Failed to delete thread', error);
         } else {
             fetchContributions(); // Refresh live view feeds state cache
+        }
+    };
+
+    /**
+     * TRANSACTION: handleEditThread
+     * PURPOSE: Lets the original author fix typos in their own thread's opening message.
+     */
+    const handleEditThread = async (postId) => {
+        if (!editPostText.trim()) return;
+
+        const { error } = await supabase
+            .from('contributions')
+            .update({ contribution: sanitizeUserInput(editPostText, { maxLength: 2000 }) })
+            .eq('id', postId);
+
+        if (error) {
+            showUserError('Failed to update post', error);
+        } else {
+            setEditingPostId(null);
+            setEditPostText('');
+            fetchContributions();
         }
     };
 
@@ -242,6 +262,7 @@ const handleCreateThread = async () => {
                     // SECURITY VERIFICATION LOGIC: Grants removal credentials if administrative role parameters 
                     // evaluate to 'supervisor', or if the current token session user matches the initial thread creator index
                     const canDelete = userProfile.role === 'supervisor' || String(post.employee_id) === String(userProfile.id);
+                    const canEdit = String(post.employee_id) === String(userProfile.id);
 
                     return (
                         <div key={post.id} className={`bg-white dark:bg-gray-800 rounded-2xl border shadow-sm p-5 space-y-4 dark:border-gray-700/60 ${
@@ -274,6 +295,20 @@ const handleCreateThread = async () => {
                                         {post.category}
                                     </span>
 
+                                    {/* RENDERS INLINE EDIT TOGGLE ONLY FOR THE ORIGINAL AUTHOR */}
+                                    {canEdit && (
+                                        <button
+                                            type="button"
+                                            onClick={() => { setEditingPostId(post.id); setEditPostText(post.contribution); }}
+                                            className="p-1.5 text-gray-400 hover:text-blue-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                                            title="Edit Post"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                            </svg>
+                                        </button>
+                                    )}
+
                                     {/* RENDERS INTERACTION TRASH CONTROLS ONLY IF AUTHORIZATION CHECKS PASS */}
                                     {canDelete && (
                                         <button
@@ -291,9 +326,37 @@ const handleCreateThread = async () => {
                             </div>
 
                             {/* Core Initial Message Thread Box */}
-                            <p className="text-gray-700 dark:text-gray-200 text-xs md:text-sm whitespace-pre-wrap pl-1 leading-relaxed">
-                                {post.contribution}
-                            </p>
+                            {editingPostId === post.id ? (
+                                <div className="space-y-2 pl-1">
+                                    <textarea
+                                        value={editPostText}
+                                        onChange={(e) => setEditPostText(e.target.value)}
+                                        className="w-full p-3 border border-blue-200 rounded-xl text-xs md:text-sm bg-blue-50/30 focus:bg-white focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all resize-none dark:bg-gray-900/40 dark:border-blue-700 dark:text-white"
+                                        rows="3"
+                                    />
+                                    <div className="flex gap-2 justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setEditingPostId(null); setEditPostText(''); }}
+                                            className="px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 rounded-lg"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleEditThread(post.id)}
+                                            disabled={!editPostText.trim()}
+                                            className="px-3 py-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                                        >
+                                            Save Changes
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="text-gray-700 dark:text-gray-200 text-xs md:text-sm whitespace-pre-wrap pl-1 leading-relaxed">
+                                    {post.contribution}
+                                </p>
+                            )}
 
                             {/* --- NESTED SUB-COMMENT REPLIES ACCORDION FEED --- */}
                             {postReplies.length > 0 && (
