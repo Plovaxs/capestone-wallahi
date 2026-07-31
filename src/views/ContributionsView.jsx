@@ -67,16 +67,6 @@ const handleCreateThread = async () => {
                 return;
             }
 
-
-            // 🟩 NEW: If they select Help or Blocker, ping the supervisors!
-            if (category.includes('Help') || category.includes('Blocker')) {
-                const supervisors = allUsers.filter(u => u.role === 'supervisor');
-                supervisors.forEach(async (sup) => {
-                    // The smart parser will catch the "action required" keyword and turn it red/alert mode!
-                    await createNotification(sup.id, `🚨 Action Required: ${userProfile.name} posted an urgent ${category} in the forum.`);
-                });
-            }
-
             setNewPost('');
             fetchContributions(); 
         } catch (error) {
