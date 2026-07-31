@@ -271,19 +271,25 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             return;
         }
 
-        const updatePayload = { due_date: extensionDate, is_extended: true };
+        if (!extensionFeedback.trim()) {
+            alert(extensionMode === 'reject'
+                ? "Please add a reason for the revision."
+                : "Please add a reason for the extension.");
+            return;
+        }
+
+        const updatePayload = {
+            due_date: extensionDate,
+            is_extended: true,
+            feedback: sanitizeUserInput(extensionFeedback, { maxLength: 1000 })
+        };
         let noticeText = '';
 
         if (extensionMode === 'reject') {
-            if (!extensionFeedback.trim()) {
-                alert("Please add a reason for the revision.");
-                return;
-            }
             updatePayload.status = 'Revision Needed';
-            updatePayload.feedback = sanitizeUserInput(extensionFeedback, { maxLength: 1000 });
             noticeText = `Revision Required for "${extensionTask.title}". Extended Target: ${extensionDate}`;
         } else {
-            noticeText = `🎉 Breathing Room: Deadline extended for "${extensionTask.title}" to ${extensionDate}.`;
+            noticeText = `🎉 Breathing Room: Deadline extended for "${extensionTask.title}" to ${extensionDate}. Reason: ${extensionFeedback.trim()}`;
         }
 
         const { error } = await supabase.from('tasks').update(updatePayload).eq('id', extensionTask.id);
@@ -673,19 +679,21 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 title={extensionMode === 'reject' ? "🚨 Flag Revision Required" : "⏳ Grant Project Breathing Room"}
             >
                 <div className="space-y-4 text-xs">
-                    {extensionMode === 'reject' && (
-                        <div>
-                            <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1">Reason for Revision / Notes</label>
-                            <textarea
-                                required
-                                value={extensionFeedback}
-                                onChange={(e) => setExtensionFeedback(e.target.value)}
-                                placeholder="Specify details, issues, or sections that need fixing..."
-                                className="w-full p-2.5 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none focus:outline-none"
-                                rows="3"
-                            />
-                        </div>
-                    )}
+                    <div>
+                        <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            {extensionMode === 'reject' ? 'Reason for Revision / Notes' : 'Reason for Extension'}
+                        </label>
+                        <textarea
+                            required
+                            value={extensionFeedback}
+                            onChange={(e) => setExtensionFeedback(e.target.value)}
+                            placeholder={extensionMode === 'reject'
+                                ? "Specify details, issues, or sections that need fixing..."
+                                : "Explain why this deadline needs to be extended..."}
+                            className="w-full p-2.5 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none focus:outline-none"
+                            rows="3"
+                        />
+                    </div>
 
                     <div>
                         <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1">Select Extended Due Date</label>
