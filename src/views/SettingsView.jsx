@@ -271,7 +271,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
             {userProfile.role === 'supervisor' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
                     <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">Manage Staff Assignments</h3>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Assign each intern's department and internship contract period. This is enforced server-side \u2014 employees cannot edit these fields themselves.</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Assign each intern's department and internship contract period.</p>
 
                     <div className="space-y-3">
                         {employeeUsers.length === 0 && (
