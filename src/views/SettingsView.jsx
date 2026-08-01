@@ -12,11 +12,17 @@ import { showUserError } from '../utils/errorHandling';
  * 1. Binary stream uploads to Supabase Object Storage with automated public URL bindings.
  * 2. User credential mutation handlers via Supabase Auth updating security layers.
  */
-const SettingsView = ({ userProfile, fetchProfile }) => {
+const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers }) => {
     // --- INTERFACE UTILITY LOADING STATES ---
     const [uploading, setUploading] = useState(false);
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+
+    // --- SUPERVISOR-ONLY: STAFF DEPARTMENT / CONTRACT ASSIGNMENT ---
+    const [editingStaffId, setEditingStaffId] = useState(null);
+    const [staffEditDraft, setStaffEditDraft] = useState({ department: '', contract_start_date: '', contract_end_date: '' });
+    const [savingStaffId, setSavingStaffId] = useState(null);
+    const employeeUsers = allUsers.filter(u => u.role === 'employee');
 
     /**
      * PIPELINE TRANSACTION: handleAvatarUpload
@@ -118,6 +124,33 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
         }
     };
 
+    /**
+     * PIPELINE TRANSACTION: handleSaveStaffAssignment
+     * PURPOSE: Supervisor-only update of another user's department and
+     * internship contract period. Guarded server-side by the
+     * protect_privileged_profile_columns trigger regardless of what the
+     * client sends.
+     */
+    const handleSaveStaffAssignment = async (targetId) => {
+        setSavingStaffId(targetId);
+        const { error } = await supabase
+            .from('profiles')
+            .update({
+                department: staffEditDraft.department || null,
+                contract_start_date: staffEditDraft.contract_start_date || null,
+                contract_end_date: staffEditDraft.contract_end_date || null,
+            })
+            .eq('id', targetId);
+
+        if (error) {
+            showUserError('Failed to update assignment', error);
+        } else {
+            setEditingStaffId(null);
+            fetchAllUsers && fetchAllUsers();
+        }
+        setSavingStaffId(null);
+    };
+
     return (
         <div className="p-8 max-w-4xl mx-auto space-y-6">
             <div>
@@ -126,7 +159,27 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                
+
+                {/* --- CONTAINER SECTION 0: MY ASSIGNMENT (READ-ONLY FOR EVERYONE) --- */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 md:col-span-2">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">My Assignment</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">Department and contract period are set by your supervisor.</p>
+                    <div className="flex flex-col sm:flex-row gap-6 text-xs">
+                        <div className="space-y-1">
+                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">Department</span>
+                            <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || 'Not assigned yet'}</span>
+                        </div>
+                        <div className="space-y-1">
+                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">Contract Period</span>
+                            <span className="font-bold text-gray-800 dark:text-gray-100">
+                                {userProfile.contract_start_date && userProfile.contract_end_date
+                                    ? `${new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}`
+                                    : 'Not set yet'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
                 {/* --- CONTAINER SECTION 1: PROFILE PICTURE ASSET ENGINE --- */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 flex flex-col justify-between">
                     <div>
@@ -213,6 +266,100 @@ const SettingsView = ({ userProfile, fetchProfile }) => {
                 </div>
 
             </div>
+
+            {/* --- CONTAINER SECTION 3: MANAGE STAFF ASSIGNMENTS (SUPERVISOR ONLY) --- */}
+            {userProfile.role === 'supervisor' && (
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">Manage Staff Assignments</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Assign each intern's department and internship contract period. This is enforced server-side \u2014 employees cannot edit these fields themselves.</p>
+
+                    <div className="space-y-3">
+                        {employeeUsers.length === 0 && (
+                            <p className="text-xs text-gray-400 italic py-4 text-center">No employee accounts found yet.</p>
+                        )}
+                        {employeeUsers.map(emp => (
+                            <div key={emp.id} className="border border-gray-100 dark:border-gray-700 rounded-xl p-4">
+                                <div className="flex justify-between items-center gap-4">
+                                    <div>
+                                        <p className="font-bold text-sm text-gray-800 dark:text-gray-100">{emp.name}</p>
+                                        <p className="text-[11px] text-gray-400">
+                                            {emp.department || 'No department'} &middot; {emp.contract_start_date && emp.contract_end_date
+                                                ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
+                                                : 'No contract dates'}
+                                        </p>
+                                    </div>
+                                    {editingStaffId !== emp.id && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setEditingStaffId(emp.id);
+                                                setStaffEditDraft({
+                                                    department: emp.department || '',
+                                                    contract_start_date: emp.contract_start_date || '',
+                                                    contract_end_date: emp.contract_end_date || '',
+                                                });
+                                            }}
+                                            className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                                        >
+                                            Edit
+                                        </button>
+                                    )}
+                                </div>
+
+                                {editingStaffId === emp.id && (
+                                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Department</label>
+                                            <input
+                                                type="text"
+                                                value={staffEditDraft.department}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, department: e.target.value }))}
+                                                placeholder="e.g. IT Division"
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contract Start</label>
+                                            <input
+                                                type="date"
+                                                value={staffEditDraft.contract_start_date}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, contract_start_date: e.target.value }))}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contract End</label>
+                                            <input
+                                                type="date"
+                                                value={staffEditDraft.contract_end_date}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, contract_end_date: e.target.value }))}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="sm:col-span-3 flex gap-2 justify-end mt-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setEditingStaffId(null)}
+                                                className="px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 rounded-lg"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSaveStaffAssignment(emp.id)}
+                                                disabled={savingStaffId === emp.id}
+                                                className="px-3 py-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                                            >
+                                                {savingStaffId === emp.id ? 'Saving...' : 'Save'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

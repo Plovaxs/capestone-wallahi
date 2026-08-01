@@ -261,6 +261,7 @@ export default function App() {
             setActiveView={setActiveView}
             userProfile={userProfile}
             allUsers={allUsers}
+            fetchAllUsers={fetchAllUsers}
             tasks={tasks}
             fetchTasks={() => fetchTasks(userProfile)}
             attendance={attendance}

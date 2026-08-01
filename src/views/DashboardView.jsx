@@ -20,7 +20,8 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             metrics: true,
             attendanceChart: true,
             taskChart: true,
-            recentReviews: true
+            recentReviews: true,
+            contractInfo: true
         };
     });
 
@@ -79,6 +80,22 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         const match = allUsers.find(u => String(u.id) === String(id));
         return match ? match.name : 'Unknown Officer';
     };
+
+    // --- ASSIGNMENT & CONTRACT STATUS (supervisor-set, read-only here) ---
+    const getContractStatus = () => {
+        if (!userProfile.contract_start_date || !userProfile.contract_end_date) {
+            return { hasContract: false };
+        }
+        const start = new Date(userProfile.contract_start_date);
+        const end = new Date(userProfile.contract_end_date);
+        const now = new Date();
+        const totalDays = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+        const elapsedDays = Math.min(totalDays, Math.max(0, Math.ceil((now - start) / (1000 * 60 * 60 * 24))));
+        const remainingDays = Math.max(0, Math.ceil((end - now) / (1000 * 60 * 60 * 24)));
+        const percent = Math.min(100, Math.round((elapsedDays / totalDays) * 100));
+        return { hasContract: true, remainingDays, percent, isOver: now > end };
+    };
+    const contractStatus = getContractStatus();
 
     // =========================================================================
     // 📈 FIXED CALENDAR CHART DATA PROCESSING ENGINE
@@ -183,6 +200,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     <input type="checkbox" checked={widgets.recentReviews} onChange={() => toggleWidget('recentReviews')} className="form-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
                                     <span>Recent Appraisals Sheet</span>
                                 </label>
+                                <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                    <input type="checkbox" checked={widgets.contractInfo} onChange={() => toggleWidget('contractInfo')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                    <span>Assignment & Contract</span>
+                                </label>
                             </div>
                         </div>
                     )}
@@ -238,6 +259,41 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                             )}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* --- ASSIGNMENT & CONTRACT CARD --- */}
+            {widgets.contractInfo && (
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">Assignment & Contract</h2>
+                    {userProfile.department || contractStatus.hasContract ? (
+                        <div className="space-y-3 max-w-md">
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="font-bold text-gray-400 uppercase tracking-wider">Department</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || 'Not assigned yet'}</span>
+                            </div>
+                            {contractStatus.hasContract ? (
+                                <>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="font-bold text-gray-400 uppercase tracking-wider">Contract Period</span>
+                                        <span className="font-bold text-gray-800 dark:text-gray-100">
+                                            {new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – {new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}
+                                        </span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                                        <div className={`h-2 rounded-full ${contractStatus.isOver ? 'bg-gray-400' : 'bg-blue-500'}`} style={{ width: `${contractStatus.percent}%` }} />
+                                    </div>
+                                    <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                                        {contractStatus.isOver ? 'Contract period completed' : `${contractStatus.remainingDays} day(s) remaining`}
+                                    </p>
+                                </>
+                            ) : (
+                                <p className="text-xs text-gray-400 italic">Contract dates not set yet.</p>
+                            )}
+                        </div>
+                    ) : (
+                        <p className="text-center text-xs text-gray-400 py-4 dark:text-gray-500 italic">No department or contract assigned yet. Your supervisor can set this from Settings.</p>
+                    )}
                 </div>
             )}
 
