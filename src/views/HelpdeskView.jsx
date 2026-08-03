@@ -5,8 +5,6 @@ import { showUserError } from '../utils/errorHandling';
 // --- PROBLEM TYPE CHECKLIST OPTIONS ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
 
-
-
 const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchHelpdeskTickets }) => {
     const [newTitle, setNewTitle] = useState('');
     const [newContent, setNewContent] = useState('');
@@ -29,11 +27,11 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
     };
     const STATUS_ORDER = ['Open', 'In Progress', 'Resolved'];
 
-    const visibleTickets = mockTickets
+    const visibleTickets = helpdeskTickets
         .filter(t => statusFilter === 'all' || t.ticket_status === statusFilter)
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    const openCount = mockTickets.filter(t => t.ticket_status === 'Open').length;
+    const openCount = helpdeskTickets.filter(t => t.ticket_status === 'Open').length;
 
     const toggleProblemType = (type) => {
         setSelectedProblemTypes(prev =>
