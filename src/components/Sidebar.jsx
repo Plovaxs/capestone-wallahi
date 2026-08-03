@@ -1,7 +1,7 @@
 import React from 'react';
 import { Icons } from './Icons';
 
-const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMobileOpen }) => {
+const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMobileOpen, openTicketCount = 0 }) => {
   
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Icons.LayoutDashboard },
@@ -9,6 +9,7 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
     { id: 'attendance', label: 'Attendance', icon: Icons.CalendarDays },
     { id: 'leave', label: 'Leave Requests', icon: Icons.CalendarDays },
     { id: 'contributions', label: 'Contributions', icon: Icons.Trophy },
+    { id: 'helpdesk', label: 'Helpdesk', icon: Icons.LifeBuoy, badge: openTicketCount },
     { id: 'reviews', label: 'Performance', icon: Icons.UserCircle, supervisorOnly: true },
   ];
 
@@ -67,7 +68,12 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
                 <span className={isActive ? 'text-white' : 'text-gray-400 group-hover:text-blue-600 dark:text-gray-500 dark:group-hover:text-white'}>
                    {item.icon}
                 </span>
-                {item.label}
+                <span className="flex-1 text-left">{item.label}</span>
+                {!!item.badge && (
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/25 text-white' : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'}`}>
+                        {item.badge}
+                    </span>
+                )}
               </button>
             );
           })}

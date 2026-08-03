@@ -14,6 +14,7 @@ import ContributionsView from './views/ContributionsView';
 import LeaveView from './views/LeaveView';
 import PerformanceReviewView from './views/PerformanceReviewView';
 import SettingsView from './views/SettingsView';
+import HelpdeskView from './views/HelpdeskView';
 
 const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
@@ -21,6 +22,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'attendance': return <AttendanceView {...props} userProfile={userProfile} />;
     case 'tasks': return <TasksView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
     case 'contributions': return <ContributionsView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
+    case 'helpdesk': return <HelpdeskView {...props} userProfile={userProfile} />;
     case 'leave': return <LeaveView {...props} userProfile={userProfile} createNotification={props.createNotification} fetchProfile={props.fetchProfile} />;
     case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
@@ -250,7 +252,7 @@ export default function App() {
     <div className="flex min-h-screen font-sans bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
       <Toaster position="top-right" toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
 
-      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} />
+      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={contributions.filter(c => ((c.category || '').includes('Help') || (c.category || '').includes('Blocker')) && (c.ticket_status || 'Open') === 'Open').length} />
 
       <div className="flex-1 flex flex-col md:ml-64 transition-all duration-300 relative w-full">
         <Header userProfile={userProfile} onLogout={handleLogout} notifications={notifications} onNotificationsRead={handleNotificationsRead} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} toggleMobileSidebar={() => setIsMobileOpen(!isMobileOpen)} />

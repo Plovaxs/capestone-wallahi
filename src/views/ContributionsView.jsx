@@ -13,6 +13,7 @@ import { sanitizeUserInput } from '../utils/sanitize';
 const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions, createNotification }) => {
     // --- POST COMPOSER FORUM STATES ---
     const [newPost, setNewPost] = useState('');
+    const [newTitle, setNewTitle] = useState('');
     const [category, setCategory] = useState('General Discussion');
     const [isSubmitting, setIsSubmitting] = useState(false);
     
@@ -31,8 +32,6 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
     // Sanitized forum tags mapping consistent aesthetic border configurations
     const FORUM_CATEGORIES = [
         { name: 'General Discussion', color: 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600', active: 'bg-blue-600 text-white border-blue-600' },
-        { name: 'Help Request ❓', color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800', active: 'bg-amber-500 text-white border-amber-500' },
-        { name: 'Urgent Blocker 🚨', color: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800', active: 'bg-red-600 text-white border-red-600' },
         { name: 'Project Milestone 🎉', color: 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800', active: 'bg-purple-600 text-white border-purple-600' },
     ];
 
@@ -62,6 +61,7 @@ const handleCreateThread = async () => {
             const { error } = await supabase.from('contributions').insert({
                 employee_id: userProfile.id,
                 date: new Date().toISOString().split('T')[0],
+                title: newTitle.trim() ? sanitizeUserInput(newTitle, { maxLength: 150 }) : null,
                 contribution: sanitizeUserInput(newPost, { maxLength: 2000 }),
                 category: category
             });
@@ -72,6 +72,7 @@ const handleCreateThread = async () => {
             }
 
             setNewPost('');
+            setNewTitle('');
             fetchContributions(); 
         } catch (error) {
             showUserError('Failed to create post', error);
@@ -157,8 +158,15 @@ const handleCreateThread = async () => {
     // =========================================================================
     // 🔍 REAL-TIME SEARCH INDEX FILTER PIPELINES
     // =========================================================================
-    const filteredThreads = contributions.filter(post => {
+    // Help Request / Urgent Blocker now live exclusively in the Helpdesk
+    // menu — excluded here so the general forum stays general-discussion-only.
+    const generalThreads = contributions.filter(post =>
+        !(post.category || '').includes('Help') && !(post.category || '').includes('Blocker')
+    );
+
+    const filteredThreads = generalThreads.filter(post => {
         const matchesSearch = post.contribution.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                             (post.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                              getUserName(post.employee_id).toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = selectedCategory === 'all' || post.category === selectedCategory;
         return matchesSearch && matchesCategory;
@@ -207,6 +215,13 @@ const handleCreateThread = async () => {
                     </h3>
                     
                     <div className="flex flex-col gap-3">
+                        <input
+                            type="text"
+                            value={newTitle}
+                            onChange={(e) => setNewTitle(e.target.value)}
+                            className="w-full p-3 border border-gray-100 rounded-xl text-sm font-bold bg-gray-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all dark:bg-gray-900/40 dark:border-gray-600 dark:text-white dark:focus:bg-gray-900"
+                            placeholder="Title (optional)"
+                        />
                         <textarea 
                             value={newPost} 
                             onChange={(e) => setNewPost(e.target.value)}
@@ -319,6 +334,11 @@ const handleCreateThread = async () => {
                                     )}
                                 </div>
                             </div>
+
+                            {/* Thread Title (optional — older posts and quick posts may not have one) */}
+                            {post.title && (
+                                <h3 className="font-bold text-gray-800 dark:text-gray-100 text-sm pl-1">{post.title}</h3>
+                            )}
 
                             {/* Core Initial Message Thread Box */}
                             {editingPostId === post.id ? (
