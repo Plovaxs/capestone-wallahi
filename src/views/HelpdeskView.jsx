@@ -1,11 +1,20 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
 
-// --- PROBLEM TYPE CHECKLIST OPTIONS ---
+// --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
+const PROBLEM_TYPE_KEYS = {
+    'Hardware': 'problemHardware',
+    'Software': 'problemSoftware',
+    'Git Control': 'problemGitControl',
+    'Workflow': 'problemWorkflow',
+    'Additional Resource': 'problemAdditionalResource',
+};
 
 const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchHelpdeskTickets }) => {
+    const { t } = useTranslation();
     const [newTitle, setNewTitle] = useState('');
     const [newContent, setNewContent] = useState('');
     const [ticketCategory, setTicketCategory] = useState('Help Request ❓');
@@ -26,6 +35,8 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
         'Resolved': 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
     };
     const STATUS_ORDER = ['Open', 'In Progress', 'Resolved'];
+    const STATUS_LABEL_KEYS = { 'Open': 'statusOpen', 'In Progress': 'statusInProgress', 'Resolved': 'statusResolved' };
+    const getStatusLabel = (status) => t(`helpdesk.${STATUS_LABEL_KEYS[status]}`);
 
     const visibleTickets = helpdeskTickets
         .filter(t => statusFilter === 'all' || t.ticket_status === statusFilter)
@@ -94,16 +105,16 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
 
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-xl font-bold text-gray-800 dark:text-white">Helpdesk</h1>
+                    <h1 className="text-xl font-bold text-gray-800 dark:text-white">{t('helpdesk.title')}</h1>
                     <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">
                         {userProfile?.role === 'supervisor'
-                            ? 'Urgent requests and blockers from your team.'
-                            : 'Your urgent requests and blockers.'}
+                            ? t('helpdesk.supervisorSubtitle')
+                            : t('helpdesk.employeeSubtitle')}
                     </p>
                 </div>
                 {openCount > 0 && (
                     <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                        {openCount} Open
+                        {t('helpdesk.openCount', { count: openCount })}
                     </span>
                 )}
             </div>
@@ -113,23 +124,25 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
 
                 {/* Title — separate from content */}
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Title</label>
+                    <label htmlFor="ticket-title" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('helpdesk.ticketTitle')}</label>
                     <input
+                        id="ticket-title"
                         type="text"
                         value={newTitle}
                         onChange={(e) => setNewTitle(e.target.value)}
-                        placeholder={`Short summary, e.g. "Can't push to final-form branch"`}
+                        placeholder={t('helpdesk.titlePlaceholder')}
                         className="w-full p-2.5 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 dark:bg-gray-900/40 dark:border-gray-600 dark:text-white"
                     />
                 </div>
 
                 {/* Content — the description */}
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Details</label>
+                    <label htmlFor="ticket-details" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('helpdesk.details')}</label>
                     <textarea
+                        id="ticket-details"
                         value={newContent}
                         onChange={(e) => setNewContent(e.target.value)}
-                        placeholder="Describe what you're blocked on or need help with..."
+                        placeholder={t('helpdesk.detailsPlaceholder')}
                         className="w-full p-3 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 dark:bg-gray-900/40 dark:border-gray-600 dark:text-white"
                         rows="3"
                     />
@@ -137,7 +150,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
 
                 {/* Problem type checklist */}
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Type of Problem</label>
+                    <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('helpdesk.typeOfProblem')}</span>
                     <div className="flex flex-wrap gap-x-4 gap-y-2">
                         {PROBLEM_TYPES.map(type => (
                             <label key={type} className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-300">
@@ -147,7 +160,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                     onChange={() => toggleProblemType(type)}
                                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5"
                                 />
-                                {type}
+                                {t(`helpdesk.${PROBLEM_TYPE_KEYS[type]}`)}
                             </label>
                         ))}
                     </div>
@@ -167,7 +180,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                         disabled={!newTitle.trim() || !newContent.trim()}
                         className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
                     >
-                        File Ticket
+                        {t('helpdesk.fileTicket')}
                     </button>
                 </div>
             </div>
@@ -185,7 +198,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                 : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'
                         }`}
                     >
-                        {s === 'all' ? 'All' : s}
+                        {s === 'all' ? t('helpdesk.all') : getStatusLabel(s)}
                     </button>
                 ))}
             </div>
@@ -194,7 +207,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
             <div className="space-y-4">
                 {visibleTickets.length === 0 && (
                     <div className="text-center py-12 text-gray-400 text-sm italic">
-                        No tickets here. {statusFilter === 'Open' && 'Nothing urgent right now.'}
+                        {t('helpdesk.noTickets')} {statusFilter === 'Open' && t('helpdesk.nothingUrgent')}
                     </div>
                 )}
 
@@ -219,10 +232,10 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                             {/* Category, status, and problem-type tags */}
                             <div className="flex items-center gap-2 flex-wrap mb-3">
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${tagStyle}`}>{ticket.category}</span>
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_STYLES[status]}`}>{status}</span>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_STYLES[status]}`}>{getStatusLabel(status)}</span>
                                 {(ticket.problem_types || []).map(pt => (
                                     <span key={pt} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600">
-                                        {pt}
+                                        {PROBLEM_TYPE_KEYS[pt] ? t(`helpdesk.${PROBLEM_TYPE_KEYS[pt]}`) : pt}
                                     </span>
                                 ))}
                             </div>
@@ -247,7 +260,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                                     : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50 dark:bg-gray-900/40 dark:border-gray-600'
                                             }`}
                                         >
-                                            Mark {s}
+                                            {t('helpdesk.markStatus', { status: getStatusLabel(s) })}
                                         </button>
                                     ))}
                                 </div>
@@ -271,7 +284,8 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                     value={replyInputs[ticket.id] || ''}
                                     onChange={(e) => setReplyInputs(prev => ({ ...prev, [ticket.id]: e.target.value }))}
                                     onKeyPress={(e) => e.key === 'Enter' && handleSendReply(ticket.id)}
-                                    placeholder="Reply..."
+                                    placeholder={t('helpdesk.replyPlaceholder')}
+                                    aria-label={t('helpdesk.replyPlaceholder')}
                                     className="flex-1 p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                 />
                                 <button
@@ -280,7 +294,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                     disabled={!(replyInputs[ticket.id] || '').trim()}
                                     className="px-3 py-2 text-xs font-bold text-blue-600 hover:text-blue-800 disabled:opacity-40"
                                 >
-                                    Send
+                                    {t('helpdesk.send')}
                                 </button>
                             </div>
                         </div>

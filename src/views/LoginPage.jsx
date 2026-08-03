@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import * as faceapi from 'face-api.js';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
@@ -30,6 +31,7 @@ function calculateEAR(eyeLandmarks) {
 }
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const [authMode, setAuthMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,7 +40,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [biometricStatus, setBiometricStatus] = useState('Initializing Scanner...');
+  const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
 
   const videoRef = useRef(null);
   const isEyeClosedRef = useRef(false);
@@ -52,17 +54,17 @@ export default function LoginPage() {
   useEffect(() => {
     async function loadNeuralModels() {
       try {
-        setBiometricStatus('Loading network weights...');
+        setBiometricStatus(t('login.statusLoadingModels'));
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
           faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
           faceapi.nets.faceRecognitionNet.loadFromUri('/models')
         ]);
         setModelsLoaded(true);
-        setBiometricStatus('Position face for scan');
+        setBiometricStatus(t('login.statusPositionFace'));
       } catch (err) {
         console.error('Failed to load neural models:', err);
-        setBiometricStatus('Model weight assets unreachable');
+        setBiometricStatus(t('login.statusModelsUnreachable'));
       }
     }
     loadNeuralModels();
@@ -90,7 +92,7 @@ export default function LoginPage() {
           videoRef.current.play().catch(e => console.error(e));
         }
       } catch (_err) {
-        setBiometricStatus('Webcam stream unreachable');
+        setBiometricStatus(t('login.statusWebcamUnreachable'));
       }
     }
 
@@ -142,24 +144,24 @@ export default function LoginPage() {
               const now = Date.now();
              if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
                // Ignore blinks/noise while still cooling down from the last attempt
-               setBiometricStatus('Please wait a moment...');
+               setBiometricStatus(t('login.statusPleaseWait'));
              } else {
                lastAttemptRef.current = now;
-               setBiometricStatus('Liveness verified. Matching...');
+               setBiometricStatus(t('login.statusLivenessVerified'));
                await executeBiometricLogin(detection.descriptor);
              }
             } else {
-              setBiometricStatus('Matrix verified. Ready to register.');
+              setBiometricStatus(t('login.statusMatrixVerified'));
             }
           } else {
             if (authMode === 'login') {
-              setBiometricStatus('Blink to authenticate');
+              setBiometricStatus(t('login.statusBlinkToAuth'));
             } else {
-              setBiometricStatus('Face locked. Fill form to register.');
+              setBiometricStatus(t('login.statusFaceLocked'));
             }
           }
         } else {
-          setBiometricStatus('No face detected. Align your face.');
+          setBiometricStatus(t('login.statusNoFace'));
         }
       } catch (err) {
         console.error('Face detection error:', err);
@@ -179,7 +181,7 @@ export default function LoginPage() {
 
   const executeBiometricLogin = async (liveDescriptor) => {
        isRedirectingRef.current = true;
-   setBiometricStatus('Verifying with server...');
+   setBiometricStatus(t('login.statusVerifyingServer'));
 
    const { data, error } = await supabase.functions.invoke('biometric-login', {
      body: { descriptor: Array.from(liveDescriptor) },
@@ -187,7 +189,7 @@ export default function LoginPage() {
 
    if (error || !data?.token_hash) {
      isRedirectingRef.current = false;
-     setError('Face not recognized on server. Please try again.');
+     setError(t('login.errorFaceNotRecognized'));
      return;
    }
 
@@ -199,7 +201,7 @@ export default function LoginPage() {
 
    if (verifyError) {
      isRedirectingRef.current = false;
-     setError('Session verification failed. Please try again.');
+     setError(t('login.errorSessionVerification'));
      return;
    }
    // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
@@ -213,27 +215,27 @@ export default function LoginPage() {
     try {
       if (authMode === 'register') {
         if (!videoRef.current || videoRef.current.readyState < 2) {
-          throw new Error('Kamera belum siap, tunggu frame muncul.');
+          throw new Error(t('login.errorCameraNotReady'));
         }
 
-        setBiometricStatus('Capturing HIGH DEF face matrix...');
+        setBiometricStatus(t('login.statusCapturing'));
         const detection = await faceapi
           .detectSingleFace(
-            videoRef.current, 
+            videoRef.current,
             // 🟩 FIX 2: STRICT REGISTRATION SCORE
             // 0.6 prevents the camera from saving blurry or poorly lit face scans
-            new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.6 }) 
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.6 })
           )
           .withFaceLandmarks()
           .withFaceDescriptor();
 
         if (!detection) {
-          throw new Error('Tatap kamera dengan jelas! Pastikan cahaya terang dan muka tidak tertutup.');
+          throw new Error(t('login.errorFaceUnclear'));
         }
-        
+
         const stringifiedDescriptor = JSON.stringify(Array.from(detection.descriptor));
 
-        setBiometricStatus('Creating account...');
+        setBiometricStatus(t('login.statusCreatingAccount'));
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
@@ -242,11 +244,11 @@ export default function LoginPage() {
 
         if (signUpError) throw signUpError;
         const newUser = signUpData?.user;
-        if (!newUser) throw new Error('Gagal mendapat allocation UUID');
+        if (!newUser) throw new Error(t('login.errorNoUuid'));
 
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        setBiometricStatus('Saving strict profile...');
+        setBiometricStatus(t('login.statusSavingProfile'));
         const { error: profileError } = await supabase
           .from('profiles')
           .upsert([{
@@ -260,10 +262,10 @@ export default function LoginPage() {
 
         if (profileError) throw profileError;
 
-        setBiometricStatus('Registrasi berhasil!');
-        alert('🔥 High-Fidelity Face Matrix synchronized successfully!');
-        
-        setMessage('Face registration saved. Use your password to sign in.');
+        setBiometricStatus(t('login.statusRegisterSuccess'));
+        alert(t('login.faceSyncSuccessAlert'));
+
+        setMessage(t('login.faceRegisteredMessage'));
 
       } else {
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
@@ -271,7 +273,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       setError(err.message);
-      setBiometricStatus('Failed');
+      setBiometricStatus(t('login.statusFailed'));
     } finally {
       setLoading(false);
     }
@@ -283,8 +285,8 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">
             <img src={LoginLogo} alt="Logo" className="h-14 sm:h-16 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-white mb-1">Bea Cukai</h2>
-            <p className="text-blue-200 text-xs uppercase tracking-wider">Employee Monitoring System</p>
+            <h2 className="text-2xl font-bold text-white mb-1">{t('login.companyName')}</h2>
+            <p className="text-blue-200 text-xs uppercase tracking-wider">{t('login.systemSubtitle')}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -292,7 +294,8 @@ export default function LoginPage() {
               <>
                 <input
                   type="text"
-                  placeholder="Nama Lengkap"
+                  placeholder={t('login.fullName')}
+                  aria-label={t('login.fullName')}
                   value={name}
                   onChange={e => setName(e.target.value)}
                   className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
@@ -300,7 +303,8 @@ export default function LoginPage() {
                 />
                 <input
                   type="text"
-                  placeholder="Inisial"
+                  placeholder={t('login.initials')}
+                  aria-label={t('login.initials')}
                   value={initials}
                   onChange={e => setInitials(e.target.value)}
                   className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm uppercase focus:outline-none"
@@ -312,7 +316,8 @@ export default function LoginPage() {
 
             <input
               type="email"
-              placeholder="Email Resmi"
+              placeholder={t('login.officialEmail')}
+              aria-label={t('login.officialEmail')}
               value={email}
               onChange={e => setEmail(e.target.value)}
               className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
@@ -320,22 +325,23 @@ export default function LoginPage() {
             />
             <input
               type="password"
-              placeholder="Password"
+              placeholder={t('login.password')}
+              aria-label={t('login.password')}
               value={password}
               onChange={e => setPassword(e.target.value)}
               className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
               required
             />
 
-            {error && <div className="text-red-300 text-xs bg-red-500/20 p-2 rounded">{error}</div>}
-            {message && <div className="text-emerald-300 text-xs bg-emerald-500/20 p-2 rounded">{message}</div>}
+            {error && <div role="alert" className="text-red-300 text-xs bg-red-500/20 p-2 rounded">{error}</div>}
+            {message && <div role="status" className="text-emerald-300 text-xs bg-emerald-500/20 p-2 rounded">{message}</div>}
 
             <button
               type="submit"
               disabled={loading}
               className="w-full py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 text-slate-900 font-bold rounded-lg uppercase text-sm tracking-wider shadow-md disabled:opacity-50"
             >
-              {loading ? 'Memproses...' : authMode === 'register' ? 'Daftar & Scan Wajah' : 'Masuk'}
+              {loading ? t('login.processing') : authMode === 'register' ? t('login.registerAndScan') : t('login.signIn')}
             </button>
           </form>
 
@@ -348,7 +354,7 @@ export default function LoginPage() {
               }}
               className="text-blue-200 text-sm hover:text-white underline bg-transparent border-none cursor-pointer"
             >
-              {authMode === 'login' ? 'Belum punya akun? Daftar' : 'Sudah punya akun? Masuk'}
+              {authMode === 'login' ? t('login.noAccountYet') : t('login.haveAccount')}
             </button>
           </div>
         </div>
@@ -368,14 +374,14 @@ export default function LoginPage() {
             className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
-          <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
+          <div aria-live="polite" className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
             {biometricStatus}
           </div>
         </div>
 
-        <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">Zero-Touch Biometric Gate</h3>
+        <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">{t('login.zeroTouchGate')}</h3>
         <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono px-4">
-          {blinkCount > 0 ? '✅ LIVE USER VERIFIED' : '🔒 Silahkan berkedip untuk masuk'}
+          {blinkCount > 0 ? t('login.liveVerified') : t('login.blinkToEnter')}
         </p>
       </div>
     </div>

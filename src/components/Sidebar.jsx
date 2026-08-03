@@ -1,16 +1,18 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Icons } from './Icons';
 
 const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMobileOpen, openTicketCount = 0 }) => {
-  
+  const { t } = useTranslation();
+
   const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Icons.LayoutDashboard },
-    { id: 'tasks', label: 'My Tasks', icon: Icons.ClipboardList },
-    { id: 'attendance', label: 'Attendance', icon: Icons.CalendarDays },
-    { id: 'leave', label: 'Leave Requests', icon: Icons.CalendarDays },
-    { id: 'contributions', label: 'Contributions', icon: Icons.Trophy },
-    { id: 'helpdesk', label: 'Helpdesk', icon: Icons.LifeBuoy, badge: openTicketCount },
-    { id: 'reviews', label: 'Performance', icon: Icons.UserCircle, supervisorOnly: true },
+    { id: 'dashboard', label: t('nav.dashboard'), icon: Icons.LayoutDashboard },
+    { id: 'tasks', label: t('nav.myTasks'), icon: Icons.ClipboardList },
+    { id: 'attendance', label: t('nav.attendance'), icon: Icons.CalendarDays },
+    { id: 'leave', label: t('nav.leaveRequests'), icon: Icons.CalendarDays },
+    { id: 'contributions', label: t('nav.contributions'), icon: Icons.Trophy },
+    { id: 'helpdesk', label: t('nav.helpdesk'), icon: Icons.LifeBuoy, badge: openTicketCount },
+    { id: 'reviews', label: t('nav.performance'), icon: Icons.UserCircle, supervisorOnly: true },
   ];
 
   const handleNavClick = (id) => {
@@ -41,12 +43,12 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
       >
         {/* Mobile Header (Optional) */}
         <div className="h-16 flex items-center justify-center border-b border-gray-100 dark:border-gray-700 md:hidden">
-            <span className="font-bold text-gray-800 dark:text-white">Menu</span>
+            <span className="font-bold text-gray-800 dark:text-white">{t('nav.menu')}</span>
         </div>
 
         {/* Navigation Links */}
         <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
-          <div className="text-xs font-bold text-gray-400 uppercase mb-2 px-3 tracking-wider">Apps</div>
+          <div className="text-xs font-bold text-gray-400 uppercase mb-2 px-3 tracking-wider">{t('nav.apps')}</div>
           
           {menuItems.map(item => {
             if (item.supervisorOnly && userProfile?.role !== 'supervisor') return null;
@@ -91,8 +93,8 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
                     }
                 `}
             >
-                <span className="text-xl">⚙️</span> 
-                <span>Settings</span>
+                <span className="text-xl">⚙️</span>
+                <span>{t('nav.settings')}</span>
             </button>
         </div>
       </aside>

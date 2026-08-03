@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import Modal from '../components/Modal';
 import ExportButton from '../components/ExportButton';
@@ -42,7 +43,8 @@ const UserAvatar = ({ user, size = "w-6 h-6", textSize = "text-[9px]" }) => {
  * PURPOSE: Manages the Kanban sprint boards, assignment creation workflows, and task deadline adjustments.
  * ACCESS ROLES: Employees view personal streams; Supervisors modify target parameters globally.
  */
-const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createNotification }) => {
+const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
+    const { t } = useTranslation();
 
     // --- VIEWPORT VIEW CONFIGURATIONS ---
     const [viewMode, setViewMode] = useState('board'); // Toggles layout profiles ('board' vs 'timeline')
@@ -78,6 +80,10 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     const [filterPriority, setFilterPriority] = useState('all');
     const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
 
+    // --- BULK APPROVAL SELECTION (supervisor only, Completed tasks) ---
+    const [selectedTaskIds, setSelectedTaskIds] = useState(new Set());
+    const [isBulkApproving, setIsBulkApproving] = useState(false);
+
     // 🟩 FIX: This guard used to sit ABOVE all the useState calls, which meant
     // React ran 0 hooks while userProfile was still loading and then suddenly
     // ~14 hooks once it resolved — a Rules-of-Hooks violation that throws
@@ -86,7 +92,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     // Hooks must always run in the same order every render, so the guard now
     // comes after every hook declaration instead of before.
     if (!userProfile) {
-        return <div className="p-8 text-gray-500">Initializing Task System...</div>;
+        return <div className="p-8 text-gray-500">{t('tasks.initializing')}</div>;
     }
 
     // Filters active employee roster records for select option loops
@@ -97,10 +103,10 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
 
     // Static layout configuration definitions matching Kanban column rules
     const COLUMNS = [
-        { id: 'col_todo', label: 'To Do', color: 'bg-purple-600' },
-        { id: 'col_doing', label: 'In Progress', color: 'bg-orange-500' },
-        { id: 'col_review', label: 'Ready for Review', color: 'bg-pink-500' }, 
-        { id: 'col_done', label: 'Done', color: 'bg-green-500' }
+        { id: 'col_todo', label: t('tasks.colToDo'), color: 'bg-purple-600' },
+        { id: 'col_doing', label: t('tasks.colInProgress'), color: 'bg-orange-500' },
+        { id: 'col_review', label: t('tasks.colReview'), color: 'bg-pink-500' },
+        { id: 'col_done', label: t('tasks.colDone'), color: 'bg-green-500' }
     ];
 
     /**
@@ -166,25 +172,25 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     });
 
     const getAssigneeNames = (ids) => {
-        if (!ids || !Array.isArray(ids)) return 'Unassigned';
+        if (!ids || !Array.isArray(ids)) return t('tasks.unassigned');
         return ids.map(id => {
             const user = allUsers.find(u => String(u.id) === String(id));
-            return user ? user.name : 'Unknown';
+            return user ? user.name : t('tasks.unknown');
         }).join(', ');
     };
 
     // Formats filtered parameters into a sanitized format before generating spreadsheet reports
     const exportData = processedTasks
-        .filter(t => exportEmployeeId === 'all' || (t.assigned_to || []).includes(exportEmployeeId))
-        .map(t => ({
-        Task: t.title,
-        Description: t.description,
-        Priority: t.priority,
-        Status: t.status,
-        "Due Date": t.due_date,
-        "Deadline Warning": getDeadlineStatus(t.due_date, t.status),
-        "Assigned To": getAssigneeNames(t.assigned_to),
-        Feedback: t.feedback || 'None'
+        .filter(task => exportEmployeeId === 'all' || (task.assigned_to || []).includes(exportEmployeeId))
+        .map(task => ({
+        Task: task.title,
+        Description: task.description,
+        Priority: task.priority,
+        Status: task.status,
+        "Due Date": task.due_date,
+        "Deadline Warning": getDeadlineStatus(task.due_date, task.status),
+        "Assigned To": getAssigneeNames(task.assigned_to),
+        Feedback: task.feedback || t('tasks.noneFeedback')
     }));
 
     // Generates a 7-day row block array to construct layout cells for the timeline view,
@@ -213,7 +219,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
      */
     const handleCreateTask = async () => {
         if (!newTask.title || newTask.assigned_to.length === 0 || !newTask.due_date) {
-            alert('Please fill out all required fields.');
+            alert(t('tasks.fillRequiredFields'));
             return;
         }
         const { error } = await supabase.from('tasks').insert({
@@ -227,8 +233,10 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         });
         if (error) showUserError('Failed to create task', error);
         else {
-            newTask.assigned_to.forEach(async (userId) => await createNotification(userId, `New Task Assigned: ${newTask.title}`));
-            alert('Task assigned successfully.');
+            // Notifying assignees is now handled server-side by the
+            // notify_task_assigned trigger — the client can no longer
+            // insert into notifications directly (RLS).
+            alert(t('tasks.taskAssignedSuccess'));
             setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal' });
             setIsModalOpen(false);
             fetchTasks(); 
@@ -249,11 +257,39 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
         if (error) {
             showUserError('Failed to update task status', error);
         } else {
-            (task.assigned_to || []).forEach(async (userId) => {
-                await createNotification(userId, `🎉 Task Approved: Your submission for "${task.title}" has been successfully approved!`);
-            });
+            // Notifying assignees is now handled server-side by the
+            // notify_task_status_change trigger — the client can no longer
+            // insert into notifications directly (RLS).
             fetchTasks();
         }
+    };
+
+    const toggleTaskSelection = (taskId) => {
+        setSelectedTaskIds(prev => {
+            const next = new Set(prev);
+            if (next.has(taskId)) next.delete(taskId);
+            else next.add(taskId);
+            return next;
+        });
+    };
+
+    const handleBulkApproveTasks = async () => {
+        if (selectedTaskIds.size === 0) return;
+        if (!confirm(t('tasks.confirmBulkApprove', { count: selectedTaskIds.size }))) return;
+
+        setIsBulkApproving(true);
+        const { error } = await supabase
+            .from('tasks')
+            .update({ status: 'Approved' })
+            .in('id', Array.from(selectedTaskIds));
+
+        if (error) {
+            showUserError('Failed to bulk approve tasks', error);
+        } else {
+            setSelectedTaskIds(new Set());
+            await fetchTasks();
+        }
+        setIsBulkApproving(false);
     };
 
     /**
@@ -267,14 +303,14 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
 
         // Hard minimum constraint verification safety layer
         if (extensionDate < tomorrowStr) {
-            alert("⚠️ Scheduling Contradiction: Earliest extension threshold starts from tomorrow.");
+            alert(t('tasks.schedulingContradiction'));
             return;
         }
 
         if (!extensionFeedback.trim()) {
             alert(extensionMode === 'reject'
-                ? "Please add a reason for the revision."
-                : "Please add a reason for the extension.");
+                ? t('tasks.reasonForRevision')
+                : t('tasks.reasonForExtension'));
             return;
         }
 
@@ -283,18 +319,17 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             is_extended: true,
             feedback: sanitizeUserInput(extensionFeedback, { maxLength: 1000 })
         };
-        let noticeText = '';
 
         if (extensionMode === 'reject') {
             updatePayload.status = 'Revision Needed';
-            noticeText = `Revision Required for "${extensionTask.title}". Extended Target: ${extensionDate}`;
-        } else {
-            noticeText = `🎉 Breathing Room: Deadline extended for "${extensionTask.title}" to ${extensionDate}. Reason: ${extensionFeedback.trim()}`;
         }
 
+        // Notifying assignees is now handled server-side: a status change
+        // (reject) fires notify_task_status_change, a plain extension fires
+        // notify_task_extended — the client can no longer insert into
+        // notifications directly (RLS).
         const { error } = await supabase.from('tasks').update(updatePayload).eq('id', extensionTask.id);
         if (!error) {
-            extensionTask.assigned_to.forEach(async (uid) => await createNotification(uid, noticeText));
             setIsExtensionModalOpen(false);
             setExtensionTask(null);
             fetchTasks();
@@ -325,7 +360,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
     const handleFileChange = (e, taskId) => { 
         const currentTask = tasks.find(t => t.id === taskId);
         if (!currentTask?.assigned_to?.includes(userProfile.id)) {
-            alert("⚠️ Access Denied: Task assigned to another employee.");
+            alert(t('tasks.accessDeniedTask'));
             e.target.value = null; 
             return;
         }
@@ -421,29 +456,38 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 
                 {/* STATUS BADGES FLEX LAYOUT ROW */}
                 <div className="flex flex-wrap items-center gap-1.5">
+                    {userProfile.role === 'supervisor' && task.status === 'Completed' && (
+                        <input
+                            type="checkbox"
+                            checked={selectedTaskIds.has(task.id)}
+                            onChange={() => toggleTaskSelection(task.id)}
+                            aria-label={t('tasks.selectForBulkApprove')}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5"
+                        />
+                    )}
                     <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md border ${getPriorityStyle(task.priority)}`}>
                         {task.priority}
                     </span>
 
                     {task.is_extended && (
                         <span className="text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-900/50 px-2 py-0.5 rounded-md tracking-wide shadow-sm flex items-center gap-1">
-                            ⏳ Extended
+                            {t('tasks.extended')}
                         </span>
                     )}
 
                     {task.status === 'Revision Needed' && (
                         <span className="text-[10px] font-bold bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50 px-2 py-0.5 rounded-md flex items-center gap-1">
-                            🛠️ Needs Fix
+                            {t('tasks.needsFix')}
                         </span>
                     )}
                     {deadlineStatus === 'Overdue' && (
                         <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900 px-2 py-0.5 rounded-md tracking-wide animate-pulse flex items-center gap-1">
-                            ⚠️ Overdue
+                            {t('tasks.overdue')}
                         </span>
                     )}
                     {deadlineStatus === 'Near Deadline' && (
                         <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50 px-2 py-0.5 rounded-md flex items-center gap-1">
-                            ⏳ Due Soon
+                            {t('tasks.dueSoon')}
                         </span>
                     )}
                 </div>
@@ -452,11 +496,11 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 <div>
                     <h4 className="font-bold text-gray-800 text-sm mb-1 dark:text-gray-100 leading-snug">{task.title}</h4>
                     <div className={`text-xs flex items-center gap-1 font-medium ${deadlineStatus === 'Overdue' ? 'text-red-500 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>
-                        <span>📅 Due: {task.due_date}</span>
+                        <span>{t('tasks.due', { date: task.due_date })}</span>
                     </div>
                     {task.feedback && task.status === 'Revision Needed' && (
                         <div className="mt-2 text-xs bg-red-50 text-red-600 p-2 rounded border border-red-100 italic dark:bg-red-900/10 dark:text-red-400 dark:border-red-900/30">
-                            "Supervisor: {task.feedback}"
+                            {t('tasks.supervisorFeedback', { feedback: task.feedback })}
                         </div>
                     )}
                 </div>
@@ -473,30 +517,30 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                     <div className="flex gap-1.5 text-xs font-bold items-center">
                         {userProfile.role !== 'supervisor' && (
                             <>
-                                {task.status === 'To Do' && <button onClick={() => handleStatusChange(task.id, 'In Progress')} className="text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">Start</button>}
+                                {task.status === 'To Do' && <button onClick={() => handleStatusChange(task.id, 'In Progress')} className="text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">{t('tasks.start')}</button>}
                                 {(task.status === 'In Progress' || task.status === 'Revision Needed') && (
                                     <label className="cursor-pointer text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">
-                                        {uploading === task.id ? '...' : (task.status === 'Revision Needed' ? 'Re-Upload' : 'Upload')}
+                                        {uploading === task.id ? '...' : (task.status === 'Revision Needed' ? t('tasks.reUpload') : t('tasks.upload'))}
                                         <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" className="hidden" onChange={(e) => handleFileChange(e, task.id)} />
-                                        {selectedFiles[task.id] && <button onClick={() => handleFileUpload(task.id)} className="ml-1 underline font-bold text-indigo-600 dark:text-indigo-400">Send</button>}
+                                        {selectedFiles[task.id] && <button onClick={() => handleFileUpload(task.id)} className="ml-1 underline font-bold text-indigo-600 dark:text-indigo-400">{t('tasks.send')}</button>}
                                     </label>
                                 )}
-                                {task.status === 'Completed' && <span className="text-gray-400 italic font-medium">Waiting...</span>}
+                                {task.status === 'Completed' && <span className="text-gray-400 italic font-medium">{t('tasks.waiting')}</span>}
                             </>
                         )}
-                        {task.submitted_file_path && <button onClick={() => handleViewSubmission(task.submitted_file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">View File</button>}
-                        
+                        {task.submitted_file_path && <button onClick={() => handleViewSubmission(task.submitted_file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>}
+
                         {/* Master Supervisor Action Controls Matrix */}
                         {userProfile.role === 'supervisor' && task.status === 'Completed' && (
                             <>
-                                <button onClick={() => handleApproveTask(task)} className="text-green-600 hover:text-green-800 font-bold bg-green-50 px-2 py-1 rounded dark:bg-green-900/20 dark:text-green-400">Approve</button>
-                                <button onClick={() => { 
+                                <button onClick={() => handleApproveTask(task)} className="text-green-600 hover:text-green-800 font-bold bg-green-50 px-2 py-1 rounded dark:bg-green-900/20 dark:text-green-400">{t('tasks.approve')}</button>
+                                <button onClick={() => {
                                     setExtensionTask(task);
                                     setExtensionDate(tomorrowStr);
                                     setExtensionFeedback('');
                                     setExtensionMode('reject');
                                     setIsExtensionModalOpen(true);
-                                }} className="text-red-600 hover:text-red-800 bg-red-50 px-2 py-1 rounded dark:bg-red-900/20 dark:text-red-400">Reject</button>
+                                }} className="text-red-600 hover:text-red-800 bg-red-50 px-2 py-1 rounded dark:bg-red-900/20 dark:text-red-400">{t('tasks.reject')}</button>
                             </>
                         )}
 
@@ -511,7 +555,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                                 }}
                                 className="text-amber-600 hover:text-amber-800 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300 px-2 py-1 rounded font-bold border border-amber-200 dark:border-amber-900/50 transition-all active:scale-95"
                             >
-                                ⏳ Extend
+                                {t('tasks.extend')}
                             </button>
                         )}
                     </div>
@@ -533,13 +577,13 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                          <UserAvatar user={employee} size="w-8 h-8" textSize="text-sm" />
                         <h4 className="font-bold text-gray-800 dark:text-gray-100">{employee.name}</h4>
                     </div>
-                    <span className="text-xs text-gray-400 font-medium">{done}/{total} Tasks</span>
+                    <span className="text-xs text-gray-400 font-medium">{t('tasks.tasksCount', { done, total })}</span>
                 </div>
                 <div className="w-full bg-gray-100 rounded-full h-2.5 dark:bg-gray-700">
                     <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }}></div>
                 </div>
                 <div className="flex justify-between text-xs font-bold mt-1">
-                    <span className="text-blue-600">{percentage}% Complete</span>
+                    <span className="text-blue-600">{t('tasks.percentComplete', { percent: percentage })}</span>
                 </div>
             </div>
         );
@@ -551,10 +595,10 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             {/* --- LAYOUT HEADER CONTROLS --- */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 dark:border-gray-700 pb-4 gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Task Management</h1>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Track project progress, critical timelines, and deliverables.</p>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('tasks.title')}</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{t('tasks.subtitle')}</p>
                 </div>
-                
+
                 <div className="flex flex-wrap gap-2 items-center w-full md:w-auto justify-end">
                     {userProfile.role === 'supervisor' && (
                         <>
@@ -563,21 +607,21 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                                 onChange={(e) => setExportEmployeeId(e.target.value)}
                                 className="text-xs font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl px-2 py-2 focus:outline-none focus:border-blue-500"
                             >
-                                <option value="all">All Employees</option>
+                                <option value="all">{t('tasks.allEmployees')}</option>
                                 {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                             </select>
-                            <ExportButton data={exportData} filename={exportEmployeeId === 'all' ? "Handpicked_Task_Report" : `Tasks_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Hand-Picked Tasks" />
+                            <ExportButton data={exportData} filename={exportEmployeeId === 'all' ? "Handpicked_Task_Report" : `Tasks_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label={t('tasks.exportHandPicked')} />
                         </>
                     )}
 
                     <div className="flex gap-2 bg-gray-100 p-1 rounded-xl dark:bg-gray-700 border dark:border-gray-600">
-                        <button type="button" onClick={() => setViewMode('board')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${viewMode === 'board' ? 'bg-white shadow text-blue-600 dark:bg-gray-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>Board</button>
-                        <button type="button" onClick={() => setViewMode('timeline')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${viewMode === 'timeline' ? 'bg-white shadow text-blue-600 dark:bg-gray-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>Timeline</button>
+                        <button type="button" onClick={() => setViewMode('board')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${viewMode === 'board' ? 'bg-white shadow text-blue-600 dark:bg-gray-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>{t('tasks.board')}</button>
+                        <button type="button" onClick={() => setViewMode('timeline')} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${viewMode === 'timeline' ? 'bg-white shadow text-blue-600 dark:bg-gray-600 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>{t('tasks.timeline')}</button>
                     </div>
 
                     {userProfile.role === 'supervisor' && (
                         <button type="button" onClick={() => setIsModalOpen(true)} className="bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold py-2.5 px-4 rounded-xl shadow-sm transition">
-                            + Assign Task
+                            {t('tasks.assignTask')}
                         </button>
                     )}
                 </div>
@@ -586,31 +630,34 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
             {/* --- CONTROL PANEL FILTERS BAR --- */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Search Keywords</label>
-                    <input 
+                    <label htmlFor="task-search" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.searchKeywords')}</label>
+                    <input
+                        id="task-search"
                         type="text"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Filter by title..."
+                        placeholder={t('tasks.filterByTitle')}
                         className="w-full p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50 dark:bg-gray-700 dark:text-white"
                     />
                 </div>
 
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Assigned Outsourcing Staff</label>
+                    <label htmlFor="task-filter-employee" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.assignedStaff')}</label>
                     {userProfile.role === 'supervisor' ? (
                         <select
+                            id="task-filter-employee"
                             value={filterEmployee}
                             onChange={(e) => setFilterEmployee(e.target.value)}
                             className="w-full p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50 dark:bg-gray-700 dark:text-white"
                         >
-                            <option value="all">All Outsourcing Staff</option>
+                            <option value="all">{t('tasks.allStaff')}</option>
                             {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
                     ) : (
-                        <input 
-                            type="text" 
-                            disabled 
+                        <input
+                            id="task-filter-employee"
+                            type="text"
+                            disabled
                             value={userProfile.name}
                             className="w-full p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
                         />
@@ -618,47 +665,74 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                 </div>
 
                 <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Task Priority</label>
+                    <label htmlFor="task-filter-priority" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.taskPriority')}</label>
                     <select
+                        id="task-filter-priority"
                         value={filterPriority}
                         onChange={(e) => setFilterPriority(e.target.value)}
                         className="w-full p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50 dark:bg-gray-700 dark:text-white"
                     >
-                        <option value="all">All Priorities</option>
-                        <option value="High">🔴 High</option>
-                        <option value="Normal">🔵 Normal</option>
-                        <option value="Low">⚪ Low</option>
+                        <option value="all">{t('tasks.allPriorities')}</option>
+                        <option value="High">{t('tasks.priorityHigh')}</option>
+                        <option value="Normal">{t('tasks.priorityNormal')}</option>
+                        <option value="Low">{t('tasks.priorityLow')}</option>
                     </select>
                 </div>
             </div>
 
+            {/* --- BULK APPROVAL ACTION BAR (supervisor, appears once tasks are checked) --- */}
+            {userProfile.role === 'supervisor' && selectedTaskIds.size > 0 && (
+                <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-2xl px-4 py-3">
+                    <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                        {t('tasks.selectedCount', { count: selectedTaskIds.size })}
+                    </span>
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setSelectedTaskIds(new Set())}
+                            className="text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 px-3 py-1.5"
+                        >
+                            {t('tasks.clearSelection')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleBulkApproveTasks}
+                            disabled={isBulkApproving}
+                            className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-1.5 rounded-xl shadow-sm"
+                        >
+                            {isBulkApproving ? t('tasks.processing') : t('tasks.approveSelected')}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* --- CREATION MODAL CONTAINER --- */}
-            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="New Task Assignment">
+            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={t('tasks.newTaskAssignment')}>
                 <div className="space-y-4">
                     <div>
-                        <label className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">Title</label>
-                        <input type="text" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                        <label htmlFor="new-task-title" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.taskTitle')}</label>
+                        <input id="new-task-title" type="text" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">Description</label>
-                        <textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none" rows="2"></textarea>
+                        <label htmlFor="new-task-description" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.description')}</label>
+                        <textarea id="new-task-description" value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none" rows="2"></textarea>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">Priority</label>
-                            <select value={newTask.priority} onChange={e => setNewTask({...newTask, priority: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
-                                <option>Low</option>
-                                <option>Normal</option>
-                                <option>High</option>
+                            <label htmlFor="new-task-priority" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.priority')}</label>
+                            <select id="new-task-priority" value={newTask.priority} onChange={e => setNewTask({...newTask, priority: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                <option value="Low">{t('tasks.low')}</option>
+                                <option value="Normal">{t('tasks.normal')}</option>
+                                <option value="High">{t('tasks.high')}</option>
                             </select>
                         </div>
                         <div>
-                             <label className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">Due Date</label>
-                             <input type="date" value={newTask.due_date} onChange={e => setNewTask({...newTask, due_date: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                             <label htmlFor="new-task-due-date" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.dueDate')}</label>
+                             <input id="new-task-due-date" type="date" value={newTask.due_date} onChange={e => setNewTask({...newTask, due_date: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
                         </div>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">Assignees</label>
+                        <span className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.assignees')}</span>
                         <div className="mt-1 border border-gray-300 rounded max-h-32 overflow-y-auto p-2 bg-gray-50 dark:bg-gray-700 dark:border-gray-600">
                             {employeeUsers.map(emp => (
                                 <label key={emp.id} className="flex items-center space-x-2 p-1 hover:bg-gray-200 rounded cursor-pointer dark:hover:bg-gray-600">
@@ -668,39 +742,41 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                             ))}
                         </div>
                     </div>
-                    <button type="button" onClick={handleCreateTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800">Confirm Assignment</button>
+                    <button type="button" onClick={handleCreateTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800">{t('tasks.confirmAssignment')}</button>
                 </div>
             </Modal>
 
             {/* --- TIMELINE ADJUSTMENT / REVISION CONTROL PANEL MODAL --- */}
-            <Modal 
-                isOpen={isExtensionModalOpen} 
-                onClose={() => { setIsExtensionModalOpen(false); setExtensionTask(null); }} 
-                title={extensionMode === 'reject' ? "🚨 Flag Revision Required" : "⏳ Grant Project Breathing Room"}
+            <Modal
+                isOpen={isExtensionModalOpen}
+                onClose={() => { setIsExtensionModalOpen(false); setExtensionTask(null); }}
+                title={extensionMode === 'reject' ? t('tasks.flagRevisionRequired') : t('tasks.grantBreathingRoom')}
             >
                 <div className="space-y-4 text-xs">
                     <div>
-                        <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1">
-                            {extensionMode === 'reject' ? 'Reason for Revision / Notes' : 'Reason for Extension'}
+                        <label htmlFor="extension-feedback" className="block font-bold text-gray-400 uppercase tracking-wider mb-1">
+                            {extensionMode === 'reject' ? t('tasks.reasonForRevisionNotes') : t('tasks.reasonForExtensionLabel')}
                         </label>
                         <textarea
+                            id="extension-feedback"
                             required
                             value={extensionFeedback}
                             onChange={(e) => setExtensionFeedback(e.target.value)}
                             placeholder={extensionMode === 'reject'
-                                ? "Specify details, issues, or sections that need fixing..."
-                                : "Explain why this deadline needs to be extended..."}
+                                ? t('tasks.revisionPlaceholder')
+                                : t('tasks.extensionPlaceholder')}
                             className="w-full p-2.5 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none focus:outline-none"
                             rows="3"
                         />
                     </div>
 
                     <div>
-                        <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1">Select Extended Due Date</label>
-                        <input 
+                        <label htmlFor="extension-date" className="block font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.selectExtendedDueDate')}</label>
+                        <input
+                            id="extension-date"
                             type="date"
                             required
-                            min={tomorrowStr} 
+                            min={tomorrowStr}
                             value={extensionDate}
                             onChange={(e) => setExtensionDate(e.target.value)}
                             className="w-full p-2.5 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40"
@@ -708,22 +784,22 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                     </div>
 
                     <div>
-                        <label className="block font-bold text-gray-400 uppercase tracking-wider mb-1.5">Quick Date Presets</label>
+                        <span className="block font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('tasks.quickDatePresets')}</span>
                         <div className="flex gap-2">
-                            <button type="button" onClick={() => applyPresetDays(1)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">Tomorrow</button>
-                            <button type="button" onClick={() => applyPresetDays(3)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">+3 Days</button>
-                            <button type="button" onClick={() => applyPresetDays(7)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">+1 Week</button>
+                            <button type="button" onClick={() => applyPresetDays(1)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">{t('tasks.tomorrow')}</button>
+                            <button type="button" onClick={() => applyPresetDays(3)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">{t('tasks.plus3Days')}</button>
+                            <button type="button" onClick={() => applyPresetDays(7)} className="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 p-2 rounded-lg font-bold text-[10px] transition-colors dark:text-white">{t('tasks.plus1Week')}</button>
                         </div>
                     </div>
 
-                    <button 
-                        type="button" 
+                    <button
+                        type="button"
                         onClick={handleSaveDeadlineExtension}
                         className={`w-full py-2.5 rounded-xl font-bold text-white shadow shadow-blue-500/10 transition-all ${
                             extensionMode === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'
                         }`}
                     >
-                        {extensionMode === 'reject' ? 'Confirm Rejection & Set Deadline' : 'Approve Extension'}
+                        {extensionMode === 'reject' ? t('tasks.confirmRejection') : t('tasks.approveExtension')}
                     </button>
                 </div>
             </Modal>
@@ -743,7 +819,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                                 </div>
                                 <div className="p-3 space-y-3 flex-1 overflow-y-auto max-h-[600px]">
                                     {columnTasks.map(task => <TaskCard key={task.id} task={task} />)}
-                                    {columnTasks.length === 0 && <div className="text-center text-gray-400 text-xs py-8 italic">No tasks active</div>}
+                                    {columnTasks.length === 0 && <div className="text-center text-gray-400 text-xs py-8 italic">{t('tasks.noTasksActive')}</div>}
                                 </div>
                             </div>
                         );
@@ -759,17 +835,17 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks, createN
                             {new Date(timelineDates[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} — {new Date(timelineDates[6]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </span>
                         <div className="flex items-center gap-1.5 flex-wrap">
-                            <button type="button" onClick={() => shiftTimeline(-30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">« Month</button>
-                            <button type="button" onClick={() => shiftTimeline(-7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">‹ Week</button>
-                            <button type="button" onClick={resetTimelineToToday} className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition">Today</button>
-                            <button type="button" onClick={() => shiftTimeline(7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Week ›</button>
-                            <button type="button" onClick={() => shiftTimeline(30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">Month »</button>
+                            <button type="button" onClick={() => shiftTimeline(-30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">{t('tasks.monthBack')}</button>
+                            <button type="button" onClick={() => shiftTimeline(-7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">{t('tasks.weekBack')}</button>
+                            <button type="button" onClick={resetTimelineToToday} className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition">{t('tasks.today')}</button>
+                            <button type="button" onClick={() => shiftTimeline(7)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">{t('tasks.weekForward')}</button>
+                            <button type="button" onClick={() => shiftTimeline(30)} className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition">{t('tasks.monthForward')}</button>
                         </div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto dark:bg-gray-800 dark:border-gray-700">
                         <div className="min-w-[800px]">
                             <div className="grid grid-cols-8 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
-                                <div className="p-4 font-bold text-gray-500 text-xs uppercase tracking-wider">Employee</div>
+                                <div className="p-4 font-bold text-gray-500 text-xs uppercase tracking-wider">{t('tasks.employeeCol')}</div>
                                 {timelineDates.map(date => { 
                                     const d = new Date(date); 
                                     const isWeekend = d.getDay() === 0 || d.getDay() === 6; 

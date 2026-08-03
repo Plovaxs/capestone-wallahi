@@ -1,3 +1,37 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ===========================================================================
+   ACCESSIBILITY: font size, high contrast, reduce motion, color-blind filter.
+   Toggled via classes on <html>, mirroring the existing `dark` class pattern.
+   =========================================================================== */
+
+html.font-large { font-size: 112.5%; }   /* 18px base */
+html.font-xl { font-size: 125%; }        /* 20px base */
+
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+html.high-contrast {
+  --tw-border-opacity: 1 !important;
+}
+html.high-contrast * {
+  border-color: currentColor !important;
+}
+html.high-contrast body {
+  filter: contrast(1.2);
+}
+
+/* Heuristic assistive filters: shift hues away from the confusable pair for
+   each deficiency type so adjacent UI colors (e.g. status badges) read as
+   more distinct. Not a mathematically precise daltonization transform. */
+html.colorblind-protanopia body { filter: saturate(1.35) hue-rotate(-12deg) contrast(1.1); }
+html.colorblind-deuteranopia body { filter: saturate(1.35) hue-rotate(12deg) contrast(1.1); }
+html.colorblind-tritanopia body { filter: saturate(1.2) hue-rotate(-28deg) contrast(1.05); }

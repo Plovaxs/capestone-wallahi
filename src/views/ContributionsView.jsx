@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { showUserError } from '../utils/errorHandling';
@@ -10,7 +11,8 @@ import { sanitizeUserInput } from '../utils/sanitize';
  * DESIGN PATTERN: Flattened thread timeline mapping nested comment nodes via a single JSONB array column.
  * SECURITY: Enforces item-level role tracking so employees can only eliminate rows they personally created.
  */
-const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions, createNotification }) => {
+const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions }) => {
+    const { t } = useTranslation();
     // --- POST COMPOSER FORUM STATES ---
     const [newPost, setNewPost] = useState('');
     const [newTitle, setNewTitle] = useState('');
@@ -36,7 +38,7 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
     ];
 
     // --- UTILITY USER DICTIONARY MATCHERS ---
-    const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || 'Unknown User';
+    const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || t('contributions.unknownUser');
     const getUserRole = (id) => allUsers.find(u => String(u.id) === String(id))?.role || 'employee';
 
     // =========================================================================
@@ -49,7 +51,10 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
      * SCHEMA METRICS: Instantiates an empty `replies: []` array field block natively on row creation.
      */
 const handleCreateThread = async () => {
-        if (!newPost.trim()) return;
+        if (!newPost.trim()) {
+            alert(t('contributions.emptyPostError'));
+            return;
+        }
         setIsSubmitting(true);
         try {
             const rateLimit = await checkRateLimit('forum-post', { maxRequests: 5, windowSeconds: 60 });
@@ -87,7 +92,7 @@ const handleCreateThread = async () => {
      * SECURITY: Database will drop instructions if Row-Level Security checks validate unauthorized parameters.
      */
     const handleDeleteThread = async (postId) => {
-        if (!confirm("Are you sure you want to permanently delete this discussion thread?")) return;
+        if (!confirm(t('contributions.confirmDelete'))) return;
         
         const { error } = await supabase
             .from('contributions')
@@ -179,20 +184,20 @@ const handleCreateThread = async () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-700 pb-4">
                 <div>
                     <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
-                        💬 Outsourcing Staff Discussion Forum & Help Desk
+                        {t('contributions.title')}
                     </h1>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-                        Ask questions, declare blockers, and collaborate with team members and supervisors.
+                        {t('contributions.subtitle')}
                     </p>
                 </div>
 
                 {/* TIMELINE FILTERS CONTAINER WRAPPERS */}
                 <div className="flex gap-2 w-full md:w-auto">
-                    <input 
+                    <input
                         type="text"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Search threads or names..."
+                        placeholder={t('contributions.searchPlaceholder')}
                         className="p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-white dark:bg-gray-800 dark:text-white w-full md:w-56 shadow-sm"
                     />
                     <select
@@ -200,7 +205,7 @@ const handleCreateThread = async () => {
                         onChange={(e) => setSelectedCategory(e.target.value)}
                         className="p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-white dark:bg-gray-800 dark:text-white shadow-sm"
                     >
-                        <option value="all">All Channels</option>
+                        <option value="all">{t('contributions.allChannels')}</option>
                         {FORUM_CATEGORIES.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                     </select>
                 </div>
@@ -211,22 +216,24 @@ const handleCreateThread = async () => {
                 <div className="p-5">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <span className="w-1 h-3.5 bg-blue-500 rounded-full"></span>
-                        Start a New Discussion Thread
+                        {t('contributions.startNewThread')}
                     </h3>
-                    
+
                     <div className="flex flex-col gap-3">
                         <input
                             type="text"
                             value={newTitle}
                             onChange={(e) => setNewTitle(e.target.value)}
                             className="w-full p-3 border border-gray-100 rounded-xl text-sm font-bold bg-gray-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all dark:bg-gray-900/40 dark:border-gray-600 dark:text-white dark:focus:bg-gray-900"
-                            placeholder="Title (optional)"
+                            placeholder={t('contributions.titlePlaceholder')}
+                            aria-label={t('contributions.titlePlaceholder')}
                         />
-                        <textarea 
-                            value={newPost} 
+                        <textarea
+                            value={newPost}
                             onChange={(e) => setNewPost(e.target.value)}
                             className="w-full p-4 border border-gray-100 rounded-xl text-xs bg-gray-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all resize-none dark:bg-gray-900/40 dark:border-gray-600 dark:text-white dark:focus:bg-gray-900"
-                            placeholder="What do you want to ask or share with the portal board?"
+                            placeholder={t('contributions.postPlaceholder')}
+                            aria-label={t('contributions.postPlaceholder')}
                             rows="3"
                         ></textarea>
                         
@@ -256,7 +263,7 @@ const handleCreateThread = async () => {
                                     !newPost.trim() ? 'bg-gray-300 cursor-not-allowed dark:bg-gray-700' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
                                 }`}
                             >
-                                {isSubmitting ? 'Posting...' : 'Publish Thread'}
+                                {isSubmitting ? t('contributions.posting') : t('contributions.publishThread')}
                             </button>
                         </div>
                     </div>
@@ -290,10 +297,10 @@ const handleCreateThread = async () => {
                                         <div className="flex items-center gap-2">
                                             <h4 className="font-bold text-gray-800 text-sm dark:text-gray-100">{getUserName(post.employee_id)}</h4>
                                             {getUserRole(post.employee_id) === 'supervisor' && (
-                                                <span className="text-[9px] font-extrabold tracking-wider uppercase bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-1.5 py-0.5 rounded border border-amber-200">Supervisor</span>
+                                                <span className="text-[9px] font-extrabold tracking-wider uppercase bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-1.5 py-0.5 rounded border border-amber-200">{t('contributions.supervisor')}</span>
                                             )}
                                         </div>
-                                        <p className="text-[10px] font-bold text-gray-400 font-mono uppercase">📅 Thread started: {post.date}</p>
+                                        <p className="text-[10px] font-bold text-gray-400 font-mono uppercase">{t('contributions.threadStarted', { date: post.date })}</p>
                                     </div>
                                 </div>
                                 
@@ -311,7 +318,8 @@ const handleCreateThread = async () => {
                                             type="button"
                                             onClick={() => { setEditingPostId(post.id); setEditPostText(post.contribution); }}
                                             className="p-1.5 text-gray-400 hover:text-blue-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                                            title="Edit Post"
+                                            title={t('contributions.editPost')}
+                                            aria-label={t('contributions.editPost')}
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -325,7 +333,8 @@ const handleCreateThread = async () => {
                                             type="button"
                                             onClick={() => handleDeleteThread(post.id)}
                                             className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                                            title="Delete Thread"
+                                            title={t('contributions.deleteThread')}
+                                            aria-label={t('contributions.deleteThread')}
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -355,7 +364,7 @@ const handleCreateThread = async () => {
                                             onClick={() => { setEditingPostId(null); setEditPostText(''); }}
                                             className="px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 rounded-lg"
                                         >
-                                            Cancel
+                                            {t('contributions.cancel')}
                                         </button>
                                         <button
                                             type="button"
@@ -363,7 +372,7 @@ const handleCreateThread = async () => {
                                             disabled={!editPostText.trim()}
                                             className="px-3 py-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
                                         >
-                                            Save Changes
+                                            {t('contributions.saveChanges')}
                                         </button>
                                     </div>
                                 </div>
@@ -387,7 +396,7 @@ const handleCreateThread = async () => {
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-xs font-bold text-gray-800 dark:text-gray-200">{getUserName(reply.author_id)}</span>
                                                     {getUserRole(reply.author_id) === 'supervisor' && (
-                                                        <span className="text-[8px] font-bold bg-amber-500/20 text-amber-700 px-1 rounded">Staff</span>
+                                                        <span className="text-[8px] font-bold bg-amber-500/20 text-amber-700 px-1 rounded">{t('contributions.staff')}</span>
                                                     )}
                                                     <span className="text-[9px] text-gray-400 font-medium ml-auto font-mono">{reply.timestamp}</span>
                                                 </div>
@@ -405,7 +414,8 @@ const handleCreateThread = async () => {
                                     value={replyInputs[post.id] || ''}
                                     onChange={(e) => setReplyInputs(prev => ({ ...prev, [post.id]: e.target.value }))}
                                     onKeyPress={(e) => e.key === 'Enter' && handleSendReply(post.id)}
-                                    placeholder={userProfile.role === 'supervisor' ? "Provide guidance or feedback..." : "Write a comment or answer..."}
+                                    placeholder={userProfile.role === 'supervisor' ? t('contributions.guidancePlaceholder') : t('contributions.commentPlaceholder')}
+                                    aria-label={userProfile.role === 'supervisor' ? t('contributions.guidancePlaceholder') : t('contributions.commentPlaceholder')}
                                     className="flex-1 p-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl focus:outline-none focus:border-blue-500 bg-gray-50/50 dark:bg-gray-900/40 dark:text-white"
                                 />
                                 <button
@@ -414,7 +424,7 @@ const handleCreateThread = async () => {
                                     disabled={submittingReplyId === post.id || !(replyInputs[post.id] || '').trim()}
                                     className="bg-gray-800 text-white hover:bg-gray-900 text-xs font-bold px-4 py-2 rounded-xl shadow-sm transition disabled:opacity-50 dark:bg-blue-600 dark:hover:bg-blue-700"
                                 >
-                                    {submittingReplyId === post.id ? '...' : 'Reply'}
+                                    {submittingReplyId === post.id ? '...' : t('contributions.reply')}
                                 </button>
                             </div>
                         </div>
@@ -424,7 +434,7 @@ const handleCreateThread = async () => {
                 {/* Empty State Result Block Sheet */}
                 {filteredThreads.length === 0 && (
                     <div className="text-center p-12 text-gray-400 dark:text-gray-500 text-xs italic">
-                        No discussion threads match your filter layout criteria.
+                        {t('contributions.noThreadsMatch')}
                     </div>
                 )}
             </div>

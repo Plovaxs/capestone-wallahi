@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { 
-    LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
-    Tooltip, Legend, ResponsiveContainer 
+import { useTranslation } from 'react-i18next';
+import {
+    LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+    Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
 /**
@@ -10,19 +11,26 @@ import {
  * FIXED: Shifted month index processing from (Jul-Dec) to (Jan-Jun) to perfectly match active internship timeline data.
  */
 const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView }) => {
+    const { t } = useTranslation();
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
 
     // --- 1. CONFIGURABLE WIDGET STATE ---
+    const DEFAULT_WIDGETS = {
+        metrics: true,
+        attendanceChart: true,
+        taskChart: true,
+        recentReviews: true,
+        contractInfo: true,
+        leaderboard: true,
+        individualTrend: true,
+    };
     const [widgets, setWidgets] = useState(() => {
         const saved = localStorage.getItem('dashboard_widgets');
-        return saved ? JSON.parse(saved) : {
-            metrics: true,
-            attendanceChart: true,
-            taskChart: true,
-            recentReviews: true,
-            contractInfo: true
-        };
+        // Merge over defaults so users who saved a widget config before these
+        // two were introduced still get them turned on, instead of the new
+        // keys silently evaluating to undefined (falsy) and staying hidden.
+        return saved ? { ...DEFAULT_WIDGETS, ...JSON.parse(saved) } : DEFAULT_WIDGETS;
     });
 
     useEffect(() => {
@@ -44,24 +52,24 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
     // PENDING APPROVALS (Action Items)
     let approvalCount = 0;
-    let approvalLabel = "System operations clean";
+    let approvalLabel = t('dashboard.systemOperationsClean');
 
     if (userProfile.role === 'supervisor') {
         const pendingLeaves = leaveRequests.filter(r => r.status === 'Pending').length;
         const pendingTaskReviews = tasks.filter(t => t.status === 'Completed').length;
-        
+
         approvalCount = pendingLeaves + pendingTaskReviews;
         if (approvalCount > 0) {
-            approvalLabel = `${pendingLeaves} leave forms, ${pendingTaskReviews} tasks pending review`;
+            approvalLabel = t('dashboard.leaveFormsTasksPending', { leaves: pendingLeaves, tasks: pendingTaskReviews });
         }
     } else {
         const myPendingLeaves = leaveRequests.filter(r => r.employee_id === userProfile.id && r.status === 'Pending').length;
-        const myPendingTasks = tasks.filter(t => 
+        const myPendingTasks = tasks.filter(t =>
             (t.assigned_to || []).includes(userProfile.id) && t.status === 'Completed'
         ).length;
-        
+
         approvalCount = myPendingLeaves + myPendingTasks;
-        if (approvalCount > 0) approvalLabel = "Awaiting supervisor confirmation feedback";
+        if (approvalCount > 0) approvalLabel = t('dashboard.awaitingSupervisorFeedback');
     }
 
     // Leave Days Taken Calculator
@@ -76,9 +84,9 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         .reduce((total, req) => total + getDaysDiff(req.start_date, req.end_date), 0);
 
     const getUserName = (id) => {
-        if (!allUsers || !id) return 'Unknown Officer';
+        if (!allUsers || !id) return t('dashboard.unknownOfficer');
         const match = allUsers.find(u => String(u.id) === String(id));
-        return match ? match.name : 'Unknown Officer';
+        return match ? match.name : t('dashboard.unknownOfficer');
     };
 
     // --- ASSIGNMENT & CONTRACT STATUS (supervisor-set, read-only here) ---
@@ -161,49 +169,88 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
     const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+    // --- LEADERBOARD: ranks employees by approved/completed task volume,
+    // with punctuality as a tiebreaker signal shown alongside it. ---
+    const leaderboard = employeeUsers
+        .map(emp => {
+            const empTasks = tasks.filter(task => (task.assigned_to || []).includes(emp.id));
+            const approvedCount = empTasks.filter(task => task.status === 'Approved').length;
+            const empAttendance = attendance.filter(a => a.employee_id === emp.id);
+            const punctuality = empAttendance.length > 0
+                ? Math.round((empAttendance.filter(a => a.status === 'Present').length / empAttendance.length) * 100)
+                : null;
+            return { id: emp.id, name: emp.name, approvedCount, punctuality };
+        })
+        .sort((a, b) => b.approvedCount - a.approvedCount)
+        .slice(0, 5);
+
+    // --- INDIVIDUAL PERFORMANCE TREND: only meaningful once a single
+    // employee is picked in the selector above (not the "all" aggregate). ---
+    const individualTrendData = selectedEmployee !== 'all'
+        ? reviews
+            .filter(r => r.employee_id === selectedEmployee)
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+            .map(r => ({
+                date: r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
+                score: r.final_score,
+            }))
+        : [];
+
     return (
         <div className="p-8 relative space-y-6">
             
             {/* --- HEADER --- */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-gray-700/60 pb-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Welcome, {userProfile.name}!</h1>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Operational monitoring systems status review matrix.</p>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('dashboard.welcome', { name: userProfile.name })}</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('dashboard.subtitle')}</p>
                 </div>
-                
+
                 <div className="relative self-end sm:self-center">
-                    <button 
+                    <button
                         type="button"
-                        onClick={() => setShowSettings(!showSettings)} 
+                        onClick={() => setShowSettings(!showSettings)}
                         className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 px-4 rounded-xl border transition text-xs dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
                     >
-                        <span>⚙️ Configure Metrics</span>
+                        <span>{t('dashboard.configureMetrics')}</span>
                     </button>
 
                     {showSettings && (
                         <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 z-50 p-4 dark:bg-gray-800 dark:border-gray-700 animate-scale-up">
-                            <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-3">Visible UI Cards</h3>
+                            <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-3">{t('dashboard.visibleCards')}</h3>
                             <div className="space-y-2.5 text-xs font-bold text-gray-700 dark:text-gray-300">
                                 <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                     <input type="checkbox" checked={widgets.metrics} onChange={() => toggleWidget('metrics')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>Key Metrics Summary</span>
+                                    <span>{t('dashboard.keyMetricsSummary')}</span>
                                 </label>
                                 <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                     <input type="checkbox" checked={widgets.attendanceChart} onChange={() => toggleWidget('attendanceChart')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>Attendance Trends Line</span>
+                                    <span>{t('dashboard.attendanceTrendsLine')}</span>
                                 </label>
                                 <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                     <input type="checkbox" checked={widgets.taskChart} onChange={() => toggleWidget('taskChart')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>Task Completion Bars</span>
+                                    <span>{t('dashboard.taskCompletionBars')}</span>
                                 </label>
                                 <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                     <input type="checkbox" checked={widgets.recentReviews} onChange={() => toggleWidget('recentReviews')} className="form-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>Recent Appraisals Sheet</span>
+                                    <span>{t('dashboard.recentAppraisalsSheet')}</span>
                                 </label>
                                 <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                     <input type="checkbox" checked={widgets.contractInfo} onChange={() => toggleWidget('contractInfo')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>Assignment & Contract</span>
+                                    <span>{t('dashboard.assignmentAndContract')}</span>
                                 </label>
+                                {userProfile.role === 'supervisor' && (
+                                    <>
+                                        <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                            <input type="checkbox" checked={widgets.leaderboard} onChange={() => toggleWidget('leaderboard')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                            <span>{t('dashboard.leaderboard')}</span>
+                                        </label>
+                                        <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                            <input type="checkbox" checked={widgets.individualTrend} onChange={() => toggleWidget('individualTrend')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                            <span>{t('dashboard.individualTrend')}</span>
+                                        </label>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
@@ -211,14 +258,14 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             </div>
 
             {/* --- ADMIN INTERN SELECTOR --- */}
-            {(widgets.attendanceChart || widgets.taskChart) && userProfile.role === 'supervisor' && (
+            {(widgets.attendanceChart || widgets.taskChart || widgets.individualTrend) && userProfile.role === 'supervisor' && (
                 <div className="flex justify-end bg-white p-3 rounded-2xl border border-gray-100 dark:bg-gray-800 dark:border-gray-700 shadow-sm">
                     <select
                         value={selectedEmployee}
                         onChange={(e) => setSelectedEmployee(e.target.value)}
                         className="p-2 text-xs border border-gray-200 rounded-xl shadow-sm bg-gray-50 dark:bg-gray-900 dark:border-gray-600 dark:text-white focus:outline-none font-bold"
                     >
-                        <option value="all">All Outsourcing Staff Roster Entries</option>
+                        <option value="all">{t('dashboard.allStaff')}</option>
                         {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                     </select>
                 </div>
@@ -229,30 +276,30 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in-down">
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500 dark:bg-gray-800 dark:border-gray-700/60 dark:border-l-blue-500">
                         <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider">
-                            {userProfile.role === 'supervisor' ? 'Team Active Workload' : 'My Pending Tasks'}
+                            {userProfile.role === 'supervisor' ? t('dashboard.teamActiveWorkload') : t('dashboard.myPendingTasks')}
                         </h3>
                         <div className="flex items-baseline gap-2 mt-2">
                             <p className="text-4xl font-extrabold text-gray-800 dark:text-gray-100">{activeWorkload}</p>
-                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Tasks Active</span>
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">{t('dashboard.tasksActive')}</span>
                         </div>
                     </div>
 
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-green-500 dark:bg-gray-800 dark:border-gray-700/60 dark:border-l-green-500">
-                        <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider">Accredited Leave Days</h3>
+                        <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider">{t('dashboard.accreditedLeaveDays')}</h3>
                         <div className="flex items-baseline gap-2 mt-2">
                             <p className="text-4xl font-extrabold text-gray-800 dark:text-gray-100">{leaveDaysTaken}</p>
-                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Days Closed</span>
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">{t('dashboard.daysClosed')}</span>
                         </div>
                     </div>
 
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-yellow-500 dark:bg-gray-800 dark:border-gray-700/60 dark:border-l-yellow-500">
                         <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider">
-                            {userProfile.role === 'supervisor' ? 'Approvals Outstanding' : 'Awaiting Operational Approval'}
+                            {userProfile.role === 'supervisor' ? t('dashboard.approvalsOutstanding') : t('dashboard.awaitingApproval')}
                         </h3>
                         <div className="flex flex-col mt-2 justify-center">
                             <div className="flex items-baseline gap-2">
                                 <p className="text-4xl font-extrabold text-gray-800 dark:text-gray-100">{approvalCount}</p>
-                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">Items Flagged</span>
+                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wide">{t('dashboard.itemsFlagged')}</span>
                             </div>
                             {approvalCount > 0 && (
                                 <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 italic mt-1 bg-amber-50 dark:bg-amber-950/20 px-2 py-0.5 rounded w-fit">{approvalLabel}</p>
@@ -265,17 +312,17 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             {/* --- ASSIGNMENT & CONTRACT CARD --- */}
             {widgets.contractInfo && (
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
-                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">Assignment & Contract</h2>
+                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.assignmentAndContract')}</h2>
                     {userProfile.department || contractStatus.hasContract ? (
                         <div className="space-y-3 max-w-md">
                             <div className="flex justify-between items-center text-xs">
-                                <span className="font-bold text-gray-400 uppercase tracking-wider">Department</span>
-                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || 'Not assigned yet'}</span>
+                                <span className="font-bold text-gray-400 uppercase tracking-wider">{t('dashboard.department')}</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || t('dashboard.notAssignedYet')}</span>
                             </div>
                             {contractStatus.hasContract ? (
                                 <>
                                     <div className="flex justify-between items-center text-xs">
-                                        <span className="font-bold text-gray-400 uppercase tracking-wider">Contract Period</span>
+                                        <span className="font-bold text-gray-400 uppercase tracking-wider">{t('dashboard.contractPeriod')}</span>
                                         <span className="font-bold text-gray-800 dark:text-gray-100">
                                             {new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – {new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}
                                         </span>
@@ -284,15 +331,44 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <div className={`h-2 rounded-full ${contractStatus.isOver ? 'bg-gray-400' : 'bg-blue-500'}`} style={{ width: `${contractStatus.percent}%` }} />
                                     </div>
                                     <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                                        {contractStatus.isOver ? 'Contract period completed' : `${contractStatus.remainingDays} day(s) remaining`}
+                                        {contractStatus.isOver ? t('dashboard.contractCompleted') : t('dashboard.daysRemaining', { count: contractStatus.remainingDays })}
                                     </p>
                                 </>
                             ) : (
-                                <p className="text-xs text-gray-400 italic">Contract dates not set yet.</p>
+                                <p className="text-xs text-gray-400 italic">{t('dashboard.contractDatesNotSet')}</p>
                             )}
                         </div>
                     ) : (
-                        <p className="text-center text-xs text-gray-400 py-4 dark:text-gray-500 italic">No department or contract assigned yet. Your supervisor can set this from Settings.</p>
+                        <p className="text-center text-xs text-gray-400 py-4 dark:text-gray-500 italic">{t('dashboard.noAssignmentYet')}</p>
+                    )}
+                </div>
+            )}
+
+            {/* --- LEADERBOARD: top performers by approved task volume --- */}
+            {widgets.leaderboard && userProfile.role === 'supervisor' && (
+                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.leaderboard')}</h2>
+                    {leaderboard.length > 0 ? (
+                        <div className="space-y-2">
+                            {leaderboard.map((entry, index) => (
+                                <div key={entry.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50/60 dark:bg-gray-900/30">
+                                    <span className="w-6 text-center text-sm font-black text-gray-400">
+                                        {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                                    </span>
+                                    <span className="flex-1 text-xs font-bold text-gray-800 dark:text-gray-100">{entry.name}</span>
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase">
+                                        {t('dashboard.tasksApproved', { count: entry.approvedCount })}
+                                    </span>
+                                    {entry.punctuality !== null && (
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                                            {t('dashboard.punctualityPercent', { percent: entry.punctuality })}
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noLeaderboardData')}</p>
                     )}
                 </div>
             )}
@@ -301,7 +377,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {widgets.attendanceChart && (
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
-                        <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">Attendance Trends Timeline</h2>
+                        <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.attendanceTrendsTimeline')}</h2>
                         <div style={{ width: '100%', height: 280, minHeight: 200 }} className="text-xs font-medium">
                             <ResponsiveContainer width="100%" height={280}>
                                 <LineChart data={attData}>
@@ -324,7 +400,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
                 {widgets.taskChart && (
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
-                        <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">Deliverables Completed Volume</h2>
+                        <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.deliverablesCompletedVolume')}</h2>
                         <div style={{ width: '100%', height: 280, minHeight: 200 }} className="text-xs font-medium">
                             <ResponsiveContainer width="100%" height={280}>
                                 <BarChart data={taskData}>
@@ -344,16 +420,39 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         </div>
                     </div>
                 )}
+
+                {widgets.individualTrend && selectedEmployee !== 'all' && (
+                    <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60 lg:col-span-2">
+                        <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">
+                            {t('dashboard.individualTrend')}: {employeeUsers.find(e => e.id === selectedEmployee)?.name}
+                        </h2>
+                        {individualTrendData.length > 0 ? (
+                            <div style={{ width: '100%', height: 240 }} className="text-xs font-medium">
+                                <ResponsiveContainer width="100%" height={240}>
+                                    <LineChart data={individualTrendData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.1} />
+                                        <XAxis dataKey="date" stroke="#94a3b8" fontStyle="bold" />
+                                        <YAxis stroke="#94a3b8" domain={[0, 100]} />
+                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', color:'#fff', borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} />
+                                        <Line type="monotone" dataKey="score" name={t('dashboard.scoreLabel')} stroke="#3b82f6" strokeWidth={3} dot={{r:4}} activeDot={{r:6}} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        ) : (
+                            <p className="text-center text-xs text-gray-400 py-8 dark:text-gray-500 italic">{t('dashboard.noTrendData')}</p>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* --- RECENT APPRAISAL LOGS TRANSCRIPTS --- */}
             {widgets.recentReviews && (
                 <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
-                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">Institutional Performance Transcript Log</h2>
+                    <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.performanceTranscriptLog')}</h2>
                     {reviews && reviews.length > 0 ? (
                         <div className="space-y-4">
                             {reviews.slice(0, 3).map(review => {
-                                const textToDisplay = review.comments || review.review_text || 'No technical observations recorded.';
+                                const textToDisplay = review.comments || review.review_text || t('dashboard.noObservations');
                                 const truncatedText = textToDisplay.length > 100 ? textToDisplay.substring(0, 100) + '...' : textToDisplay;
 
                                 return (
@@ -366,7 +465,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <div className="flex justify-between items-start gap-4 mb-2 text-xs">
                                             <div className="space-y-1">
                                                 <p className="font-bold text-gray-800 dark:text-gray-200">
-                                                    Appraisal filed by: <span className="text-blue-600 dark:text-blue-400">{getUserName(review.supervisor_id)}</span>
+                                                    {t('dashboard.appraisalFiledBy')} <span className="text-blue-600 dark:text-blue-400">{getUserName(review.supervisor_id)}</span>
                                                 </p>
                                                 {review.final_score !== undefined && (
                                                     <div className="flex items-center gap-2">
@@ -374,27 +473,27 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                                             {[...Array(Math.max(1, Math.min(5, Math.round((review.final_score / 100) * 5))))].map((_, i) => <span key={i}>★</span>)}
                                                         </div>
                                                         <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
-                                                            Index: {review.final_score} Pts
+                                                            {t('dashboard.indexPts', { score: review.final_score })}
                                                         </span>
                                                     </div>
                                                 )}
                                             </div>
                                             <p className="text-[10px] font-bold text-gray-400 font-mono uppercase">
-                                                {review.created_at ? new Date(review.created_at).toLocaleDateString('en-GB') : (review.date || 'Pending Log')}
+                                                {review.created_at ? new Date(review.created_at).toLocaleDateString('en-GB') : (review.date || t('dashboard.pendingLog'))}
                                             </p>
                                         </div>
                                         <p className="text-gray-600 dark:text-gray-300 text-xs italic pl-1 leading-relaxed bg-gray-50/40 dark:bg-gray-900/20 p-3 rounded-xl border border-dashed dark:border-gray-700/40">
                                             "{truncatedText}"
                                         </p>
                                         <span className="mt-2 inline-block text-[10px] font-bold text-blue-600 dark:text-blue-400 group-hover:underline">
-                                            View Full Rubric Report →
+                                            {t('dashboard.viewFullRubric')}
                                         </span>
                                     </button>
                                 );
                             })}
                         </div>
                     ) : (
-                        <p className="text-center text-xs text-gray-400 py-8 dark:text-gray-500 italic">No formal framework appraisal scores logged inside data systems yet.</p>
+                        <p className="text-center text-xs text-gray-400 py-8 dark:text-gray-500 italic">{t('dashboard.noAppraisalScores')}</p>
                     )}
                 </div>
             )}

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from './supabaseClient';
 import { Toaster } from 'react-hot-toast';
 
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import ChatBot from './components/ChatBot';
+import OnboardingTour from './components/OnboardingTour';
 
 import LoginPage from './views/LoginPage';
 import DashboardView from './views/DashboardView';
@@ -20,17 +22,18 @@ const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
     case 'dashboard': return <DashboardView {...props} userProfile={userProfile} />;
     case 'attendance': return <AttendanceView {...props} userProfile={userProfile} />;
-    case 'tasks': return <TasksView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
-    case 'contributions': return <ContributionsView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
+    case 'tasks': return <TasksView {...props} userProfile={userProfile} />;
+    case 'contributions': return <ContributionsView {...props} userProfile={userProfile} />;
     case 'helpdesk': return <HelpdeskView {...props} userProfile={userProfile} />;
-    case 'leave': return <LeaveView {...props} userProfile={userProfile} createNotification={props.createNotification} fetchProfile={props.fetchProfile} />;
-    case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} createNotification={props.createNotification} />;
+    case 'leave': return <LeaveView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
+    case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} />;
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }
 };
 
 export default function App() {
+  const { t } = useTranslation();
   const [session, setSession] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
@@ -43,12 +46,44 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [activeView, setActiveView] = useState('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+
+  // --- ACCESSIBILITY PREFERENCES ---
+  const [colorblindMode, setColorblindMode] = useState(() => localStorage.getItem('colorblindMode') || 'none');
+  const [fontSize, setFontSize] = useState(() => localStorage.getItem('fontSize') || 'normal');
+  const [highContrast, setHighContrast] = useState(() => localStorage.getItem('highContrast') === 'true');
+  const [reduceMotion, setReduceMotion] = useState(() => localStorage.getItem('reduceMotion') === 'true');
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDarkMode);
     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('colorblind-protanopia', 'colorblind-deuteranopia', 'colorblind-tritanopia');
+    if (colorblindMode !== 'none') root.classList.add(`colorblind-${colorblindMode}`);
+    localStorage.setItem('colorblindMode', colorblindMode);
+  }, [colorblindMode]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove('font-large', 'font-xl');
+    if (fontSize === 'large') root.classList.add('font-large');
+    if (fontSize === 'xl') root.classList.add('font-xl');
+    localStorage.setItem('fontSize', fontSize);
+  }, [fontSize]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('high-contrast', highContrast);
+    localStorage.setItem('highContrast', highContrast);
+  }, [highContrast]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('reduce-motion', reduceMotion);
+    localStorage.setItem('reduceMotion', reduceMotion);
+  }, [reduceMotion]);
 
   const toggleDarkMode = () => setIsDarkMode(!isDarkMode);
 
@@ -159,33 +194,6 @@ export default function App() {
     setNotifications(data || []);
   };
 
- const createNotification = async (profileId, message) => {
-    try {
-      const { data: existing } = await supabase
-        .from('notifications')
-        .select('id')
-        .eq('user_id', profileId)
-        .eq('message', message)
-        .maybeSingle();
-
-      if (existing) return;
-
-      const { error } = await supabase.from('notifications').insert([{ user_id: profileId, message, read: false }]);
-      
-      if (error) {
-        console.error("createNotification DB Error:", error.message);
-        alert("⚠️ Notification Blocked! " + error.message + " (Turn off RLS on the notifications table in Supabase)");
-      } else {
-        // 🟩 FIX: If you sent the notification to yourself, refresh the bell icon instantly!
-        if (userProfile && profileId === userProfile.id) {
-          fetchNotifications(userProfile);
-        }
-      }
-    } catch (err) {
-      console.error('Unexpected tracking alert pipeline break:', err);
-    }
-  };
-
   const handleNotificationsRead = async () => {
     if (!userProfile) return;
     await supabase.from('notifications').update({ read: true }).eq('user_id', userProfile.id);
@@ -246,6 +254,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 
+  // Shows the onboarding tour once per role (supervisor vs employee see
+  // different steps), the first time that role logs in on this browser.
+  useEffect(() => {
+    if (!userProfile?.role) return;
+    const seen = localStorage.getItem(`onboarding_seen_${userProfile.role}`);
+    if (!seen) setShowOnboarding(true);
+  }, [userProfile?.role]);
+
+  const dismissOnboarding = () => {
+    if (userProfile?.role) localStorage.setItem(`onboarding_seen_${userProfile.role}`, 'true');
+    setShowOnboarding(false);
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setUserProfile(null);
@@ -274,14 +295,33 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen font-sans bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:bg-blue-600 focus:text-white focus:px-4 focus:py-2 focus:rounded-lg focus:font-bold focus:text-sm"
+      >
+        {t('common.skipToContent')}
+      </a>
       <Toaster position="top-right" toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
 
-      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={helpdeskTickets.filter(t => t.ticket_status === 'Open').length} />
+      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={helpdeskTickets.filter(ticket => ticket.ticket_status === 'Open').length} />
 
       <div className="flex-1 flex flex-col md:ml-64 transition-all duration-300 relative w-full">
-        <Header userProfile={userProfile} onLogout={handleLogout} notifications={notifications} onNotificationsRead={handleNotificationsRead} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} toggleMobileSidebar={() => setIsMobileOpen(!isMobileOpen)} />
+        <Header
+          userProfile={userProfile}
+          onLogout={handleLogout}
+          notifications={notifications}
+          onNotificationsRead={handleNotificationsRead}
+          isDarkMode={isDarkMode}
+          toggleDarkMode={toggleDarkMode}
+          toggleMobileSidebar={() => setIsMobileOpen(!isMobileOpen)}
+          tasks={tasks}
+          contributions={contributions}
+          leaveRequests={leaveRequests}
+          allUsers={allUsers}
+          setActiveView={setActiveView}
+        />
 
-        <main className="flex-1 overflow-y-auto p-0 relative">
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-0 relative">
           <MainContent
             view={activeView}
             setActiveView={setActiveView}
@@ -299,12 +339,23 @@ export default function App() {
             helpdeskTickets={helpdeskTickets}
             fetchHelpdeskTickets={() => fetchHelpdeskTickets(userProfile)}
             fetchProfile={() => fetchProfile(userProfile.id)}
-            createNotification={createNotification}
             reviews={reviews}
+            colorblindMode={colorblindMode}
+            setColorblindMode={setColorblindMode}
+            fontSize={fontSize}
+            setFontSize={setFontSize}
+            highContrast={highContrast}
+            setHighContrast={setHighContrast}
+            reduceMotion={reduceMotion}
+            setReduceMotion={setReduceMotion}
+            isDarkMode={isDarkMode}
+            toggleDarkMode={toggleDarkMode}
+            onReplayOnboarding={() => setShowOnboarding(true)}
           />
           <ChatBot userProfile={userProfile} tasks={tasks} />
         </main>
       </div>
+      {showOnboarding && <OnboardingTour userProfile={userProfile} onClose={dismissOnboarding} />}
     </div>
   );
 }

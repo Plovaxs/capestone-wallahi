@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
-import { supabase } from '../supabaseClient'; 
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { supabase } from '../supabaseClient';
 import { Icons } from './Icons';
-import CesdLogo from '../assets/LOGO ahh.png'; 
+import GlobalSearch from './GlobalSearch';
+import CesdLogo from '../assets/LOGO ahh.png';
 
-const Header = ({ 
-    userProfile, 
-    notifications, 
-    onNotificationsRead, 
-    isDarkMode, 
+const Header = ({
+    userProfile,
+    notifications,
+    onNotificationsRead,
+    isDarkMode,
     toggleDarkMode,
-    toggleMobileSidebar 
+    toggleMobileSidebar,
+    tasks,
+    contributions,
+    leaveRequests,
+    allUsers,
+    setActiveView
 }) => {
+    const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -20,6 +28,16 @@ const Header = ({
             onNotificationsRead();
         }
     }
+
+    // Esc closes the notification dropdown, keeping it consistent with the shared Modal component.
+    useEffect(() => {
+        if (!isOpen) return;
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') setIsOpen(false);
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen]);
 
     const handleLogout = async () => {
         try {
@@ -44,7 +62,7 @@ const Header = ({
                 icon: '🚨',
                 bgClass: 'bg-red-50 dark:bg-red-950/20 border-red-100 dark:border-red-900/50',
                 textClass: 'text-red-800 dark:text-red-200',
-                badgeText: 'Action Required',
+                badgeText: t('header.badgeActionRequired'),
                 badgeStyle: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-red-200 dark:border-red-800'
             };
         }
@@ -54,7 +72,7 @@ const Header = ({
                 icon: '✅',
                 bgClass: 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/50',
                 textClass: 'text-emerald-800 dark:text-emerald-200',
-                badgeText: 'System Clearance',
+                badgeText: t('header.badgeSystemClearance'),
                 badgeStyle: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
             };
         }
@@ -64,7 +82,7 @@ const Header = ({
                 icon: '📌',
                 bgClass: 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/50',
                 textClass: 'text-blue-800 dark:text-blue-200',
-                badgeText: 'New Assignment',
+                badgeText: t('header.badgeNewAssignment'),
                 badgeStyle: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 border-blue-200 dark:border-blue-800'
             };
         }
@@ -74,7 +92,7 @@ const Header = ({
                 icon: '📊',
                 bgClass: 'bg-purple-50 dark:bg-purple-950/20 border-purple-100 dark:border-purple-900/50',
                 textClass: 'text-purple-800 dark:text-purple-200',
-                badgeText: 'Performance',
+                badgeText: t('header.badgePerformance'),
                 badgeStyle: 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300 border-purple-200 dark:border-purple-800'
             };
         }
@@ -84,17 +102,16 @@ const Header = ({
                 icon: '📅',
                 bgClass: 'bg-amber-50 dark:bg-amber-950/20 border-amber-100 dark:border-amber-900/50',
                 textClass: 'text-amber-800 dark:text-amber-200',
-                badgeText: 'Scheduling',
+                badgeText: t('header.badgeScheduling'),
                 badgeStyle: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 border-amber-200 dark:border-amber-800'
             };
         }
-        
         // ⚪ Default / General Info
         return {
             icon: '🔔',
             bgClass: 'bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-700',
             textClass: 'text-gray-800 dark:text-gray-200',
-            badgeText: 'System Update',
+            badgeText: t('header.badgeSystemUpdate'),
             badgeStyle: 'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'
         };
     };
@@ -103,8 +120,9 @@ const Header = ({
         <header className="bg-white shadow-sm border-b border-gray-200 p-4 flex justify-between items-center z-40 relative dark:bg-gray-800 dark:border-gray-700 h-16">
             
             <div className="flex items-center gap-3">
-                <button 
+                <button
                     onClick={toggleMobileSidebar}
+                    aria-label={t('header.openMenu')}
                     className="md:hidden p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-lg dark:text-gray-300 dark:hover:bg-gray-700"
                 >
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
@@ -112,13 +130,22 @@ const Header = ({
 
                 <img src={CesdLogo} alt="CESD Logo" className="h-8 sm:h-10 w-auto" />
                 <span className="hidden sm:block ml-2 text-lg font-bold text-gray-800 dark:text-gray-100 tracking-tight">
-                    Employee Dashboard
+                    {t('header.appTitle')}
                 </span>
             </div>
-            
+
+            <GlobalSearch
+                tasks={tasks}
+                contributions={contributions}
+                leaveRequests={leaveRequests}
+                allUsers={allUsers}
+                setActiveView={setActiveView}
+            />
+
             <div className="flex items-center space-x-2 sm:space-x-4">
                 <button
                     onClick={toggleDarkMode}
+                    aria-label={t('header.toggleDarkMode')}
                     className="p-2 text-gray-500 hover:bg-gray-100 rounded-full dark:text-gray-400 dark:hover:bg-gray-700 transition-colors"
                 >
                     {isDarkMode ? Icons.Sun : Icons.Moon}
@@ -128,7 +155,12 @@ const Header = ({
                 {/* 🔔 UPGRADED NOTIFICATION BELL TRAY       */}
                 {/* ========================================== */}
                 <div className="relative">
-                    <button onClick={handleToggle} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full dark:text-gray-400 dark:hover:bg-gray-700 transition-colors relative">
+                    <button
+                        onClick={handleToggle}
+                        aria-label={t('header.notifications')}
+                        aria-expanded={isOpen}
+                        className="p-2 text-gray-500 hover:bg-gray-100 rounded-full dark:text-gray-400 dark:hover:bg-gray-700 transition-colors relative"
+                    >
                         {Icons.Bell}
                         {unreadCount > 0 && (
                             <span className="absolute top-1 right-1 flex h-3 w-3">
@@ -143,8 +175,8 @@ const Header = ({
                            <div className="py-2 flex flex-col">
                              
                              <div className="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30">
-                                 <div className="font-extrabold text-sm dark:text-white uppercase tracking-wider text-gray-700">Inbox Alerts</div>
-                                 <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full dark:bg-blue-900/40 dark:text-blue-400">{notifications.length} Total</span>
+                                 <div className="font-extrabold text-sm dark:text-white uppercase tracking-wider text-gray-700">{t('header.inboxAlerts')}</div>
+                                 <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full dark:bg-blue-900/40 dark:text-blue-400">{notifications.length} {t('header.total')}</span>
                              </div>
                              
                              <div className="max-h-[400px] overflow-y-auto bg-gray-50/20 dark:bg-gray-900/10">
@@ -175,7 +207,7 @@ const Header = ({
                                 }) : (
                                     <div className="px-4 py-12 flex flex-col items-center justify-center text-center space-y-2 opacity-60">
                                         <span className="text-4xl grayscale">📭</span>
-                                        <p className="text-gray-500 dark:text-gray-400 text-xs font-bold tracking-wide">No active system alerts.</p>
+                                        <p className="text-gray-500 dark:text-gray-400 text-xs font-bold tracking-wide">{t('header.noAlerts')}</p>
                                     </div>
                                 )}
                              </div>
@@ -201,9 +233,10 @@ const Header = ({
                     </div>
                 </div>
 
-                <button 
-                    onClick={handleLogout} 
-                    title="Logout" 
+                <button
+                    onClick={handleLogout}
+                    title={t('header.logout')}
+                    aria-label={t('header.logout')}
                     className="ml-2 p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all dark:hover:bg-red-950/40 cursor-pointer z-50 border border-transparent hover:border-red-100 dark:hover:border-red-900/50"
                 >
                     {Icons.LogOut}

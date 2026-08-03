@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
+import { generateReviewPdf } from '../utils/generateReviewPdf';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -10,13 +12,15 @@ import { showUserError } from '../utils/errorHandling';
  * 2. Connects to a telemetry engine that auto-fills grades by evaluating database tracking rows.
  * ACCESS tier: Supervisors evaluate and submit reviews; Employees track personal evaluation archives.
  */
-const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], tasks = [], contributions = [], createNotification }) => {    // --- RUBRIC BUILDER CORE STATES ---
+const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], tasks = [], contributions = [] }) => {
+    const { t } = useTranslation();
+    // --- RUBRIC BUILDER CORE STATES ---
     const [selectedUserId, setSelectedUserId] = useState(''); // Target intern ID being reviewed
     const [scores, setScores] = useState({}); // Dictionary map tracking scores per item ID (e.g., { A1: 3, B2: 2 })
     const [comments, setComments] = useState(''); // Supervisor feedback summary text
     const [isSubmitting, setIsSubmitting] = useState(false); // Controls network submission loading indicators
     const [telemetrySummary, setTelemetrySummary] = useState(null); // Local mirror object for background activity metrics
-    
+
     // --- HISTORICAL APPRAISAL STORAGE CONTROLS ---
     const [evaluations, setEvaluations] = useState([]); // Array containing loaded historic review records
     const [isLoadingHistory, setIsLoadingHistory] = useState(false); // Network fallback tracking flag for data lists
@@ -37,60 +41,60 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     const SECTIONS = [
         {
             id: 'A',
-            title: 'A. Business/Organization Competencies',
+            title: t('reviews.sectionA'),
             items: [
-                { id: 'A1', text: 'Consistency in submitting assignments within the expected period of time (meeting the deadline)' },
-                { id: 'A2', text: 'Ability to produce reliable work quality by being thorough with minimum errors.' },
-                { id: 'A3', text: 'Ability to work under minimum supervision.' },
-                { id: 'A4', text: 'Ability to be active and consistent in seeking knowledge/information needed to perform the job.' },
-                { id: 'A5', text: 'Ability to analyze/identify the main issues/problems.' },
-                { id: 'A6', text: 'Ability to offer relevant solutions/recommendations to problems.' },
-                { id: 'A7', text: 'Level of discipline to maintain agreed working hours.' },
-                { id: 'A8', text: 'Level of awareness of organizational code of conduct and culture.' }
+                { id: 'A1', text: t('reviews.A1') },
+                { id: 'A2', text: t('reviews.A2') },
+                { id: 'A3', text: t('reviews.A3') },
+                { id: 'A4', text: t('reviews.A4') },
+                { id: 'A5', text: t('reviews.A5') },
+                { id: 'A6', text: t('reviews.A6') },
+                { id: 'A7', text: t('reviews.A7') },
+                { id: 'A8', text: t('reviews.A8') }
             ]
         },
         {
             id: 'B',
-            title: 'B. People Competency',
+            title: t('reviews.sectionB'),
             items: [
-                { id: 'B1', text: 'Ability to prioritize team goals over individual goals.' },
-                { id: 'B2', text: 'Ability to accept constructive feedback from team members or supervisors in a mature and professional manner.' },
-                { id: 'B3', text: 'Level of initiative to seek information on team needs and act on it.' },
-                { id: 'B4', text: 'Level of awareness of customer needs, expectations, problems, and circumstances.' },
-                { id: 'B5', text: 'Ability to build rapport and cooperation with customers.' },
-                { id: 'B6', text: 'Level of engagement with team members (including attending discussions, being helpful, and showing empathy).' },
-                { id: 'B7', text: 'Ability to share important/relevant information (including ideas and recent updates) with team members and supervisors.' }
+                { id: 'B1', text: t('reviews.B1') },
+                { id: 'B2', text: t('reviews.B2') },
+                { id: 'B3', text: t('reviews.B3') },
+                { id: 'B4', text: t('reviews.B4') },
+                { id: 'B5', text: t('reviews.B5') },
+                { id: 'B6', text: t('reviews.B6') },
+                { id: 'B7', text: t('reviews.B7') }
             ]
         },
         {
             id: 'C',
-            title: 'C. Self Management / Behavior',
+            title: t('reviews.sectionC'),
             items: [
-                { id: 'C1', text: 'Ability to behave in a respectful and consistent manner.' },
-                { id: 'C2', text: 'Ability to share feelings to let colleagues understand current state of mind.' },
-                { id: 'C3', text: 'Ability to manage confidential information.' },
-                { id: 'C4', text: 'Ability to treat other people with respect.' },
-                { id: 'C5', text: 'Ability to maintain constant performance and act rationally under stressful situations.' },
-                { id: 'C6', text: 'Ability to adjust to emerging changes in the workplace.' }
+                { id: 'C1', text: t('reviews.C1') },
+                { id: 'C2', text: t('reviews.C2') },
+                { id: 'C3', text: t('reviews.C3') },
+                { id: 'C4', text: t('reviews.C4') },
+                { id: 'C5', text: t('reviews.C5') },
+                { id: 'C6', text: t('reviews.C6') }
             ]
         },
         {
             id: 'D',
-            title: 'D. Technical Skill',
+            title: t('reviews.sectionD'),
             items: [
-                { id: 'D1', text: 'Ability to listen and follow instructions.' },
-                { id: 'D2', text: 'Ability to convey clear messages and information in good spoken language.' },
-                { id: 'D3', text: 'Ability to write clearly and concisely.' },
-                { id: 'D4', text: 'Ability to respond to questions, feedback, and instructions in a clear and correct manner.' },
-                { id: 'D5', text: 'Level of relevancy of knowledge to business needs.' }
+                { id: 'D1', text: t('reviews.D1') },
+                { id: 'D2', text: t('reviews.D2') },
+                { id: 'D3', text: t('reviews.D3') },
+                { id: 'D4', text: t('reviews.D4') },
+                { id: 'D5', text: t('reviews.D5') }
             ]
         }
     ];
 
     const SCORE_OPTIONS = [
-        { val: 1, label: 'No Improv.' },
-        { val: 2, label: 'Some Improv.' },
-        { val: 3, label: 'Great Improv.' }
+        { val: 1, label: t('reviews.scoreNoImprov') },
+        { val: 2, label: t('reviews.scoreSomeImprov') },
+        { val: 3, label: t('reviews.scoreGreatImprov') }
     ];
 
     // =========================================================================
@@ -161,6 +165,16 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         setTelemetrySummary({ punctuality, overdueCount, totalForumEngagement });
     }, [selectedUserId, attendance, tasks, contributions]);
 
+    // Esc closes the read-only transcript overlay, matching the shared Modal component's behavior.
+    useEffect(() => {
+        if (!selectedHistoricalEval) return;
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') setSelectedHistoricalEval(null);
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [selectedHistoricalEval]);
+
     /**
      * HANDLER UTILITY: handleAutoFillTelemetry
      * PURPOSE: Intelligent heuristic mapper parsing active workspace analytics 
@@ -208,17 +222,17 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
      */
     const calculateFinalScores = () => {
         const answeredCount = Object.keys(scores).length;
-        if (answeredCount === 0) return { pointTotal: 0, rubric: { grade: 'P', style: 'text-red-500 bg-red-950/20', desc: 'No assessment recorded.' } };
+        if (answeredCount === 0) return { pointTotal: 0, rubric: { grade: 'P', style: 'text-red-500 bg-red-950/20', desc: t('reviews.descNone') } };
 
         const rawSum = Object.values(scores).reduce((sum, val) => sum + val, 0);
         const maxPossibleRaw = totalQuestionsCount * 3; // 26 items * 3 max points each
         const pointTotal = parseFloat(((rawSum / maxPossibleRaw) * 100).toFixed(2));
 
-        let rubric = { grade: 'P (Poor / Unsatisfactory)', style: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300 border-red-200 dark:border-red-900', desc: 'Cannot demonstrate expected performance parameters.' };
+        let rubric = { grade: t('reviews.gradeP'), style: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300 border-red-200 dark:border-red-900', desc: t('reviews.descPoor') };
         if (pointTotal >= 60.00) {
-            rubric = { grade: 'A (Average / Satisfactory)', style: 'bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300 border-green-200 dark:border-green-900', desc: 'Meets standard expectations requirement.' };
+            rubric = { grade: t('reviews.gradeA'), style: 'bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300 border-green-200 dark:border-green-900', desc: t('reviews.descAverage') };
         } else if (pointTotal >= 50.00) {
-            rubric = { grade: 'NI (Needs Improvement)', style: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-900', desc: 'Demonstrates poor metrics in most monitored sectors.' };
+            rubric = { grade: t('reviews.gradeNI'), style: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-900', desc: t('reviews.descNeedsImprovement') };
         }
         return { pointTotal, rubric };
     };
@@ -228,9 +242,9 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
     // --- MUTATION HANDLING ENDPOINTS (DB DISPATCH CHANNELS) ---
     const handleSubmitEvaluation = async () => {
-        if (!selectedUserId) return alert("Please select an outsourcing staff member.");
+        if (!selectedUserId) return alert(t('reviews.selectStaffFirst'));
         if (totalAnsweredQuestions < totalQuestionsCount) {
-            return alert(`Incomplete Rubric: Missing ${totalQuestionsCount - totalAnsweredQuestions} criteria flags.`);
+            return alert(t('reviews.incompleteRubric', { count: totalQuestionsCount - totalAnsweredQuestions }));
         }
 
         setIsSubmitting(true);
@@ -238,9 +252,10 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             const { error } = await supabase.from('performance_evaluations').update({ scores, final_score: pointTotal, comments }).eq('id', editingEvalId);
             if (error) showUserError('Failed to update review', error);
             else {
-                alert("Appraisal updated cleanly.");
-                // 🟩 ADD THIS LINE
-                await createNotification(selectedUserId, `📊 Review Updated: Your performance appraisal has been amended. Index: ${pointTotal} Pts.`);
+                alert(t('reviews.appraisalUpdated'));
+                // Notifying the employee is now handled server-side by the
+                // notify_evaluation trigger — the client can no longer
+                // insert into notifications directly (RLS).
                 resetForm();
                 fetchEvaluations();
             }
@@ -250,9 +265,10 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             });
             if (error) showUserError('Failed to submit review', error);
             else {
-                alert("Performance appraisal submitted successfully!");
-                // 🟩 ADD THIS LINE
-                await createNotification(selectedUserId, `📊 New Performance Review: You have received a formal evaluation score of ${pointTotal} Pts.`);
+                alert(t('reviews.appraisalSubmitted'));
+                // Notifying the employee is now handled server-side by the
+                // notify_evaluation trigger — the client can no longer
+                // insert into notifications directly (RLS).
                 resetForm();
                 fetchEvaluations();
             }
@@ -269,11 +285,11 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     };
 
     const handleDeleteEvaluation = async (id) => {
-        if (!confirm("Are you sure you want to permanently delete this assessment record?")) return;
+        if (!confirm(t('reviews.confirmDeleteRecord'))) return;
         const { error } = await supabase.from('performance_evaluations').delete().eq('id', id);
         if (error) showUserError('Failed to delete review', error);
         else {
-            alert("Record deleted successfully.");
+            alert(t('reviews.recordDeleted'));
             fetchEvaluations();
         }
     };
@@ -285,7 +301,30 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         setEditingEvalId(null);
     };
 
-    const getUserName = (id) => allUsers.find(u => u.id === id)?.name || 'Unknown User';
+    const getUserName = (id) => allUsers.find(u => u.id === id)?.name || t('reviews.unknownUser');
+
+    const handleDownloadPdf = (evaluation) => {
+        generateReviewPdf({
+            evaluation,
+            sections: SECTIONS,
+            scoreOptions: SCORE_OPTIONS,
+            employeeName: getUserName(evaluation.employee_id),
+            supervisorName: getUserName(evaluation.supervisor_id),
+            labels: {
+                reportTitle: t('reviews.pdfReportTitle'),
+                reportSubtitle: t('reviews.pdfReportSubtitle'),
+                employee: t('reviews.pdfEmployee'),
+                supervisor: t('reviews.pdfSupervisor'),
+                issuedOn: t('reviews.pdfIssuedOn'),
+                finalScore: t('reviews.pdfFinalScore'),
+                unmarked: t('reviews.unmarked'),
+                remarks: t('reviews.pdfRemarks'),
+                noRemarks: t('reviews.pdfNoRemarks'),
+                generatedOn: t('reviews.pdfGeneratedOn', { date: new Date().toLocaleString() }),
+                filenamePrefix: t('reviews.pdfFilenamePrefix'),
+            },
+        });
+    };
 
     // Roster sorter and search parsing filter pipeline
     const processedRoster = employeeUsers
@@ -304,8 +343,8 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     return (
         <div className="p-8 max-w-7xl mx-auto space-y-6">
             <div>
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Performance Assessment</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Formal assessment form for employee work performance.</p>
+                <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('reviews.title')}</h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{t('reviews.subtitle')}</p>
             </div>
 
             {/* SUPERVISOR PANEL INTERFACE SHEETS */}
@@ -315,23 +354,23 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                     {/* SIDEBAR NAVIGATION LIST ROSTER */}
                     <div className="space-y-4">
                         <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-3">
-                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Active Outsourcing Staff Roster</h3>
+                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('reviews.activeRoster')}</h3>
                             <div className="space-y-2">
-                                <input 
+                                <input
                                     type="text"
                                     value={searchIntern}
                                     onChange={(e) => setSearchIntern(e.target.value)}
-                                    placeholder="🔍 Search outsourcing staff..."
+                                    placeholder={t('reviews.searchStaffPlaceholder')}
                                     className="w-full p-2 text-[11px] border border-gray-100 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none"
                                 />
-                                <select 
-                                    value={sortOrder} 
+                                <select
+                                    value={sortOrder}
                                     onChange={(e) => setSortOrder(e.target.value)}
                                     className="w-full p-2 text-[11px] border border-gray-100 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none"
                                 >
-                                    <option value="name-az">Sort: Alphabetical (A-Z)</option>
-                                    <option value="name-za">Sort: Alphabetical (Z-A)</option>
-                                    <option value="campus">Sort: By Institution</option>
+                                    <option value="name-az">{t('reviews.sortAZ')}</option>
+                                    <option value="name-za">{t('reviews.sortZA')}</option>
+                                    <option value="campus">{t('reviews.sortByInstitution')}</option>
                                 </select>
                             </div>
 
@@ -349,7 +388,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                     >
                                         <span>{emp.name}</span>
                                         <span className={`text-[9px] px-2 py-0.5 rounded-lg border uppercase ${selectedUserId === emp.id ? 'bg-white/20 border-white/10' : 'bg-gray-200/60 text-gray-400 dark:bg-gray-800'}`}>
-                                            {emp.source?.split(' ')[0] || 'Staff'}
+                                            {emp.source?.split(' ')[0] || t('reviews.staffBadge')}
                                         </span>
                                     </button>
                                 ))}
@@ -359,23 +398,23 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         {/* LIVE METRICS SYNC DISPLAY SHEET WIDGET */}
                         {telemetrySummary && (
                             <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-3 animate-fade-in">
-                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Live Workspace Telemetry</h3>
+                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('reviews.liveTelemetry')}</h3>
                                 <div className="space-y-2 text-[11px] font-bold">
                                     <div className="p-2.5 bg-gray-50 dark:bg-gray-900 rounded-xl flex justify-between">
-                                        <span className="text-gray-400">Punctuality Score:</span>
+                                        <span className="text-gray-400">{t('reviews.punctualityScore')}</span>
                                         <span className="text-gray-700 dark:text-gray-200">{telemetrySummary.punctuality !== null ? `${telemetrySummary.punctuality}%` : 'N/A'}</span>
                                     </div>
                                     <div className="p-2.5 bg-gray-50 dark:bg-gray-900 rounded-xl flex justify-between">
-                                        <span className="text-gray-400">Overdue Tasks:</span>
-                                        <span className={telemetrySummary.overdueCount > 0 ? "text-red-500" : "text-green-500"}>{telemetrySummary.overdueCount} Items</span>
+                                        <span className="text-gray-400">{t('reviews.overdueTasks')}</span>
+                                        <span className={telemetrySummary.overdueCount > 0 ? "text-red-500" : "text-green-500"}>{telemetrySummary.overdueCount} {t('reviews.items')}</span>
                                     </div>
                                     <div className="p-2.5 bg-gray-50 dark:bg-gray-900 rounded-xl flex justify-between">
-                                        <span className="text-gray-400">Forum Interactions:</span>
-                                        <span className="text-gray-700 dark:text-gray-200">{telemetrySummary.totalForumEngagement} Activity</span>
+                                        <span className="text-gray-400">{t('reviews.forumInteractions')}</span>
+                                        <span className="text-gray-700 dark:text-gray-200">{telemetrySummary.totalForumEngagement} {t('reviews.activity')}</span>
                                     </div>
                                 </div>
                                 <button type="button" onClick={handleAutoFillTelemetry} className="w-full bg-blue-50 text-blue-600 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-900 py-2.5 rounded-xl text-xs font-bold transition shadow-sm">
-                                    💡 Auto-Analyze Workspace Telemetry
+                                    {t('reviews.autoAnalyze')}
                                 </button>
                             </div>
                         )}
@@ -390,17 +429,17 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                 <div className="p-5 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex justify-between items-center sticky top-0 z-10 backdrop-blur">
                                     <div>
                                         <h2 className="font-bold text-sm text-gray-800 dark:text-white">
-                                            {editingEvalId ? '⚙️ Amending Review:' : '📝 Grading Rubric:'} {getUserName(selectedUserId)}
+                                            {editingEvalId ? t('reviews.amendingReview') : t('reviews.gradingRubric')} {getUserName(selectedUserId)}
                                         </h2>
                                         <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">
-                                            Completed: {totalAnsweredQuestions}/{totalQuestionsCount} Fields Filled
+                                            {t('reviews.completedFields', { answered: totalAnsweredQuestions, total: totalQuestionsCount })}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <div className={`p-2 rounded-xl border text-[10px] font-bold leading-tight ${rubric.style}`}>
-                                            Index: <b className="text-xs font-black">{pointTotal}</b> | {rubric.grade.split(' ')[0]}
+                                            {t('reviews.index')} <b className="text-xs font-black">{pointTotal}</b> | {rubric.grade.split(' ')[0]}
                                         </div>
-                                        {editingEvalId && <button onClick={resetForm} className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-white text-[10px] font-bold px-2.5 py-2 rounded-lg transition">Cancel</button>}
+                                        {editingEvalId && <button onClick={resetForm} className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-white text-[10px] font-bold px-2.5 py-2 rounded-lg transition">{t('reviews.cancel')}</button>}
                                     </div>
                                 </div>
 
@@ -416,7 +455,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                                             <span className="font-mono font-bold text-gray-400">{index + 1}.</span>
                                                             <p>{item.text}</p>
                                                         </div>
-                                                        
+
                                                         {/* SCORE RADIO PILL TRIGGER SWITCHES */}
                                                         <div className="flex bg-gray-100 dark:bg-gray-900 p-1 rounded-xl self-end md:self-center shrink-0 border dark:border-gray-700 gap-1">
                                                             {SCORE_OPTIONS.map(opt => {
@@ -445,12 +484,13 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
                                     {/* CONCLUDING REMARKS FEEDBACK TEXT AREA */}
                                     <div className="pt-6">
-                                        <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Supervisor Concluding Feedback Remarks</label>
+                                        <label htmlFor="review-comments" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">{t('reviews.concludingFeedback')}</label>
                                         <textarea
+                                            id="review-comments"
                                             value={comments}
                                             onChange={e => setComments(e.target.value)}
                                             className="w-full p-4 border border-gray-100 dark:border-gray-600 text-xs rounded-xl bg-gray-50/50 dark:bg-gray-900 dark:text-white resize-none focus:outline-none"
-                                            placeholder="Write summary evaluation observations regarding strengths or performance indicators..."
+                                            placeholder={t('reviews.concludingPlaceholder')}
                                             rows="2"
                                         ></textarea>
                                     </div>
@@ -467,15 +507,15 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                             totalAnsweredQuestions < totalQuestionsCount ? 'bg-gray-300 dark:bg-gray-700 cursor-not-allowed text-gray-500' : 'bg-blue-600 hover:bg-blue-700'
                                         }`}
                                     >
-                                        {isSubmitting ? 'Saving...' : (editingEvalId ? 'Update Appraisal' : 'Submit Scorecard')}
+                                        {isSubmitting ? t('reviews.saving') : (editingEvalId ? t('reviews.updateAppraisal') : t('reviews.submitScorecard'))}
                                     </button>
                                 </div>
                             </div>
                         ) : (
                             <div className="bg-gray-50 border border-dashed border-gray-200 rounded-2xl h-64 flex flex-col justify-center items-center text-center p-6 text-gray-400 dark:bg-gray-800 dark:border-gray-700">
                                 <span className="text-2xl mb-1">📋</span>
-                                <h4 className="font-bold text-xs text-gray-700 dark:text-gray-300">No Target Outsourcing Staff Highlighted</h4>
-                                <p className="text-[11px] max-w-xs leading-normal mt-0.5">Select a staff entry from the roster menu to initialize grading channels.</p>
+                                <h4 className="font-bold text-xs text-gray-700 dark:text-gray-300">{t('reviews.noStaffSelected')}</h4>
+                                <p className="text-[11px] max-w-xs leading-normal mt-0.5">{t('reviews.selectFromRoster')}</p>
                             </div>
                         )}
                     </div>
@@ -486,18 +526,18 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden dark:bg-gray-800 dark:border-gray-700">
                 <div className="p-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/30">
                     <h2 className="text-sm font-bold text-gray-800 dark:text-gray-100">
-                        {userProfile.role === 'supervisor' ? 'Historical Appraisal Logs Ledger' : 'My Performance Appraisals'}
+                        {userProfile.role === 'supervisor' ? t('reviews.historicalLogs') : t('reviews.myAppraisals')}
                     </h2>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-50/80 dark:bg-gray-700/40 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
-                                <th className="p-4">Date Issued</th>
-                                <th className="p-4">Outsourcing Staff Name</th>
-                                <th className="p-4">Accredited Index</th>
-                                <th className="p-4">Evaluation Remarks Summary</th>
-                                <th className="p-4 text-right">Actions</th>
+                                <th className="p-4">{t('reviews.colDateIssued')}</th>
+                                <th className="p-4">{t('reviews.colStaffName')}</th>
+                                <th className="p-4">{t('reviews.colAccreditedIndex')}</th>
+                                <th className="p-4">{t('reviews.colRemarksSummary')}</th>
+                                <th className="p-4 text-right">{t('reviews.colActions')}</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700 text-xs">
@@ -509,17 +549,18 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                         <span className={`px-2 py-0.5 font-bold rounded-lg ${
                                             record.final_score >= 60 ? 'bg-green-50 text-green-700 dark:bg-green-950/30' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30'
                                         }`}>
-                                            Index: {record.final_score}
+                                            {t('reviews.index')} {record.final_score}
                                         </span>
                                     </td>
-                                    <td className="p-4 text-gray-500 max-w-xs truncate italic">"{record.comments || 'No written remarks.'}"</td>
+                                    <td className="p-4 text-gray-500 max-w-xs truncate italic">"{record.comments || t('reviews.noWrittenRemarks')}"</td>
                                     <td className="p-4 text-right">
                                         <div className="inline-flex gap-2 justify-end">
-                                            <button onClick={() => setSelectedHistoricalEval(record)} className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-blue-900/30 dark:text-blue-300">🔍 Full Rubric Report</button>
+                                            <button onClick={() => setSelectedHistoricalEval(record)} className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-blue-900/30 dark:text-blue-300">{t('reviews.fullRubricReport')}</button>
+                                            <button onClick={() => handleDownloadPdf(record)} className="text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-indigo-900/30 dark:text-indigo-300">{t('reviews.downloadPdf')}</button>
                                             {userProfile.role === 'supervisor' && (
                                                 <>
-                                                    <button onClick={() => handleEditLoad(record)} className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-amber-900/30 dark:text-amber-300">⚙️ Edit</button>
-                                                    <button onClick={() => handleDeleteEvaluation(record.id)} className="text-red-600 bg-red-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-red-900/30 dark:text-red-300">🗑️ Delete</button>
+                                                    <button onClick={() => handleEditLoad(record)} className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-amber-900/30 dark:text-amber-300">{t('reviews.edit')}</button>
+                                                    <button onClick={() => handleDeleteEvaluation(record.id)} className="text-red-600 bg-red-50 px-2 py-1 rounded-md font-bold text-[10px] dark:bg-red-900/30 dark:text-red-300">{t('reviews.delete')}</button>
                                                 </>
                                             )}
                                         </div>
@@ -528,7 +569,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                             ))}
                             {evaluations.length === 0 && !isLoadingHistory && (
                                 <tr>
-                                    <td colSpan="5" className="p-8 text-center text-xs text-gray-400 italic">No formal evaluations filed in database records.</td>
+                                    <td colSpan="5" className="p-8 text-center text-xs text-gray-400 italic">{t('reviews.noEvaluations')}</td>
                                 </tr>
                             )}
                         </tbody>
@@ -545,6 +586,9 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                     onClick={() => setSelectedHistoricalEval(null)}
                 >
                     <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="transcript-modal-title"
                         className="bg-white dark:bg-gray-800 w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col max-h-[85vh] overflow-hidden animate-scale-up"
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -552,14 +596,15 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         {/* STICKY TRANSCRIPT HEADER */}
                         <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/40 shrink-0">
                             <div>
-                                <h3 className="font-bold text-sm dark:text-white">Full Appraisal Transcript Summary</h3>
+                                <h3 id="transcript-modal-title" className="font-bold text-sm dark:text-white">{t('reviews.fullTranscriptSummary')}</h3>
                                 <p className="text-[10px] text-gray-400 font-bold font-mono uppercase mt-0.5">
-                                    Assessed Employee: {getUserName(selectedHistoricalEval.employee_id)}
+                                    {t('reviews.assessedEmployee', { name: getUserName(selectedHistoricalEval.employee_id) })}
                                 </p>
                             </div>
-                            <button 
-                                type="button" 
-                                onClick={() => setSelectedHistoricalEval(null)} 
+                            <button
+                                type="button"
+                                onClick={() => setSelectedHistoricalEval(null)}
+                                aria-label={t('common.close')}
                                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm font-black p-1 transition-colors"
                             >
                                 ✕
@@ -572,11 +617,11 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                             {/* Score Index Banner metrics */}
                             <div className="grid grid-cols-2 gap-4 bg-gray-50 dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-700">
                                 <div>
-                                    <span className="text-gray-400 block font-normal text-[11px]">Final Calculated Index Score:</span> 
-                                    <b className="text-base text-blue-600 dark:text-blue-400 block mt-1">{selectedHistoricalEval.final_score} Points</b>
+                                    <span className="text-gray-400 block font-normal text-[11px]">{t('reviews.finalIndexScore')}</span>
+                                    <b className="text-base text-blue-600 dark:text-blue-400 block mt-1">{selectedHistoricalEval.final_score} {t('reviews.points')}</b>
                                 </div>
                                 <div>
-                                    <span className="text-gray-400 block font-normal text-[11px]">Issuance Log Timestamp:</span> 
+                                    <span className="text-gray-400 block font-normal text-[11px]">{t('reviews.issuanceTimestamp')}</span>
                                     <b className="text-sm text-gray-800 dark:text-gray-100 block mt-1 font-mono">
                                         {new Date(selectedHistoricalEval.created_at).toLocaleString('en-GB')}
                                     </b>
@@ -593,7 +638,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                         <div className="space-y-2">
                                             {sec.items.map((item, idx) => {
                                                 const scoreValue = selectedHistoricalEval.scores?.[item.id] || '--';
-                                                const matchedLabel = SCORE_OPTIONS.find(o => o.val === scoreValue)?.label || 'Unmarked';
+                                                const matchedLabel = SCORE_OPTIONS.find(o => o.val === scoreValue)?.label || t('reviews.unmarked');
                                                 
                                                 return (
                                                     <div key={item.id} className="flex justify-between items-start py-1.5 border-b border-gray-50 dark:border-gray-800/40 gap-4 last:border-none">
@@ -613,21 +658,28 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
                             {/* Concluding comments summary */}
                             <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
-                                <h4 className="font-bold text-gray-400 uppercase tracking-wider text-[10px] mb-1">Supervisor Final Concluding Remarks</h4>
+                                <h4 className="font-bold text-gray-400 uppercase tracking-wider text-[10px] mb-1">{t('reviews.finalRemarks')}</h4>
                                 <p className="p-3 bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-xl italic text-gray-700 dark:text-gray-300">
-                                    "{selectedHistoricalEval.comments || 'No written summary filed.'}"
+                                    "{selectedHistoricalEval.comments || t('reviews.noWrittenSummary')}"
                                 </p>
                             </div>
                         </div>
 
                         {/* Transcript overlay control line */}
-                        <div className="p-3 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 flex justify-end shrink-0">
-                            <button 
+                        <div className="p-3 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 flex justify-end gap-2 shrink-0">
+                            <button
                                 type="button"
-                                onClick={() => setSelectedHistoricalEval(null)} 
+                                onClick={() => handleDownloadPdf(selectedHistoricalEval)}
+                                className="bg-indigo-600 text-white hover:bg-indigo-700 px-5 py-2 font-bold rounded-xl text-xs transition shadow-sm"
+                            >
+                                {t('reviews.downloadPdf')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSelectedHistoricalEval(null)}
                                 className="bg-gray-800 text-white hover:bg-gray-900 px-5 py-2 font-bold rounded-xl text-xs dark:bg-blue-600 dark:hover:bg-blue-700 transition shadow-sm"
                             >
-                                Close Transcript
+                                {t('reviews.closeTranscript')}
                             </button>
                         </div>
 

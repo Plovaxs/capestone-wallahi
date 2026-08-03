@@ -1,10 +1,13 @@
+import i18n from '../i18n';
+
 /**
  * Logs the real error for debugging and shows the user a generic,
  * non-leaking message instead of raw Postgres/PostgREST error text
  * (which can expose table/column/constraint names to any authenticated
- * user probing the app).
+ * user probing the app). Uses the i18n instance directly (not the
+ * useTranslation hook) since this is a plain utility, not a component.
  */
 export const showUserError = (context, error) => {
   console.error(context, error);
-  alert(`${context}. Please try again, or contact support if the problem continues.`);
+  alert(`${context}. ${i18n.t('common.tryAgainOrContactSupport')}`);
 };

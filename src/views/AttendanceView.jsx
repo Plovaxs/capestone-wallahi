@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
 import * as faceapi from 'face-api.js';
@@ -19,6 +20,7 @@ const YOLO_MODEL_IDS = {
 };
 
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile }) => {
+    const { t } = useTranslation();
     const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
     const YOLO_LOCAL_PATH = import.meta.env.VITE_YOLO_LOCAL_PATH || '/models/yolov8n-face';
     const FACE_MATCH_THRESHOLD = 0.5;
@@ -35,7 +37,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [isCameraReady, setIsCameraReady] = useState(false); 
     const [, setCameraStatus] = useState('idle'); // cameraStatus itself is never read, only tracked
     const [faceStatus, setFaceStatus] = useState('idle'); 
-    const [biometricStatus, setBiometricStatus] = useState('Initializing Scanner...');
+    const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
     const [, setClockInAt] = useState(''); // write-only, never displayed
     const [, setClockInSource] = useState('none'); // write-only, never displayed
     const [disableYolo] = useState(false); // setter was never called anywhere — always stays false
@@ -340,7 +342,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         async function loadModels() {
             setFaceStatus('loading-models');
-            setBiometricStatus('Loading network weights...');
+            setBiometricStatus(t('attendance.statusLoadingModels'));
             await Promise.all([
                 faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
                 faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
@@ -351,10 +353,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 referenceDescriptorRef.current = savedDescriptor;
                 setHasStoredFace(true);
                 setFaceStatus('scanning');
-                setBiometricStatus('Align face with camera');
+                setBiometricStatus(t('attendance.statusAlignFace'));
             } else {
                 setFaceStatus('error');
-                setBiometricStatus('Missing Face Profile Data');
+                setBiometricStatus(t('attendance.statusMissingProfile'));
             }
         }
         loadModels();
@@ -399,22 +401,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                         if (isMatch) {
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
-                                setBiometricStatus('ACCESS DENIED: Outside office range!');
+                                setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!autoClockInGuardRef.current) {
                                 autoClockInGuardRef.current = true;
-                                setBiometricStatus('Match verified! Logging attendance...');
+                                setBiometricStatus(t('attendance.statusMatchVerified'));
                                 clearInterval(timer);
                                 await handleClockIn('face-match');
                             }
                         } else {
-                            setBiometricStatus('Wajah tidak dikenali');
+                            setBiometricStatus(t('attendance.statusNotRecognized'));
                         }
                     }
                 } else {
                     setFaceOverlayBox(null);
                     setFaceMatchDistance(null);
                     setIsFaceVerified(false);
-                    setBiometricStatus('Scanning for frontal matrix...');
+                    setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
                 console.error(err);
@@ -486,11 +488,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const handleClockIn = async (source = 'manual') => {
         if (userProfile.role !== 'supervisor' && !currentCoords) {
-            alert("Waiting for secure GPS coordinates...");
+            alert(t('attendance.gpsWaiting'));
             return false;
         }
         if (userProfile.role !== 'supervisor' && !isInRange) {
-            alert(`Geofence rejection exception: Outside boundary.`);
+            alert(t('attendance.geofenceRejection'));
             return false;
         }
 
@@ -567,11 +569,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 if (error) {
                     showUserError('Failed to enroll face', error);
                 } else {
-                    alert('Face matrix enrolled successfully!');
+                    alert(t('attendance.faceEnrolled'));
                     fetchProfile?.();
                 }
             } else {
-                alert('Failed to detect face. Please align properly with the camera.');
+                alert(t('attendance.faceDetectFailed'));
             }
         } finally {
             setIsEnrolling(false);
@@ -583,7 +585,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         setIsEnrolling(true);
         try {
             await supabase.from('profiles').update({ face_descriptor: null }).eq('id', userProfile.id);
-            alert('Face cleared.');
+            alert(t('attendance.faceCleared'));
             fetchProfile?.();
         } finally {
             setIsEnrolling(false);
@@ -592,10 +594,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const statusBadge = (status, clockOut, date) => {
         if (!clockOut && date !== today) {
-            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">Incomplete</span>;
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">{t('attendance.incomplete')}</span>;
         }
         if (!clockOut) {
-            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse">In Progress</span>;
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse">{t('attendance.inProgress')}</span>;
         }
         const styles = status === 'Present' 
             ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
@@ -608,10 +610,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-white">
-                        {userProfile.role === 'supervisor' ? 'Outsourcing Staff Tracking Portal' : 'My Attendance Logs'}
+                        {userProfile.role === 'supervisor' ? t('attendance.supervisorTitle') : t('attendance.employeeTitle')}
                     </h1>
                     <p className="text-sm text-slate-400 mt-1">
-                        {userProfile.role === 'supervisor' ? 'Real-time operational dashboard for outsourcing staff monitoring and compliance logs.' : 'Log your location token details and inspect verification metrics.'}
+                        {userProfile.role === 'supervisor' ? t('attendance.supervisorSubtitle') : t('attendance.employeeSubtitle')}
                     </p>
                 </div>
                 {userProfile.role === 'supervisor' && (
@@ -621,10 +623,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             onChange={(e) => setExportEmployeeId(e.target.value)}
                             className="text-xs font-bold bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 focus:outline-none focus:border-blue-500"
                         >
-                            <option value="all">All Employees</option>
+                            <option value="all">{t('attendance.allEmployees')}</option>
                             {processedInterns.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
-                        <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Outsourcing_Staff_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label="Export Clean Sheet" />
+                        <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Outsourcing_Staff_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label={t('attendance.exportCleanSheet')} />
                     </div>
                 )}
             </div>
@@ -633,19 +635,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Registered Outsourcing Staff</div>
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('attendance.totalRegisteredStaff')}</div>
                             <div className="text-4xl font-black text-white mt-2 flex items-baseline gap-2">
-                                {activeEmployees.length} <span className="text-xs font-bold text-slate-500 uppercase font-sans">Officers</span>
+                                {activeEmployees.length} <span className="text-xs font-bold text-slate-500 uppercase font-sans">{t('attendance.officers')}</span>
                             </div>
                         </div>
                         <div className="bg-gradient-to-br from-blue-600/20 to-indigo-600/10 border border-blue-500/30 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <div className="text-xs font-bold text-blue-400 uppercase tracking-widest">Active Clocked-In Today</div>
+                            <div className="text-xs font-bold text-blue-400 uppercase tracking-widest">{t('attendance.activeClockedInToday')}</div>
                             <div className="text-4xl font-black text-blue-400 mt-2 flex items-baseline gap-2">
-                                {clockedInTodayCount} <span className="text-xs font-bold text-blue-500 uppercase font-sans animate-pulse">Live Now</span>
+                                {clockedInTodayCount} <span className="text-xs font-bold text-blue-500 uppercase font-sans animate-pulse">{t('attendance.liveNow')}</span>
                             </div>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col justify-center">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Duty Mode Distribution</div>
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{t('attendance.dutyModeDistribution')}</div>
                             <div className="flex gap-2">
                                 <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏢 {wfoAssignmentCount} WFO</span>
                                 <span className="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏠 {wfhAssignmentCount} WFH</span>
@@ -655,44 +657,45 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 shadow-inner">
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Search Outsourcing Staff</label>
-                            <input 
+                            <label htmlFor="att-search" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.searchStaff')}</label>
+                            <input
+                                id="att-search"
                                 type="text"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                placeholder="Type search term..."
+                                placeholder={t('attendance.searchPlaceholder')}
                                 className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white placeholder-slate-500 font-medium"
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Origin Institution</label>
-                            <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
-                                <option value="all">All Companies/Institutions</option>
+                            <label htmlFor="att-source" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.originInstitution')}</label>
+                            <select id="att-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">{t('attendance.allInstitutions')}</option>
                                 {uniqueSources.map(src => <option key={src} value={src}>{src}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Assigned Mode</label>
-                            <select value={filterMode} onChange={(e) => setFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
-                                <option value="all">All Modes</option>
-                                <option value="WFO">🏢 Office (WFO)</option>
-                                <option value="WFH">🏠 Remote (WFH)</option>
+                            <label htmlFor="att-mode" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.assignedMode')}</label>
+                            <select id="att-mode" value={filterMode} onChange={(e) => setFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">{t('attendance.allModes')}</option>
+                                <option value="WFO">{t('attendance.officeWFO')}</option>
+                                <option value="WFH">{t('attendance.remoteWFH')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Roster State</label>
-                            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
-                                <option value="all">All Statuses</option>
-                                <option value="clocked_in">Active (Clocked In)</option>
-                                <option value="not_clocked_in">Inactive (Not In)</option>
+                            <label htmlFor="att-status" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.rosterState')}</label>
+                            <select id="att-status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="all">{t('attendance.allStatuses')}</option>
+                                <option value="clocked_in">{t('attendance.activeClockedIn')}</option>
+                                <option value="not_clocked_in">{t('attendance.inactiveNotIn')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Sort Configuration</label>
-                            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
-                                <option value="name-az">Name (A → Z)</option>
-                                <option value="name-za">Name (Z → A)</option>
-                                <option value="status-active">Clocked In First</option>
+                            <label htmlFor="att-sort" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.sortConfiguration')}</label>
+                            <select id="att-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                                <option value="name-az">{t('attendance.nameAZ')}</option>
+                                <option value="name-za">{t('attendance.nameZA')}</option>
+                                <option value="status-active">{t('attendance.clockedInFirst')}</option>
                             </select>
                         </div>
                     </div>
@@ -702,11 +705,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-800/60 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                                     <tr>
-                                        <th className="p-4">Outsourcing Staff Fullname</th>
-                                        <th className="p-4">Institution / Origin</th>
-                                        <th className="p-4">Operational Duty Mode</th>
-                                        <th className="p-4">Today's Timestamp Status</th>
-                                        <th className="p-4 text-right">Actions</th>
+                                        <th className="p-4">{t('attendance.colStaffName')}</th>
+                                        <th className="p-4">{t('attendance.colInstitution')}</th>
+                                        <th className="p-4">{t('attendance.colDutyMode')}</th>
+                                        <th className="p-4">{t('attendance.colTodayStatus')}</th>
+                                        <th className="p-4 text-right">{t('attendance.colActions')}</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800/60 text-xs font-semibold text-slate-200">
@@ -735,7 +738,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                             emp.work_mode === 'WFH' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                                                         }`}
                                                     >
-                                                        {emp.work_mode === 'WFH' ? '🏠 WFH (Remote)' : '🏢 WFO (On-Site)'}
+                                                        {emp.work_mode === 'WFH' ? t('attendance.wfhRemote') : t('attendance.wfoOnSite')}
                                                     </button>
                                                 </td>
                                                 <td className="p-4">
@@ -745,13 +748,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                             <span className="text-[10px] font-bold text-slate-500 font-mono">IN: {getRecordClockInTime(empToday)}</span>
                                                         </div>
                                                     ) : (
-                                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-900 text-slate-600 border border-slate-800">Not Clocked In</span>
+                                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-900 text-slate-600 border border-slate-800">{t('attendance.notClockedIn')}</span>
                                                     )}
                                                 </td>
                                                 <td className="p-4 text-right">
                                                     {empToday?.latitude && (
                                                         <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-slate-700 rounded-xl bg-slate-900/60 text-slate-300 hover:text-white hover:bg-slate-800 shadow-md transition">
-                                                            🗺️ View Map Location
+                                                            {t('attendance.viewMapLocation')}
                                                         </button>
                                                     )}
                                                 </td>
@@ -767,16 +770,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 <>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-bold text-slate-400 text-xs tracking-wider">
                         <div className="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-2xl p-5 text-white shadow-xl">
-                            <p className="text-blue-200 text-xs font-black uppercase tracking-widest mb-1">My Personal Punctuality</p>
+                            <p className="text-blue-200 text-xs font-black uppercase tracking-widest mb-1">{t('attendance.myPunctuality')}</p>
                             <h3 className="text-4xl font-black tracking-tight">{punctualityScore}%</h3>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <p className="mb-1 text-slate-400">Total Account Present Days</p>
-                            <h3 className="text-4xl font-black text-white mt-1">{totalDays} <span className="text-xs font-bold text-slate-500 uppercase">Days</span></h3>
+                            <p className="mb-1 text-slate-400">{t('attendance.totalPresentDays')}</p>
+                            <h3 className="text-4xl font-black text-white mt-1">{totalDays} <span className="text-xs font-bold text-slate-500 uppercase">{t('attendance.days')}</span></h3>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <p className="mb-1 text-slate-400">Late Overdue Arrivals</p>
-                            <h3 className={`text-4xl font-black ${lateDays > 0 ? 'text-amber-400' : 'text-white'} mt-1`}>{lateDays} <span className="text-xs font-bold text-slate-500 uppercase">Days</span></h3>
+                            <p className="mb-1 text-slate-400">{t('attendance.lateArrivals')}</p>
+                            <h3 className={`text-4xl font-black ${lateDays > 0 ? 'text-amber-400' : 'text-white'} mt-1`}>{lateDays} <span className="text-xs font-bold text-slate-500 uppercase">{t('attendance.days')}</span></h3>
                         </div>
                     </div>
 
@@ -786,41 +789,41 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 {(userProfile.work_mode || 'WFO') === 'WFO' ? '🏢' : '🏠'}
                             </div>
                             <div>
-                                <h2 className="text-base font-bold text-white">Assigned Duty Profile: {(userProfile.work_mode || 'WFO') === 'WFO' ? 'Office Boundary (WFO)' : 'Remote Home (WFH)'}</h2>
+                                <h2 className="text-base font-bold text-white">{t('attendance.assignedDutyProfile', { mode: (userProfile.work_mode || 'WFO') === 'WFO' ? t('attendance.officeBoundary') : t('attendance.remoteHome') })}</h2>
                                 <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-400' : 'text-red-400'}`}>
-                                    {(userProfile.work_mode || 'WFO') === 'WFO' 
-                                        ? (liveDistance !== null ? `📍 Coordinates tracked: ${liveDistance.toFixed(0)} meters from base gates` : '🔍 Capturing GPS tracking lock...')
-                                        : '🔒 Remote geofence bypass verified'}
+                                    {(userProfile.work_mode || 'WFO') === 'WFO'
+                                        ? (liveDistance !== null ? t('attendance.coordinatesTracked', { distance: liveDistance.toFixed(0) }) : t('attendance.capturingGps'))
+                                        : t('attendance.remoteGeofenceBypass')}
                                 </p>
                             </div>
                          </div>
-                         
+
                          <div className="flex gap-3 w-full md:w-auto">
                             {!todayRecord && (
-                                <button 
+                                <button
                                     type="button"
-                                    onClick={() => handleClockIn('manual')} 
-                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified} 
+                                    onClick={() => handleClockIn('manual')}
+                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified}
                                     className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified ? 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
                                 >
-                                    {isLoading ? 'Processing...' : (isFaceVerified ? 'Clock In Shift' : 'Verify Biometrics Below')}
+                                    {isLoading ? t('attendance.processing') : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics'))}
                                 </button>
                             )}
                             {todayRecord && !todayRecord.clock_out && (
                                 <button type="button" onClick={handleClockOut} disabled={isLoading} className="w-full md:w-auto px-8 py-3 rounded-xl font-black text-white bg-red-600 hover:bg-red-500 transition-all shadow-md hover:-translate-y-0.5 uppercase text-xs tracking-widest">
-                                    Clock Out Shift
+                                    {t('attendance.clockOutShift')}
                                 </button>
                             )}
                             {todayRecord && todayRecord.clock_out && (
-                                <div className="w-full md:w-auto px-8 py-3 bg-slate-900 border border-slate-800 text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">✓ Shift Completed</div>
+                                <div className="w-full md:w-auto px-8 py-3 bg-slate-900 border border-slate-800 text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">{t('attendance.shiftCompleted')}</div>
                             )}
                          </div>
                     </div>
 
                     <div className="bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
                         <div className="px-5 py-4 border-b border-slate-700/60 bg-slate-800/20">
-                            <h3 className="text-sm font-bold text-white">Live Verification Scanner Gate</h3>
-                            <p className="text-[11px] text-slate-400 mt-0.5">Maintain visibility to automate shift logging parameters.</p>
+                            <h3 className="text-sm font-bold text-white">{t('attendance.liveVerificationGate')}</h3>
+                            <p className="text-[11px] text-slate-400 mt-0.5">{t('attendance.liveVerificationDescription')}</p>
                         </div>
                         <div className="p-5 flex flex-col items-center">
                             {/* LIVE VIDEO FRAME HOUSING WITH RESTORED OVERLAY MAPPERS */}
@@ -856,23 +859,24 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             </div>
 
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
-                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? 'Enrolling...' : 'Enroll Facial Matrix'}</button>
-                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">Reset Matrix</button>
+                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
+                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
                             </div>
                         </div>
                     </div>
 
                     <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-inner">
                         <div className="flex items-center justify-between mb-4">
-                            <span className="text-[11px] font-black uppercase tracking-widest text-slate-400">Personal Clock Log</span>
+                            <span id="personal-clock-log-label" className="text-[11px] font-black uppercase tracking-widest text-slate-400">{t('attendance.personalClockLog')}</span>
                             <select
+                                aria-labelledby="personal-clock-log-label"
                                 value={historyStatusFilter}
                                 onChange={(e) => setHistoryStatusFilter(e.target.value)}
                                 className="text-[10px] font-bold uppercase tracking-wider bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
                             >
-                                <option value="all">All Records</option>
-                                <option value="Present">On Time Only</option>
-                                <option value="Late">Late Only</option>
+                                <option value="all">{t('attendance.allRecords')}</option>
+                                <option value="Present">{t('attendance.onTimeOnly')}</option>
+                                <option value="Late">{t('attendance.lateOnly')}</option>
                             </select>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -885,17 +889,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
                                                 : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
                                         }`}>
-                                            {record.status === 'Late' ? 'Late' : 'On Time'}
+                                            {record.status === 'Late' ? t('attendance.late') : t('attendance.onTime')}
                                         </span>
                                     </div>
                                     <div className="space-y-0.5 text-[11px] text-slate-400 font-mono">
-                                        <div>IN TIME : <span className="text-white font-bold">{getRecordClockInTime(record)}</span></div>
-                                        <div>OUT TIME: <span className="text-white font-bold">{record.clock_out || '--:--:--'}</span></div>
+                                        <div>{t('attendance.inTime')} : <span className="text-white font-bold">{getRecordClockInTime(record)}</span></div>
+                                        <div>{t('attendance.outTime')}: <span className="text-white font-bold">{record.clock_out || '--:--:--'}</span></div>
                                     </div>
                                 </div>
                             ))}
                             {filteredMyHistory.length === 0 && (
-                                <p className="col-span-full text-center text-xs text-slate-500 italic py-6">No records match this filter.</p>
+                                <p className="col-span-full text-center text-xs text-slate-500 italic py-6">{t('attendance.noMatchingRecords')}</p>
                             )}
                         </div>
                     </div>

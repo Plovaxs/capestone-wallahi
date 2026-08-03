@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { sanitizeFileExtension } from '../utils/sanitize';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
@@ -12,7 +13,17 @@ import { showUserError } from '../utils/errorHandling';
  * 1. Binary stream uploads to Supabase Object Storage with automated public URL bindings.
  * 2. User credential mutation handlers via Supabase Auth updating security layers.
  */
-const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers }) => {
+const SettingsView = ({
+    userProfile, fetchProfile, allUsers = [], fetchAllUsers,
+    colorblindMode, setColorblindMode,
+    fontSize, setFontSize,
+    highContrast, setHighContrast,
+    reduceMotion, setReduceMotion,
+    isDarkMode, toggleDarkMode,
+    onReplayOnboarding,
+}) => {
+    const { t, i18n } = useTranslation();
+
     // --- INTERFACE UTILITY LOADING STATES ---
     const [uploading, setUploading] = useState(false);
     const [password, setPassword] = useState('');
@@ -151,30 +162,35 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
         setSavingStaffId(null);
     };
 
+    const handleLanguageChange = (lang) => {
+        i18n.changeLanguage(lang);
+        localStorage.setItem('language', lang);
+    };
+
     return (
         <div className="p-8 max-w-4xl mx-auto space-y-6">
             <div>
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Account Settings</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Manage identity configurations, media profiles, and access parameters.</p>
+                <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('settings.title')}</h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
                 {/* --- CONTAINER SECTION 0: MY ASSIGNMENT (READ-ONLY FOR EVERYONE) --- */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 md:col-span-2">
-                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">My Assignment</h3>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">Department and contract period are set by your supervisor.</p>
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.myAssignment')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.myAssignmentDescription')}</p>
                     <div className="flex flex-col sm:flex-row gap-6 text-xs">
                         <div className="space-y-1">
-                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">Department</span>
-                            <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || 'Not assigned yet'}</span>
+                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.department')}</span>
+                            <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || t('settings.notAssignedYet')}</span>
                         </div>
                         <div className="space-y-1">
-                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">Contract Period</span>
+                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.contractPeriod')}</span>
                             <span className="font-bold text-gray-800 dark:text-gray-100">
                                 {userProfile.contract_start_date && userProfile.contract_end_date
                                     ? `${new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}`
-                                    : 'Not set yet'}
+                                    : t('settings.notSetYet')}
                             </span>
                         </div>
                     </div>
@@ -183,8 +199,8 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                 {/* --- CONTAINER SECTION 1: PROFILE PICTURE ASSET ENGINE --- */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 flex flex-col justify-between">
                     <div>
-                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">Registered Face Photo</h3>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Upload a clear frontal face photo. This image is used as the registered identity for attendance matching.</p>
+                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.registeredFacePhoto')}</h3>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">{t('settings.registeredFacePhotoDescription')}</p>
                     </div>
                     
                     <div className="flex flex-col items-center py-4">
@@ -220,7 +236,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                         </div>
                         
                         <p className="text-[11px] font-bold text-gray-400 mt-5 uppercase tracking-wide">
-                            {uploading ? 'Processing Image Pipeline...' : 'PNG or JPG accepted. Max 2MB Limit.'}
+                            {uploading ? t('settings.processingImage') : t('settings.photoHint')}
                         </p>
                     </div>
                 </div>
@@ -228,15 +244,15 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                 {/* --- CONTAINER SECTION 2: AUTH SECURITY CONTROL LAYERS --- */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
                     <div className="mb-6">
-                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">Security Credentials</h3>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Amend system passwords regularly to satisfy cybersecurity framework rules.</p>
+                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.securityCredentials')}</h3>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">{t('settings.securityCredentialsDescription')}</p>
                     </div>
-                    
+
                     <div className="space-y-4 text-xs font-semibold text-gray-500 dark:text-gray-400">
                         <div className="space-y-1">
-                            <label className="block pl-1 font-bold text-[10px] text-gray-400 uppercase tracking-wider">New Password</label>
-                            <input 
-                                type="password" 
+                            <label className="block pl-1 font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('settings.newPassword')}</label>
+                            <input
+                                type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 className="w-full p-3 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-medium"
@@ -244,9 +260,9 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="block pl-1 font-bold text-[10px] text-gray-400 uppercase tracking-wider">Confirm New Password</label>
-                            <input 
-                                type="password" 
+                            <label className="block pl-1 font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('settings.confirmNewPassword')}</label>
+                            <input
+                                type="password"
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
                                 className="w-full p-3 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-medium"
@@ -260,7 +276,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                             disabled={!password || !confirmPassword}
                             className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all mt-4 text-xs shadow-sm shadow-blue-500/10"
                         >
-                            Update Password Layer
+                            {t('settings.updatePassword')}
                         </button>
                     </div>
                 </div>
@@ -270,12 +286,12 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
             {/* --- CONTAINER SECTION 3: MANAGE STAFF ASSIGNMENTS (SUPERVISOR ONLY) --- */}
             {userProfile.role === 'supervisor' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
-                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">Manage Staff Assignments</h3>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">Assign each intern's department and internship contract period.</p>
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.manageStaffAssignments')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">{t('settings.manageStaffAssignmentsDescription')}</p>
 
                     <div className="space-y-3">
                         {employeeUsers.length === 0 && (
-                            <p className="text-xs text-gray-400 italic py-4 text-center">No employee accounts found yet.</p>
+                            <p className="text-xs text-gray-400 italic py-4 text-center">{t('settings.noEmployeesFound')}</p>
                         )}
                         {employeeUsers.map(emp => (
                             <div key={emp.id} className="border border-gray-100 dark:border-gray-700 rounded-xl p-4">
@@ -283,9 +299,9 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                     <div>
                                         <p className="font-bold text-sm text-gray-800 dark:text-gray-100">{emp.name}</p>
                                         <p className="text-[11px] text-gray-400">
-                                            {emp.department || 'No department'} &middot; {emp.contract_start_date && emp.contract_end_date
+                                            {emp.department || t('settings.noDepartment')} &middot; {emp.contract_start_date && emp.contract_end_date
                                                 ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
-                                                : 'No contract dates'}
+                                                : t('settings.noContractDates')}
                                         </p>
                                     </div>
                                     {editingStaffId !== emp.id && (
@@ -301,7 +317,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                             }}
                                             className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
                                         >
-                                            Edit
+                                            {t('settings.edit')}
                                         </button>
                                     )}
                                 </div>
@@ -309,17 +325,17 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                 {editingStaffId === emp.id && (
                                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         <div className="space-y-1">
-                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Department</label>
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.department')}</label>
                                             <input
                                                 type="text"
                                                 value={staffEditDraft.department}
                                                 onChange={(e) => setStaffEditDraft(d => ({ ...d, department: e.target.value }))}
-                                                placeholder="e.g. IT Division"
+                                                placeholder={t('settings.departmentPlaceholder')}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contract Start</label>
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.contractStart')}</label>
                                             <input
                                                 type="date"
                                                 value={staffEditDraft.contract_start_date}
@@ -328,7 +344,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                             />
                                         </div>
                                         <div className="space-y-1">
-                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contract End</label>
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.contractEnd')}</label>
                                             <input
                                                 type="date"
                                                 value={staffEditDraft.contract_end_date}
@@ -342,7 +358,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                                 onClick={() => setEditingStaffId(null)}
                                                 className="px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 rounded-lg"
                                             >
-                                                Cancel
+                                                {t('settings.cancel')}
                                             </button>
                                             <button
                                                 type="button"
@@ -350,7 +366,7 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                                                 disabled={savingStaffId === emp.id}
                                                 className="px-3 py-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
                                             >
-                                                {savingStaffId === emp.id ? 'Saving...' : 'Save'}
+                                                {savingStaffId === emp.id ? t('settings.saving') : t('settings.save')}
                                             </button>
                                         </div>
                                     </div>
@@ -360,6 +376,151 @@ const SettingsView = ({ userProfile, fetchProfile, allUsers = [], fetchAllUsers 
                     </div>
                 </div>
             )}
+
+            {/* --- CONTAINER SECTION 4: ACCESSIBILITY --- */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
+                <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('accessibility.title')}</h3>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">{t('accessibility.description')}</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-xs">
+                    {/* Language */}
+                    <div className="space-y-1">
+                        <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('accessibility.language')}</label>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1">{t('accessibility.languageDescription')}</p>
+                        <select
+                            value={i18n.language}
+                            onChange={(e) => handleLanguageChange(e.target.value)}
+                            className="w-full p-2.5 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-semibold"
+                        >
+                            <option value="en">English</option>
+                            <option value="id">Bahasa Indonesia</option>
+                        </select>
+                    </div>
+
+                    {/* Colorblind Mode */}
+                    <div className="space-y-1">
+                        <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('accessibility.colorblindMode')}</label>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1">{t('accessibility.colorblindDescription')}</p>
+                        <select
+                            value={colorblindMode}
+                            onChange={(e) => setColorblindMode(e.target.value)}
+                            className="w-full p-2.5 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-semibold"
+                        >
+                            <option value="none">{t('accessibility.colorblindNone')}</option>
+                            <option value="protanopia">{t('accessibility.colorblindProtanopia')}</option>
+                            <option value="deuteranopia">{t('accessibility.colorblindDeuteranopia')}</option>
+                            <option value="tritanopia">{t('accessibility.colorblindTritanopia')}</option>
+                        </select>
+                    </div>
+
+                    {/* Font Size */}
+                    <div className="space-y-1">
+                        <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('accessibility.fontSize')}</label>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-1">{t('accessibility.fontSizeDescription')}</p>
+                        <select
+                            value={fontSize}
+                            onChange={(e) => setFontSize(e.target.value)}
+                            className="w-full p-2.5 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-semibold"
+                        >
+                            <option value="normal">{t('accessibility.fontSizeNormal')}</option>
+                            <option value="large">{t('accessibility.fontSizeLarge')}</option>
+                            <option value="xl">{t('accessibility.fontSizeExtraLarge')}</option>
+                        </select>
+                    </div>
+
+                    {/* Dark Mode + High Contrast + Reduce Motion toggles */}
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="font-bold text-gray-700 dark:text-gray-200 text-[11px] uppercase tracking-wider">{t('accessibility.darkMode')}</p>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('accessibility.darkModeDescription')}</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={isDarkMode}
+                                aria-label={t('accessibility.darkMode')}
+                                onClick={toggleDarkMode}
+                                className={`shrink-0 w-11 h-6 rounded-full transition-colors relative ${isDarkMode ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${isDarkMode ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="font-bold text-gray-700 dark:text-gray-200 text-[11px] uppercase tracking-wider">{t('accessibility.highContrast')}</p>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('accessibility.highContrastDescription')}</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={highContrast}
+                                aria-label={t('accessibility.highContrast')}
+                                onClick={() => setHighContrast(!highContrast)}
+                                className={`shrink-0 w-11 h-6 rounded-full transition-colors relative ${highContrast ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${highContrast ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="font-bold text-gray-700 dark:text-gray-200 text-[11px] uppercase tracking-wider">{t('accessibility.reduceMotion')}</p>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('accessibility.reduceMotionDescription')}</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={reduceMotion}
+                                aria-label={t('accessibility.reduceMotion')}
+                                onClick={() => setReduceMotion(!reduceMotion)}
+                                className={`shrink-0 w-11 h-6 rounded-full transition-colors relative ${reduceMotion ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`}
+                            >
+                                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${reduceMotion ? 'translate-x-5' : ''}`} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Keyboard Shortcuts */}
+                <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-700">
+                    <h4 className="font-bold text-[11px] text-gray-700 dark:text-gray-200 uppercase tracking-wider mb-1">{t('accessibility.keyboardShortcuts')}</h4>
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-3">{t('accessibility.keyboardShortcutsDescription')}</p>
+                    <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                        {[
+                            { key: 'Esc', desc: t('accessibility.shortcutEsc') },
+                            { key: 'Tab', desc: t('accessibility.shortcutTab') },
+                            { key: 'Shift + Tab', desc: t('accessibility.shortcutShiftTab') },
+                            { key: 'Enter / Space', desc: t('accessibility.shortcutEnterSpace') },
+                        ].map(({ key, desc }) => (
+                            <div key={key} className="flex items-center gap-2">
+                                <dt>
+                                    <kbd className="px-2 py-1 text-[10px] font-bold bg-gray-100 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-600 rounded-md text-gray-600 dark:text-gray-300">
+                                        {key}
+                                    </kbd>
+                                </dt>
+                                <dd className="text-gray-500 dark:text-gray-400">{desc}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                </div>
+
+                {/* Onboarding Tour Replay */}
+                {onReplayOnboarding && (
+                    <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between gap-4">
+                        <div>
+                            <h4 className="font-bold text-[11px] text-gray-700 dark:text-gray-200 uppercase tracking-wider mb-1">{t('accessibility.onboardingTour')}</h4>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500">{t('accessibility.onboardingTourDescription')}</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onReplayOnboarding}
+                            className="shrink-0 text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/30 dark:text-blue-300 px-4 py-2 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
+                        >
+                            {t('accessibility.replayTour')}
+                        </button>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

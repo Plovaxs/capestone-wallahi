@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 const ChatBot = ({ userProfile, tasks = [] }) => {
+    const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -8,7 +10,7 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
 
     // --- 1. INITIAL STATE ---
     const [messages, setMessages] = useState([
-        { role: 'model', text: "Loading your assistant..." }
+        { role: 'model', text: t('chatbot.loading') }
     ]);
 
     // --- 2. SMART GREETING UPDATE ---
@@ -22,9 +24,9 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
 
         if (messages.length <= 1) {
             setMessages([
-                { 
-                    role: 'model', 
-                    text: `Hi ${userProfile.name.split(' ')[0]}! I see you have ${myActiveCount} active tasks. How can I help you today?` 
+                {
+                    role: 'model',
+                    text: t('chatbot.greeting', { name: userProfile.name.split(' ')[0], count: myActiveCount })
                 }
             ]);
         }
@@ -88,7 +90,7 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
 
         } catch (error) {
             console.error("AI Error:", error);
-            setMessages(prev => [...prev, { role: 'model', text: "I'm having trouble connecting. Please try again." }]);
+            setMessages(prev => [...prev, { role: 'model', text: t('chatbot.connectionError') }]);
         } finally {
             setIsLoading(false);
         }
@@ -102,9 +104,9 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
                     <div className="bg-blue-700 p-4 text-white flex justify-between items-center">
                         <div className="flex items-center gap-2">
                             <span className="text-xl">✨</span>
-                            <h3 className="font-bold text-sm">AI Assistant</h3>
+                            <h3 className="font-bold text-sm">{t('chatbot.title')}</h3>
                         </div>
-                        <button onClick={() => setIsOpen(false)} className="hover:text-gray-200 font-bold">✕</button>
+                        <button onClick={() => setIsOpen(false)} aria-label={t('chatbot.close')} className="hover:text-gray-200 font-bold">✕</button>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 dark:bg-gray-900">
@@ -136,17 +138,19 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
                     </div>
 
                     <div className="p-3 bg-white border-t border-gray-100 flex gap-2 dark:bg-gray-800 dark:border-gray-700">
-                        <input 
-                            type="text" 
+                        <input
+                            type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                            placeholder="Ask about tasks..."
+                            placeholder={t('chatbot.inputPlaceholder')}
+                            aria-label={t('chatbot.inputPlaceholder')}
                             className="flex-1 p-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                         />
-                        <button 
+                        <button
                             onClick={handleSend}
                             disabled={isLoading || !input.trim()}
+                            aria-label={t('chatbot.sendMessage')}
                             className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
@@ -157,8 +161,9 @@ const ChatBot = ({ userProfile, tasks = [] }) => {
                 </div>
             )}
 
-            <button 
+            <button
                 onClick={() => setIsOpen(!isOpen)}
+                aria-label={isOpen ? t('chatbot.closeToggle') : t('chatbot.openToggle')}
                 className={`${isOpen ? 'bg-gray-600 rotate-90' : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:scale-110'} text-white w-14 h-14 rounded-full shadow-xl transition-all duration-300 flex items-center justify-center text-2xl z-50`}
             >
                 {isOpen ? '✕' : '✨'}
