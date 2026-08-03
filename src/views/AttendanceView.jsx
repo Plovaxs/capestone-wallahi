@@ -1,10 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
+import { generateTablePdf } from '../utils/generateTablePdf';
+import SortableTh from '../components/SortableTh';
+import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
+import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace } from '../vision/faceQuality';
+import { classifyMatch } from '../vision/matchConfidence';
+import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
+import { recordMatchDistance, clearStalenessCounter } from '../vision/descriptorStaleness';
+import { checkEnrollmentQuality } from '../vision/enrollmentQuality';
+import { getBucket } from '../utils/tokenBucket';
+import Modal from '../components/Modal';
+
+const QUALITY_HINT_KEYS = {
+    'no-face': 'attendance.statusScanning',
+    'multiple-faces': 'attendance.statusMultipleFaces',
+    'too-far': 'attendance.statusTooFar',
+    'too-close': 'attendance.statusTooClose',
+    'off-center': 'attendance.statusOffCenter',
+    'too-dark': 'attendance.statusTooDark',
+    'too-bright': 'attendance.statusTooBright',
+    'low-confidence': 'attendance.statusLowConfidence',
+};
+
+const CHALLENGE_HINT_KEYS = {
+    [CHALLENGE_TYPES.BLINK]: 'attendance.statusAwaitingBlink',
+    [CHALLENGE_TYPES.HEAD_TURN]: 'attendance.statusAwaitingHeadTurn',
+};
+
+const ENROLL_QUALITY_HINT_KEYS = {
+    'too-dark': 'attendance.enrollQualityTooDark',
+    'too-bright': 'attendance.enrollQualityTooBright',
+    'too-blurry': 'attendance.enrollQualityTooBlurry',
+};
 
 const determineYoloVersion = () => {
   const hardwareConcurrency = navigator.hardwareConcurrency ? parseInt(navigator.hardwareConcurrency, 10) : 0;
@@ -19,7 +53,7 @@ const YOLO_MODEL_IDS = {
   medium: 'Xenova/yolov8n-face' 
 };
 
-const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile }) => {
+const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
     const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
     const YOLO_LOCAL_PATH = import.meta.env.VITE_YOLO_LOCAL_PATH || '/models/yolov8n-face';
@@ -47,6 +81,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
     const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
     const [isFaceVerified, setIsFaceVerified] = useState(false);
+    const [hasBlinked, setHasBlinked] = useState(false); // 🟩 NEW: liveness gate — a matched face still can't clock in until the liveness challenge is confirmed
+    const [challengeType, setChallengeType] = useState(null); // 🟩 NEW: which liveness challenge is active this session (blink or head-turn)
+    const [showConsentModal, setShowConsentModal] = useState(false); // 🟩 NEW: biometric-data consent gate before first enrollment
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterSource, setFilterSource] = useState('all');
@@ -54,6 +91,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [filterStatus, setFilterStatus] = useState('all');
     const [sortBy, setSortBy] = useState('name-az');
     const [historyStatusFilter, setHistoryStatusFilter] = useState('all'); // 🟩 NEW: On Time / Late filter for the personal log grid
+
+    // --- SORTABLE TABLE COLUMNS (roster table) — takes precedence over the sortBy dropdown when set ---
+    const [columnSort, setColumnSort] = useState({ key: null, direction: 'asc' });
+    const toggleColumnSort = (key) => {
+        setColumnSort(prev => (
+            prev.key === key
+                ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+                : { key, direction: 'asc' }
+        ));
+    };
 
     const today = new Date().toISOString().split('T')[0]; 
     const attendanceRows = Array.isArray(attendance) ? attendance : [];
@@ -70,6 +117,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const yoloDetectorPromiseRef = useRef(null);
     const autoClockInGuardRef = useRef(false);
     const webcamStreamRef = useRef(null);
+    const livenessChallengeRef = useRef(new RandomLivenessChallenge());
+    const borderlineStreakRef = useRef(0); // consecutive borderline-tier match reads, for confidence-tiered re-check
+    // Client-side pre-throttle on repeated mismatches (NOT the security boundary —
+    // trivially bypassable client-side — just avoids hammering the scan loop
+    // indefinitely; per utils/tokenBucket.js's documented purpose).
+    const mismatchBucketRef = useRef(getBucket(`face-scan-${userProfile.id}`, { capacity: 8, refillRatePerSec: 8 / 30 }));
 
     const parseStoredDescriptor = (value) => {
         if (!value) return null;
@@ -97,9 +150,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const detectWithFaceApi = async (canvasOrImage) => {
         const detections = await faceapi.detectAllFaces(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptors();
         if (detections.length > 0) {
-            return detections.sort((a, b) => (b.detection.score || 0) - (a.detection.score || 0))[0];
+            const best = detections.sort((a, b) => (b.detection.score || 0) - (a.detection.score || 0))[0];
+            return { ...best, faceCount: detections.length };
         }
-        return faceapi.detectSingleFace(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+        const single = await faceapi.detectSingleFace(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+        return single ? { ...single, faceCount: 1 } : null;
     };
 
     const detectFaceFromImage = async (imageEl) => {
@@ -129,7 +184,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     if (cropCanvas) {
                         const croppedDetection = await detectWithFaceApi(cropCanvas);
                         if (croppedDetection) {
-                            return { ...croppedDetection, source: 'yolo', box: normalizeBoundingBox(bestDetection.box) };
+                            return {
+                                ...croppedDetection,
+                                source: 'yolo',
+                                box: normalizeBoundingBox(bestDetection.box),
+                                faceCount: detections.length, // YOLO's whole-frame count takes precedence over the single crop's own count
+                                sourceCanvas,
+                            };
                         }
                     }
                 }
@@ -140,7 +201,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         const fallbackDetection = await detectWithFaceApi(sourceCanvas);
         if (!fallbackDetection) return null;
-        return { ...fallbackDetection, source: 'faceapi', box: normalizeBoundingBox(fallbackDetection.detection?.box || fallbackDetection.box) };
+        return {
+            ...fallbackDetection,
+            source: 'faceapi',
+            box: normalizeBoundingBox(fallbackDetection.detection?.box || fallbackDetection.box),
+            sourceCanvas,
+        };
     };
 
     const cropFaceCanvas = (sourceCanvas, box) => {
@@ -187,9 +253,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // HISTORY SUMMARY CALCULATIONS
     const myHistory = attendanceRows.filter(a => a.employee_id === userProfile.id);
     const totalDays = myHistory.length;
-    const onTimeDays = myHistory.filter(a => a.status === 'Present').length;
     const lateDays = myHistory.filter(a => a.status === 'Late').length;
-    const punctualityScore = totalDays > 0 ? ((onTimeDays / totalDays) * 100).toFixed(0) : 0;
+    const punctualityScore = PunctualityPolicy.calculate(myHistory) ?? 0;
 
     // 🟩 NEW: Lets an intern filter their own log by On Time / Late instead of
     // scanning every card manually.
@@ -227,6 +292,21 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             return matchesSearch && matchesSource && matchesMode && matchesStatus;
         })
         .sort((a, b) => {
+            if (columnSort.key) {
+                const dir = columnSort.direction === 'asc' ? 1 : -1;
+                if (columnSort.key === 'status') {
+                    const aClocked = attendanceRows.some(att => att.employee_id === a.id && att.date === today);
+                    const bClocked = attendanceRows.some(att => att.employee_id === b.id && att.date === today);
+                    return (bClocked - aClocked) * dir;
+                }
+                const getVal = (emp) => {
+                    if (columnSort.key === 'name') return emp.name;
+                    if (columnSort.key === 'institution') return emp.source || emp.university || 'President University';
+                    if (columnSort.key === 'mode') return emp.work_mode || 'WFO';
+                    return '';
+                };
+                return getVal(a).localeCompare(getVal(b)) * dir;
+            }
             if (sortBy === 'name-az') return a.name.localeCompare(b.name);
             if (sortBy === 'name-za') return b.name.localeCompare(a.name);
             if (sortBy === 'status-active') {
@@ -368,6 +448,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     useEffect(() => {
         if (!isCameraReady || faceStatus !== 'scanning' || todayRecord) return;
 
+        // Fresh, randomly-typed liveness challenge every time a scan session
+        // (re)starts — a blink/head-turn observed in a previous, already-
+        // finished attempt shouldn't carry over and silently satisfy this one.
+        livenessChallengeRef.current.reset();
+        setChallengeType(livenessChallengeRef.current.challengeType);
+        setHasBlinked(false);
+        borderlineStreakRef.current = 0;
+
         const timer = setInterval(async () => {
             if (faceScanBusyRef.current || !webcamVideoRef.current) return;
             faceScanBusyRef.current = true;
@@ -377,39 +465,120 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 const liveDet = await detectFaceFromImage(webcamVideoRef.current);
 
                 if (liveDet) {
+                    const imageWidth = webcamVideoRef.current.videoWidth;
+                    const imageHeight = webcamVideoRef.current.videoHeight;
+
                     // Update bounding box positions for visual injection
                     if (liveDet.box) {
                         setFaceOverlayBox({
                             ...liveDet.box,
-                            imageWidth: webcamVideoRef.current.videoWidth,
-                            imageHeight: webcamVideoRef.current.videoHeight,
+                            imageWidth,
+                            imageHeight,
                             source: liveDet.source
                         });
                     }
 
+                    // 🟩 QUALITY GATES: framing/size, single-face, lighting, and
+                    // detector-confidence (occlusion proxy) are all checked BEFORE
+                    // trusting a match — a low-quality read shouldn't silently
+                    // count toward liveness or clock-in either way.
+                    let brightness = { ok: true, reason: null };
+                    if (liveDet.box && liveDet.sourceCanvas) {
+                        try {
+                            const ctx = liveDet.sourceCanvas.getContext('2d');
+                            const region = ctx.getImageData(liveDet.box.x, liveDet.box.y, liveDet.box.width, liveDet.box.height);
+                            brightness = checkBrightness(region.data);
+                        } catch (_err) {
+                            // getImageData can throw on a tainted canvas in some browsers — skip the check, don't crash the loop.
+                        }
+                    }
+                    const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
+                    const singleFace = checkSingleFace(liveDet.faceCount ?? 1);
+                    const occlusion = checkOcclusion(liveDet.detection?.score);
+                    const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
+
+                    if (qualityIssue) {
+                        setIsFaceVerified(false);
+                        setHasBlinked(false);
+                        setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'attendance.statusScanning'));
+                        faceScanBusyRef.current = false;
+                        return;
+                    }
+
                     if (referenceDescriptorRef.current) {
                         const dist = faceapi.euclideanDistance(liveDet.descriptor, referenceDescriptorRef.current);
-                        const isMatch = dist <= FACE_MATCH_THRESHOLD;
-
+                        const matchTier = classifyMatch(dist, FACE_MATCH_THRESHOLD);
                         setFaceMatchDistance(dist);
-                        setFaceStatus(isMatch ? 'matched' : 'mismatch');
                         setFaceDetectionMode(liveDet.source || 'faceapi');
+
+                        // Both confident and borderline distances count as a match —
+                        // the liveness challenge below is the real extra confirmation
+                        // step, so this doesn't also need its own multi-read delay.
+                        const isMatch = matchTier !== 'no-match';
+                        borderlineStreakRef.current = 0;
+
+                        setFaceStatus(isMatch ? 'matched' : 'mismatch');
                         // 🟩 FIX: isFaceVerified was read by the manual "Clock In Shift"
                         // button but its setter was never called anywhere, so the
                         // button stayed permanently disabled regardless of match status.
                         setIsFaceVerified(isMatch);
 
                         if (isMatch) {
+                            // 🟩 LIVENESS GATE: a matched descriptor alone doesn't prove a
+                            // live person is present — a printed photo or a video replay
+                            // would match too. Require one randomly-chosen challenge
+                            // (blink OR head-turn, time-boxed) before treating the match
+                            // as final — unpredictable and can't be satisfied by a clip
+                            // prepared for only one challenge type.
+                            const challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
+                            setHasBlinked(challengeConfirmed);
+
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
+                            } else if (livenessChallengeRef.current.isExpired()) {
+                                setBiometricStatus(t('attendance.statusChallengeExpired'));
+                                livenessChallengeRef.current.reset();
+                                setChallengeType(livenessChallengeRef.current.challengeType);
+                            } else if (!challengeConfirmed) {
+                                setBiometricStatus(t(CHALLENGE_HINT_KEYS[livenessChallengeRef.current.challengeType]));
                             } else if (!autoClockInGuardRef.current) {
                                 autoClockInGuardRef.current = true;
                                 setBiometricStatus(t('attendance.statusMatchVerified'));
                                 clearInterval(timer);
+
+                                // Best-effort, non-blocking anti-replay signal: warn if the
+                                // border around the face looks suspiciously uniform (a
+                                // possible phone/tablet bezel), but never hard-block on it —
+                                // a plain wall behind a real person can trigger the same signal.
+                                try {
+                                    const ctx = liveDet.sourceCanvas.getContext('2d');
+                                    const marginX = Math.round(liveDet.box.width * 0.15);
+                                    const marginY = Math.round(liveDet.box.height * 0.15);
+                                    const borderRegion = ctx.getImageData(
+                                        Math.max(0, liveDet.box.x - marginX),
+                                        Math.max(0, liveDet.box.y - marginY),
+                                        liveDet.box.width + marginX * 2,
+                                        liveDet.box.height + marginY * 2
+                                    );
+                                    if (checkReplaySuspicion(borderRegion.data).suspicious) {
+                                        toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
+                                    }
+                                } catch (_err) {
+                                    // Non-critical signal — ignore failures (tainted canvas, out-of-bounds region, etc.)
+                                }
+
+                                // 🟩 STALENESS REMINDER: track whether recent matches keep
+                                // coming in close to the threshold rather than confidently.
+                                const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
+                                if (staleness.shouldSuggestReEnrollment) {
+                                    toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
+                                }
+
                                 await handleClockIn('face-match');
                             }
                         } else {
-                            setBiometricStatus(t('attendance.statusNotRecognized'));
+                            const bucketExhausted = !mismatchBucketRef.current.tryConsume();
+                            setBiometricStatus(bucketExhausted ? t('attendance.statusTooManyAttempts') : t('attendance.statusNotRecognized'));
                         }
                     }
                 } else {
@@ -488,11 +657,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const handleClockIn = async (source = 'manual') => {
         if (userProfile.role !== 'supervisor' && !currentCoords) {
-            alert(t('attendance.gpsWaiting'));
+            toast.error(t('attendance.gpsWaiting'));
             return false;
         }
         if (userProfile.role !== 'supervisor' && !isInRange) {
-            alert(t('attendance.geofenceRejection'));
+            toast.error(t('attendance.geofenceRejection'));
             return false;
         }
 
@@ -545,8 +714,31 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
     };
 
-   const handleEnrollFaceFromStream = async () => {
-        if (!webcamVideoRef.current) return;
+    const FACE_CONSENT_KEY = `face_enrollment_consent_${userProfile.id}`;
+
+    // 🟩 CONSENT GATE: face descriptors are sensitive biometric personal data —
+    // require an explicit, informed opt-in the first time a user enrolls,
+    // rather than silently capturing and storing it on first click.
+    const handleEnrollFaceFromStream = () => {
+        if (!webcamVideoRef.current || isEnrolling) return;
+
+        let hasConsented = false;
+        try { hasConsented = localStorage.getItem(FACE_CONSENT_KEY) === 'true'; } catch { /* localStorage unavailable — treat as not yet consented */ }
+
+        if (!hasConsented) {
+            setShowConsentModal(true);
+            return;
+        }
+        performFaceEnrollment();
+    };
+
+    const handleConsentAccept = () => {
+        try { localStorage.setItem(FACE_CONSENT_KEY, 'true'); } catch { /* consent just won't persist across sessions */ }
+        setShowConsentModal(false);
+        performFaceEnrollment();
+    };
+
+    const performFaceEnrollment = async () => {
         // 🟩 FIX: Without this guard, clicking the button rapidly fired a fresh
         // detect+update call on every click (no disable-while-processing state),
         // which can burst enough concurrent Supabase requests to trip its auth
@@ -558,6 +750,23 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             const det = await detectFaceFromImage(webcamVideoRef.current);
 
             if (det) {
+                // 🟩 ENROLLMENT QUALITY GATE: reject a blurry or badly-lit capture up
+                // front — a poor reference descriptor causes every future clock-in
+                // to be unreliable, and that's much harder to diagnose after the fact.
+                if (det.box && det.sourceCanvas) {
+                    try {
+                        const ctx = det.sourceCanvas.getContext('2d');
+                        const region = ctx.getImageData(det.box.x, det.box.y, det.box.width, det.box.height);
+                        const quality = checkEnrollmentQuality(region.data, det.box.width, det.box.height);
+                        if (!quality.ok) {
+                            toast.error(t(ENROLL_QUALITY_HINT_KEYS[quality.reason] || 'attendance.faceDetectFailed'));
+                            return;
+                        }
+                    } catch (_err) {
+                        // Quality sampling failed (tainted canvas, etc.) — proceed rather than block enrollment entirely on a non-critical check.
+                    }
+                }
+
                 // 🟩 FIX: Stringify the array before updating the profile
                 const stringifiedDescriptor = JSON.stringify(Array.from(det.descriptor));
 
@@ -569,11 +778,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 if (error) {
                     showUserError('Failed to enroll face', error);
                 } else {
-                    alert(t('attendance.faceEnrolled'));
+                    clearStalenessCounter(userProfile.id);
+                    toast.success(t('attendance.faceEnrolled'));
                     fetchProfile?.();
                 }
             } else {
-                alert(t('attendance.faceDetectFailed'));
+                toast.error(t('attendance.faceDetectFailed'));
             }
         } finally {
             setIsEnrolling(false);
@@ -585,7 +795,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         setIsEnrolling(true);
         try {
             await supabase.from('profiles').update({ face_descriptor: null }).eq('id', userProfile.id);
-            alert(t('attendance.faceCleared'));
+            toast.success(t('attendance.faceCleared'));
             fetchProfile?.();
         } finally {
             setIsEnrolling(false);
@@ -606,7 +816,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-6 text-slate-100">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-slate-100">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-white">
@@ -627,6 +837,31 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             {processedInterns.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
                         <ExportButton data={exportDataFiltered} filename={exportEmployeeId === 'all' ? "Outsourcing_Staff_Attendance_Roster" : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label={t('attendance.exportCleanSheet')} />
+                        <button
+                            type="button"
+                            onClick={() => generateTablePdf({
+                                title: userProfile.role === 'supervisor' ? t('attendance.supervisorTitle') : t('attendance.employeeTitle'),
+                                subtitle: exportEmployeeId === 'all' ? t('attendance.allEmployees') : processedInterns.find(e => e.id === exportEmployeeId)?.name || '',
+                                columns: [
+                                    { key: 'Date', label: t('attendance.date') },
+                                    { key: 'Employee', label: t('attendance.employee') },
+                                    { key: 'Institution', label: t('attendance.institution') },
+                                    { key: 'Assigned Mode', label: t('attendance.assignedMode') },
+                                    { key: 'Status', label: t('attendance.status') },
+                                    { key: 'Check In', label: t('attendance.checkIn') },
+                                    { key: 'Check Out', label: t('attendance.checkOut') },
+                                ],
+                                rows: exportDataFiltered,
+                                filename: exportEmployeeId === 'all' ? 'Attendance_Roster' : `Attendance_${processedInterns.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`,
+                            })}
+                            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-all text-sm border border-red-700"
+                            title={t('common.exportPdf')}
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            {t('common.exportPdf')}
+                        </button>
                     </div>
                 )}
             </div>
@@ -705,10 +940,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             <table className="w-full text-left border-collapse">
                                 <thead className="bg-slate-800/60 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
                                     <tr>
-                                        <th className="p-4">{t('attendance.colStaffName')}</th>
-                                        <th className="p-4">{t('attendance.colInstitution')}</th>
-                                        <th className="p-4">{t('attendance.colDutyMode')}</th>
-                                        <th className="p-4">{t('attendance.colTodayStatus')}</th>
+                                        <SortableTh label={t('attendance.colStaffName')} sortKey="name" sortConfig={columnSort} onSort={toggleColumnSort} />
+                                        <SortableTh label={t('attendance.colInstitution')} sortKey="institution" sortConfig={columnSort} onSort={toggleColumnSort} />
+                                        <SortableTh label={t('attendance.colDutyMode')} sortKey="mode" sortConfig={columnSort} onSort={toggleColumnSort} />
+                                        <SortableTh label={t('attendance.colTodayStatus')} sortKey="status" sortConfig={columnSort} onSort={toggleColumnSort} />
                                         <th className="p-4 text-right">{t('attendance.colActions')}</th>
                                     </tr>
                                 </thead>
@@ -723,6 +958,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                             {emp.name?.charAt(0).toUpperCase()}
                                                         </div>
                                                         <span>{emp.name}</span>
+                                                        {onlineUserIds.has(String(emp.id)) && (
+                                                            <span
+                                                                className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.8)] animate-pulse"
+                                                                title={t('attendance.onlineNow')}
+                                                            />
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="p-4">
@@ -803,10 +1044,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 <button
                                     type="button"
                                     onClick={() => handleClockIn('manual')}
-                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified}
-                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified ? 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
+                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked}
+                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked ? 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
                                 >
-                                    {isLoading ? t('attendance.processing') : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics'))}
+                                    {isLoading
+                                        ? t('attendance.processing')
+                                        : (isFaceVerified && !hasBlinked
+                                            ? t(challengeType === CHALLENGE_TYPES.HEAD_TURN ? 'attendance.pleaseTurnHead' : 'attendance.pleaseBlink')
+                                            : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics')))}
                                 </button>
                             )}
                             {todayRecord && !todayRecord.clock_out && (
@@ -905,6 +1150,28 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     </div>
                 </>
             )}
+
+            <Modal isOpen={showConsentModal} onClose={() => setShowConsentModal(false)} title={t('attendance.consentTitle')}>
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-700 dark:text-gray-200">{t('attendance.consentBody')}</p>
+                    <div className="flex justify-end gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setShowConsentModal(false)}
+                            className="px-4 py-2 text-xs font-bold rounded-xl border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                            {t('confirm.cancel')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleConsentAccept}
+                            className="px-4 py-2 text-xs font-bold rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow-sm"
+                        >
+                            {t('attendance.consentAccept')}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

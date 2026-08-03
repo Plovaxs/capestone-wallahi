@@ -11,6 +11,7 @@ export const sanitizeFileExtension = (fileName) => {
   return ext;
 };
 
+// eslint-disable-next-line no-control-regex -- intentional: stripping control characters from user input
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/g;
 
 //This sanitization is not a security control, it is just to clean up user input for better UX and to avoid accidental injection of control characters or excessive whitespace. 

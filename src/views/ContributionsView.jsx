@@ -1,9 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { showUserError } from '../utils/errorHandling';
 import { sanitizeUserInput } from '../utils/sanitize';
+import { confirmDialog } from '../utils/confirm';
+import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosave';
+import { firstError } from '../validation/schemaRegistry';
+import { useTypingIndicator } from '../realtime/useTypingIndicator';
 
 /**
  * COMPONENT: ContributionsView
@@ -18,7 +23,25 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
     const [newTitle, setNewTitle] = useState('');
     const [category, setCategory] = useState('General Discussion');
     const [isSubmitting, setIsSubmitting] = useState(false);
-    
+
+    // --- DRAFT AUTOSAVE (new thread composer only — replies are short-lived and not worth persisting) ---
+    const draftKey = userProfile?.id ? `draft:forum-thread:${userProfile.id}` : null;
+    const hasRestoredDraft = useRef(false);
+    useEffect(() => {
+        if (!draftKey || hasRestoredDraft.current) return;
+        hasRestoredDraft.current = true;
+        const saved = loadDraft(draftKey);
+        if (saved) {
+            setNewPost(saved.newPost || '');
+            setNewTitle(saved.newTitle || '');
+            setCategory(saved.category || 'General Discussion');
+        }
+    }, [draftKey]);
+    useDraftAutosave(draftKey, { newPost, newTitle, category });
+
+    // --- LIVE TYPING INDICATOR (new thread composer, shared room) ---
+    const { typingNames, broadcastTyping } = useTypingIndicator('forum-composer', userProfile);
+
     // --- NESTED COMMENT TRACKING ENGINE BUFFERS ---
     const [replyInputs, setReplyInputs] = useState({}); // Stores key-value tracking texts per card ID
     const [submittingReplyId, setSubmittingReplyId] = useState(null); // Local loading state for reply dispatches
@@ -51,15 +74,17 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
      * SCHEMA METRICS: Instantiates an empty `replies: []` array field block natively on row creation.
      */
 const handleCreateThread = async () => {
-        if (!newPost.trim()) {
-            alert(t('contributions.emptyPostError'));
+        // Zod (schemaRegistry.forumPost) is the real validation engine; the
+        // toast still shows the app's translated message, not a raw English one.
+        if (firstError('forumPost', { title: newTitle, contribution: newPost, category })) {
+            toast.error(t('contributions.emptyPostError'));
             return;
         }
         setIsSubmitting(true);
         try {
             const rateLimit = await checkRateLimit('forum-post', { maxRequests: 5, windowSeconds: 60 });
            if (!rateLimit.allowed) {
-               alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+               toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
                return;
            }
 
@@ -78,7 +103,8 @@ const handleCreateThread = async () => {
 
             setNewPost('');
             setNewTitle('');
-            fetchContributions(); 
+            if (draftKey) clearDraft(draftKey);
+            fetchContributions();
         } catch (error) {
             showUserError('Failed to create post', error);
         } finally {
@@ -92,7 +118,7 @@ const handleCreateThread = async () => {
      * SECURITY: Database will drop instructions if Row-Level Security checks validate unauthorized parameters.
      */
     const handleDeleteThread = async (postId) => {
-        if (!confirm(t('contributions.confirmDelete'))) return;
+        if (!(await confirmDialog(t('contributions.confirmDelete'), { variant: 'danger' }))) return;
         
         const { error } = await supabase
             .from('contributions')
@@ -141,7 +167,7 @@ const handleCreateThread = async () => {
 
         const rateLimit = await checkRateLimit('forum-reply', { maxRequests: 10, windowSeconds: 60 });
        if (!rateLimit.allowed) {
-           alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+           toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
            setSubmittingReplyId(null);
            return;
        }
@@ -178,7 +204,7 @@ const handleCreateThread = async () => {
     });
 
     return (
-        <div className="p-8 max-w-5xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
             
             {/* --- LAYOUT HEADER CONTROLS --- */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-700 pb-4">
@@ -230,13 +256,18 @@ const handleCreateThread = async () => {
                         />
                         <textarea
                             value={newPost}
-                            onChange={(e) => setNewPost(e.target.value)}
+                            onChange={(e) => { setNewPost(e.target.value); broadcastTyping(); }}
                             className="w-full p-4 border border-gray-100 rounded-xl text-xs bg-gray-50/50 focus:bg-white focus:ring-4 focus:ring-blue-500/5 focus:border-blue-500 transition-all resize-none dark:bg-gray-900/40 dark:border-gray-600 dark:text-white dark:focus:bg-gray-900"
                             placeholder={t('contributions.postPlaceholder')}
                             aria-label={t('contributions.postPlaceholder')}
                             rows="3"
                         ></textarea>
-                        
+                        {typingNames.length > 0 && (
+                            <p className="text-[11px] italic text-blue-500 dark:text-blue-400 -mt-2">
+                                {t('contributions.someoneIsTyping', { names: typingNames.join(', ') })}
+                            </p>
+                        )}
+
                         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                             <div className="flex flex-wrap gap-1.5">
                                 {FORUM_CATEGORIES.map(cat => {

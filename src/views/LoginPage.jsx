@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import * as faceapi from 'face-api.js';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
@@ -263,7 +264,7 @@ export default function LoginPage() {
         if (profileError) throw profileError;
 
         setBiometricStatus(t('login.statusRegisterSuccess'));
-        alert(t('login.faceSyncSuccessAlert'));
+        toast.success(t('login.faceSyncSuccessAlert'));
 
         setMessage(t('login.faceRegisteredMessage'));
 

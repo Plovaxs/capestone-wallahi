@@ -1,13 +1,22 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
+import { confirmDialog } from '../utils/confirm';
 import Modal from '../components/Modal';
 import ExportButton from '../components/ExportButton';
+import { generateTablePdf } from '../utils/generateTablePdf';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateTaskSubmissionFile } from '../utils/validateMime';
 import { sanitizeTaskSubmissionExtension } from '../utils/sanitize';
 import { sanitizeUserInput } from '../utils/sanitize';
 import { showUserError } from '../utils/errorHandling';
+import { TaskDeadlinePolicy } from '../domain/TaskDeadlinePolicy';
+import { firstError } from '../validation/schemaRegistry';
+import { useUndoableAction } from '../patterns/useUndoableAction';
+import { canTransitionTo } from '../state-machines/taskWorkflowMachine';
+import { evaluateTaskEscalation } from '../rule-engine/taskEscalationRules';
+import { useFeatureFlag } from '../feature-flags/useFeatureFlag';
 
 /**
  * SUB-COMPONENT: UserAvatar
@@ -45,6 +54,12 @@ const UserAvatar = ({ user, size = "w-6 h-6", textSize = "text-[9px]" }) => {
  */
 const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const { t } = useTranslation();
+    const { runUndoable } = useUndoableAction();
+    const bulkActionsEnabled = useFeatureFlag('bulkActions');
+    // --- OPTIMISTIC UI: taskId -> status overlay applied on top of the
+    // `tasks` prop while a status-change write is in flight (see
+    // handleStatusChange below) ---
+    const [optimisticStatusOverrides, setOptimisticStatusOverrides] = useState({});
 
     // --- VIEWPORT VIEW CONFIGURATIONS ---
     const [viewMode, setViewMode] = useState('board'); // Toggles layout profiles ('board' vs 'timeline')
@@ -138,28 +153,16 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
      * UTILITY FUNCTION: getDeadlineStatus
      * PURPOSE: Performs system real-time date evaluation vectors to trigger warning alerts.
      */
-    const getDeadlineStatus = (dueDate, status) => {
-        if (['Approved', 'Completed'].includes(status)) return 'Safe';
-        if (!dueDate) return 'Normal';
-        
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const due = new Date(dueDate);
-        due.setHours(0, 0, 0, 0);
-        
-        const diffTime = due - today;
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        if (diffDays < 0) return 'Overdue';
-        if (diffDays <= 2) return 'Near Deadline'; 
-        return 'Normal';
-    };
+    const getDeadlineStatus = (dueDate, status) => TaskDeadlinePolicy.getStatus(dueDate, status);
 
     // =========================================================================
     // 🔍 ENGINE LOGIC DATA PRE-PROCESSING & FILTER CHANNELS
     // =========================================================================
-    const processedTasks = (tasks || []).filter(t => {
+    const tasksWithOptimisticUpdates = (tasks || []).map(task =>
+        optimisticStatusOverrides[task.id] ? { ...task, status: optimisticStatusOverrides[task.id] } : task
+    );
+
+    const processedTasks = tasksWithOptimisticUpdates.filter(t => {
         const matchesSearch = t.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
                               t.description.toLowerCase().includes(searchTerm.toLowerCase());
         
@@ -218,8 +221,11 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
      * TELEMETRY: Loops through every selected assignee array slot to dispatch matching workspace notice cards.
      */
     const handleCreateTask = async () => {
-        if (!newTask.title || newTask.assigned_to.length === 0 || !newTask.due_date) {
-            alert(t('tasks.fillRequiredFields'));
+        // Zod is the real validation engine here (schemaRegistry.taskAssignment);
+        // the toast still shows the app's translated generic message so this
+        // doesn't regress the i18n coverage with hardcoded English text.
+        if (firstError('taskAssignment', newTask)) {
+            toast.error(t('tasks.fillRequiredFields'));
             return;
         }
         const { error } = await supabase.from('tasks').insert({
@@ -236,7 +242,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             // Notifying assignees is now handled server-side by the
             // notify_task_assigned trigger — the client can no longer
             // insert into notifications directly (RLS).
-            alert(t('tasks.taskAssignedSuccess'));
+            toast.success(t('tasks.taskAssignedSuccess'));
             setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal' });
             setIsModalOpen(false);
             fetchTasks(); 
@@ -275,7 +281,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
     const handleBulkApproveTasks = async () => {
         if (selectedTaskIds.size === 0) return;
-        if (!confirm(t('tasks.confirmBulkApprove', { count: selectedTaskIds.size }))) return;
+        if (!(await confirmDialog(t('tasks.confirmBulkApprove', { count: selectedTaskIds.size })))) return;
 
         setIsBulkApproving(true);
         const { error } = await supabase
@@ -303,12 +309,12 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
         // Hard minimum constraint verification safety layer
         if (extensionDate < tomorrowStr) {
-            alert(t('tasks.schedulingContradiction'));
+            toast.error(t('tasks.schedulingContradiction'));
             return;
         }
 
         if (!extensionFeedback.trim()) {
-            alert(extensionMode === 'reject'
+            toast.error(extensionMode === 'reject'
                 ? t('tasks.reasonForRevision')
                 : t('tasks.reasonForExtension'));
             return;
@@ -360,7 +366,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const handleFileChange = (e, taskId) => { 
         const currentTask = tasks.find(t => t.id === taskId);
         if (!currentTask?.assigned_to?.includes(userProfile.id)) {
-            alert(t('tasks.accessDeniedTask'));
+            toast.error(t('tasks.accessDeniedTask'));
             e.target.value = null; 
             return;
         }
@@ -401,7 +407,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
         const rateLimit = await checkRateLimit('task-submission-upload', { maxRequests: 5, windowSeconds: 30 });
         if (!rateLimit.allowed) {
-           alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+           toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
            return;
         }
 
@@ -431,8 +437,42 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     };
 
     const handleStatusChange = async (taskId, newStatus) => {
-        await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId);
-        fetchTasks();
+        const task = tasks.find(t => t.id === taskId);
+        const previousStatus = task?.status;
+
+        if (previousStatus && !canTransitionTo(previousStatus, newStatus)) {
+            toast.error(t('tasks.illegalStatusTransition', { from: previousStatus, to: newStatus }));
+            return;
+        }
+
+        // Optimistic UI: move the card to its new column immediately instead
+        // of waiting on the round trip, then reconcile with the real row —
+        // rolling the override back out if the write actually fails.
+        setOptimisticStatusOverrides(prev => ({ ...prev, [taskId]: newStatus }));
+
+        try {
+            await runUndoable({
+                label: t('tasks.statusChangedTo', { status: newStatus }),
+                do: async () => {
+                    await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId);
+                    await fetchTasks();
+                },
+                undo: async () => {
+                    await supabase.from('tasks').update({ status: previousStatus }).eq('id', taskId);
+                    await fetchTasks();
+                },
+            }, { undoLabel: t('tasks.undo') });
+        } catch (err) {
+            showUserError('Failed to update task status', err);
+        } finally {
+            // Either fetchTasks() already brought the prop data in line, or the
+            // write failed — either way the override has served its purpose.
+            setOptimisticStatusOverrides(prev => {
+                const next = { ...prev };
+                delete next[taskId];
+                return next;
+            });
+        }
     };
 
     const handleViewSubmission = async (path) => {
@@ -446,6 +486,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
     const TaskCard = ({ task }) => {
         const deadlineStatus = getDeadlineStatus(task.due_date, task.status);
+        const escalation = evaluateTaskEscalation(task, deadlineStatus);
 
         return (
             <div className={`bg-white p-4 rounded-xl border shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3 h-fit dark:bg-gray-800 dark:border-gray-700 ${
@@ -456,7 +497,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                 
                 {/* STATUS BADGES FLEX LAYOUT ROW */}
                 <div className="flex flex-wrap items-center gap-1.5">
-                    {userProfile.role === 'supervisor' && task.status === 'Completed' && (
+                    {bulkActionsEnabled && userProfile.role === 'supervisor' && task.status === 'Completed' && (
                         <input
                             type="checkbox"
                             checked={selectedTaskIds.has(task.id)}
@@ -488,6 +529,11 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                     {deadlineStatus === 'Near Deadline' && (
                         <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50 px-2 py-0.5 rounded-md flex items-center gap-1">
                             {t('tasks.dueSoon')}
+                        </span>
+                    )}
+                    {escalation?.action.severity === 'critical' && (
+                        <span className="text-[10px] font-bold bg-red-600 text-white px-2 py-0.5 rounded-md tracking-wide shadow-sm flex items-center gap-1" title={t('tasks.escalationCriticalHint')}>
+                            🚨 {t('tasks.escalationCritical')}
                         </span>
                     )}
                 </div>
@@ -590,7 +636,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
             
             {/* --- LAYOUT HEADER CONTROLS --- */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 dark:border-gray-700 pb-4 gap-4">
@@ -611,6 +657,31 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                                 {employeeUsers.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                             </select>
                             <ExportButton data={exportData} filename={exportEmployeeId === 'all' ? "Handpicked_Task_Report" : `Tasks_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`} label={t('tasks.exportHandPicked')} />
+                            <button
+                                type="button"
+                                onClick={() => generateTablePdf({
+                                    title: t('tasks.title'),
+                                    subtitle: exportEmployeeId === 'all' ? t('tasks.allEmployees') : employeeUsers.find(e => e.id === exportEmployeeId)?.name || '',
+                                    columns: [
+                                        { key: 'Task', label: t('tasks.taskTitle') },
+                                        { key: 'Priority', label: t('tasks.priority') },
+                                        { key: 'Status', label: t('tasks.status') },
+                                        { key: 'Due Date', label: t('tasks.dueDate') },
+                                        { key: 'Deadline Warning', label: t('tasks.deadlineWarning') },
+                                        { key: 'Assigned To', label: t('tasks.assignedTo') },
+                                        { key: 'Feedback', label: t('tasks.feedback') },
+                                    ],
+                                    rows: exportData,
+                                    filename: exportEmployeeId === 'all' ? 'Task_Report' : `Tasks_${employeeUsers.find(e => e.id === exportEmployeeId)?.name || 'Employee'}`,
+                                })}
+                                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-sm transition-all text-sm border border-red-700"
+                                title={t('common.exportPdf')}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                {t('common.exportPdf')}
+                            </button>
                         </>
                     )}
 
@@ -681,7 +752,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             </div>
 
             {/* --- BULK APPROVAL ACTION BAR (supervisor, appears once tasks are checked) --- */}
-            {userProfile.role === 'supervisor' && selectedTaskIds.size > 0 && (
+            {bulkActionsEnabled && userProfile.role === 'supervisor' && selectedTaskIds.size > 0 && (
                 <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-2xl px-4 py-3">
                     <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
                         {t('tasks.selectedCount', { count: selectedTaskIds.size })}

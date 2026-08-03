@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { sanitizeFileExtension } from '../utils/sanitize';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateAvatarFile } from '../utils/validateMime';
 import { showUserError } from '../utils/errorHandling';
+import { notificationDispatcher } from '../patterns/notificationChannels/NotificationDispatcher';
+import { BrowserPushChannel } from '../patterns/notificationChannels/BrowserPushChannel';
 
 /**
  * COMPONENT: SettingsView
@@ -27,6 +30,18 @@ const SettingsView = ({
     // --- INTERFACE UTILITY LOADING STATES ---
     const [uploading, setUploading] = useState(false);
     const [password, setPassword] = useState('');
+
+    // --- BROWSER PUSH NOTIFICATION CHANNEL (strategy pattern toggle) ---
+    const pushChannel = notificationDispatcher.getChannel(BrowserPushChannel);
+    const [pushPermission, setPushPermission] = useState(
+        pushChannel?.isSupported() ? Notification.permission : 'unsupported'
+    );
+    const handleEnableDesktopNotifications = async () => {
+        const result = await pushChannel.requestPermission();
+        setPushPermission(result);
+        if (result === 'granted') toast.success(t('settings.desktopNotificationsEnabled'));
+        else if (result === 'denied') toast.error(t('settings.desktopNotificationsDenied'));
+    };
     const [confirmPassword, setConfirmPassword] = useState('');
 
     // --- SUPERVISOR-ONLY: STAFF DEPARTMENT / CONTRACT ASSIGNMENT ---
@@ -50,7 +65,7 @@ const SettingsView = ({
 
             const rateLimit = await checkRateLimit('avatar-upload', { maxRequests: 5, windowSeconds: 30 });
             if (!rateLimit.allowed) {
-                alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+                toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
                 return;
             }
             
@@ -63,7 +78,7 @@ const SettingsView = ({
                 // Validate file MIME type and extension before upload
                 const validation = validateAvatarFile(file);
                 if (!validation.valid) {
-                    alert("❌ Avatar Upload Error: " + validation.error);
+                    toast.error(t('settings.avatarUploadError', { error: validation.error }));
                     setUploading(false);
                     event.target.value = null;
                     return;
@@ -92,7 +107,7 @@ const SettingsView = ({
                 
             if (updateError) throw updateError;
 
-            alert('Profile picture updated cleanly!');
+            toast.success(t('settings.avatarUpdated'));
             fetchProfile(); // Invalidates core app level layout caches to trigger live visual re-renders
         } catch (error) {
             showUserError('Failed to upload profile image', error);
@@ -108,18 +123,18 @@ const SettingsView = ({
      */
     const handlePasswordChange = async () => {
         if (password !== confirmPassword) {
-            alert("Security discrepancy: Input passwords do not match.");
+            toast.error(t('settings.passwordMismatch'));
             return;
         }
 
         const rateLimit = await checkRateLimit('password-change', { maxRequests: 5, windowSeconds: 60 });
         if (!rateLimit.allowed) {
-            alert(formatRateLimitMessage(rateLimit.retryAfterMs));
+            toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
             return;
         }
 
         if (password.length < 6) {
-            alert("Security vulnerability: Passwords must contain at least 6 characters.");
+            toast.error(t('settings.passwordTooShort'));
             return;
         }
 
@@ -129,7 +144,7 @@ const SettingsView = ({
         if (error) {
             showUserError('Failed to update password', error);
         } else {
-            alert("Account password changed successfully!");
+            toast.success(t('settings.passwordChanged'));
             setPassword('');
             setConfirmPassword('');
         }
@@ -168,7 +183,7 @@ const SettingsView = ({
     };
 
     return (
-        <div className="p-8 max-w-4xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
             <div>
                 <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('settings.title')}</h1>
                 <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
@@ -376,6 +391,25 @@ const SettingsView = ({
                     </div>
                 </div>
             )}
+
+            {/* --- CONTAINER SECTION: NOTIFICATION CHANNELS (strategy pattern) --- */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
+                <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.notificationChannels')}</h3>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.notificationChannelsDescription')}</p>
+                {pushPermission === 'unsupported' ? (
+                    <p className="text-xs text-gray-400 italic">{t('settings.desktopNotificationsUnsupported')}</p>
+                ) : pushPermission === 'granted' ? (
+                    <p className="text-xs font-bold text-green-600 dark:text-green-400">{t('settings.desktopNotificationsEnabled')}</p>
+                ) : (
+                    <button
+                        type="button"
+                        onClick={handleEnableDesktopNotifications}
+                        className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                    >
+                        {t('settings.enableDesktopNotifications')}
+                    </button>
+                )}
+            </div>
 
             {/* --- CONTAINER SECTION 4: ACCESSIBILITY --- */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">

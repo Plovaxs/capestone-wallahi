@@ -1,3 +1,6 @@
+/* eslint-disable react-refresh/only-export-components -- this file intentionally
+   exports a lookup object of pre-rendered icon elements, not components; that's
+   fine for correctness, it just means Fast Refresh can't hot-reload it in isolation. */
 import React from 'react';
 
 // --- ICONS (SVG components for single-file implementation) ---

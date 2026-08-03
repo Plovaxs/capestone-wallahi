@@ -26,4 +26,13 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', caughtErrorsIgnorePattern: '^_', argsIgnorePattern: '^_' }],
     },
   },
+  {
+    // Node-context scripts (build tooling, seed/setup scripts, API routes) —
+    // these run under Node, not the browser, so `process`/`__dirname`/etc.
+    // are real globals here rather than typos.
+    files: ['api/**/*.js', 'scripts/**/*.js', '*.config.js', 'checkModels.js', '*.cjs'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])

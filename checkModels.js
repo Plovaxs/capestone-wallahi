@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -12,12 +11,7 @@ async function listAvailableModels() {
     return;
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-
   try {
-    // This asks Google for the list
-    const modelResponse = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
-    
     // We actually need the model manager to list them, not just instantiate one.
     // Since the SDK wrapper is strict, let's use a direct fetch to be 100% sure.
     console.log("🔍 Checking available models for your key...");

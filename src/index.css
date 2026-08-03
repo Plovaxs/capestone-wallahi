@@ -35,3 +35,39 @@ html.high-contrast body {
 html.colorblind-protanopia body { filter: saturate(1.35) hue-rotate(-12deg) contrast(1.1); }
 html.colorblind-deuteranopia body { filter: saturate(1.35) hue-rotate(12deg) contrast(1.1); }
 html.colorblind-tritanopia body { filter: saturate(1.2) hue-rotate(-28deg) contrast(1.05); }
+
+/* ===========================================================================
+   PRINT STYLESHEET: hides chrome (sidebar, header, chatbot, toasts, modals,
+   command palette) and neutralizes dark-mode/colorblind filters so printed
+   reports come out as plain, legible, full-width black-on-white pages.
+   =========================================================================== */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  html, html.dark,
+  html.colorblind-protanopia, html.colorblind-deuteranopia, html.colorblind-tritanopia {
+    filter: none !important;
+  }
+
+  body, html.dark body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .app-content-shell {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  #main-content {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+}

@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
+import { confirmDialog } from '../utils/confirm';
 import { generateReviewPdf } from '../utils/generateReviewPdf';
+import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -147,9 +150,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         
         // 1. Calculate punctuality percentages
         const empAttendance = attendance.filter(a => a.employee_id === selectedUserId);
-        const totalDays = empAttendance.length;
-        const onTimeDays = empAttendance.filter(a => a.status === 'Present').length;
-        const punctuality = totalDays > 0 ? Math.round((onTimeDays / totalDays) * 100) : null;
+        const punctuality = PunctualityPolicy.calculate(empAttendance);
 
         // 2. Scan overdue task counts
         const empTasks = tasks.filter(t => (t.assigned_to || []).includes(selectedUserId));
@@ -242,9 +243,9 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
 
     // --- MUTATION HANDLING ENDPOINTS (DB DISPATCH CHANNELS) ---
     const handleSubmitEvaluation = async () => {
-        if (!selectedUserId) return alert(t('reviews.selectStaffFirst'));
+        if (!selectedUserId) return toast.error(t('reviews.selectStaffFirst'));
         if (totalAnsweredQuestions < totalQuestionsCount) {
-            return alert(t('reviews.incompleteRubric', { count: totalQuestionsCount - totalAnsweredQuestions }));
+            return toast.error(t('reviews.incompleteRubric', { count: totalQuestionsCount - totalAnsweredQuestions }));
         }
 
         setIsSubmitting(true);
@@ -252,7 +253,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             const { error } = await supabase.from('performance_evaluations').update({ scores, final_score: pointTotal, comments }).eq('id', editingEvalId);
             if (error) showUserError('Failed to update review', error);
             else {
-                alert(t('reviews.appraisalUpdated'));
+                toast.success(t('reviews.appraisalUpdated'));
                 // Notifying the employee is now handled server-side by the
                 // notify_evaluation trigger — the client can no longer
                 // insert into notifications directly (RLS).
@@ -265,7 +266,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             });
             if (error) showUserError('Failed to submit review', error);
             else {
-                alert(t('reviews.appraisalSubmitted'));
+                toast.success(t('reviews.appraisalSubmitted'));
                 // Notifying the employee is now handled server-side by the
                 // notify_evaluation trigger — the client can no longer
                 // insert into notifications directly (RLS).
@@ -285,11 +286,11 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     };
 
     const handleDeleteEvaluation = async (id) => {
-        if (!confirm(t('reviews.confirmDeleteRecord'))) return;
+        if (!(await confirmDialog(t('reviews.confirmDeleteRecord'), { variant: 'danger' }))) return;
         const { error } = await supabase.from('performance_evaluations').delete().eq('id', id);
         if (error) showUserError('Failed to delete review', error);
         else {
-            alert(t('reviews.recordDeleted'));
+            toast.success(t('reviews.recordDeleted'));
             fetchEvaluations();
         }
     };
@@ -341,7 +342,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         });
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
             <div>
                 <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">{t('reviews.title')}</h1>
                 <p className="text-sm text-gray-500 dark:text-gray-400">{t('reviews.subtitle')}</p>

@@ -68,8 +68,11 @@ const GlobalSearch = ({ tasks = [], contributions = [], leaveRequests = [], allU
                     onFocus={() => setIsOpen(true)}
                     placeholder={t('search.placeholder')}
                     aria-label={t('search.placeholder')}
-                    className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
+                    className="w-full pl-9 pr-12 py-2 text-xs border border-gray-200 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
                 />
+                <kbd className="hidden sm:flex items-center gap-0.5 absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-bold bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-md border border-gray-300 dark:border-gray-600 pointer-events-none">
+                    Ctrl K
+                </kbd>
             </div>
 
             {isOpen && q.length >= 2 && (

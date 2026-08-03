@@ -4,11 +4,17 @@ import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import './i18n.js'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { webVitalsBatcher } from './telemetry/webVitalsBatcher.js'
+
+webVitalsBatcher.start()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 )

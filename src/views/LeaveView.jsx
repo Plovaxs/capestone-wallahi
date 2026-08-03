@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
+import SortableTh from '../components/SortableTh';
+import { LeaveQuotaPolicy } from '../domain/LeaveQuotaPolicy';
+import { offlineMutationQueue } from '../offline/OfflineMutationQueue';
 import { showUserError } from '../utils/errorHandling';
+import { confirmDialog } from '../utils/confirm';
 import { sanitizeUserInput } from '../utils/sanitize';
 
 /**
@@ -34,6 +39,16 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     // --- BULK APPROVAL SELECTION (supervisor only, Pending requests) ---
     const [selectedLeaveIds, setSelectedLeaveIds] = useState(new Set());
     const [isBulkProcessingLeave, setIsBulkProcessingLeave] = useState(false);
+
+    // --- SORTABLE TABLE COLUMNS (request log) ---
+    const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
+    const toggleSort = (key) => {
+        setSortConfig(prev => (
+            prev.key === key
+                ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+                : { key, direction: 'asc' }
+        ));
+    };
 
     // 🟩 NEW: Lets users browse the leave calendar to other months instead of
     // being locked to whatever month it currently is.
@@ -84,6 +99,20 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         return matchesSearch && matchesStatus && matchesType;
     });
 
+    const sortedLeaveRequests = [...filteredLeaveRequests].sort((a, b) => {
+        if (!sortConfig.key) return 0;
+        let aVal, bVal;
+        switch (sortConfig.key) {
+            case 'name': aVal = getUserName(a.employee_id); bVal = getUserName(b.employee_id); break;
+            case 'type': aVal = a.type; bVal = b.type; break;
+            case 'start_date': aVal = a.start_date; bVal = b.start_date; break;
+            case 'status': aVal = a.status; bVal = b.status; break;
+            default: return 0;
+        }
+        const cmp = String(aVal).localeCompare(String(bVal));
+        return sortConfig.direction === 'asc' ? cmp : -cmp;
+    });
+
     // Reformats filtered leave objects before passing data into Excel exports
     const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
     const leaveExportPayload = filteredLeaveRequests
@@ -109,16 +138,14 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     const handleSubmitRequest = async (e) => {
         e.preventDefault();
         if (!newRequest.start_date || !newRequest.end_date) {
-            alert(t('leave.fillDates'));
+            toast.error(t('leave.fillDates'));
             return;
         }
 
-        const start = new Date(newRequest.start_date);
-        const end = new Date(newRequest.end_date);
-        const requestedDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const requestedDays = LeaveQuotaPolicy.calculateRequestedDays(newRequest.start_date, newRequest.end_date);
 
         if (requestedDays <= 0) {
-            alert(t('leave.endDateError'));
+            toast.error(t('leave.endDateError'));
             return;
         }
 
@@ -126,25 +153,38 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         // profile balance. Block the submission client-side if it would
         // exceed what they currently have — supervisors can still override
         // shortfalls later at approval time if there's a genuine emergency.
-        const isQuotaType = newRequest.type === 'Paid Holiday' || newRequest.type === 'Sick Leave';
-        if (isQuotaType) {
-            const leaveType = newRequest.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
+        if (LeaveQuotaPolicy.isQuotaType(newRequest.type)) {
+            const leaveType = LeaveQuotaPolicy.quotaFieldFor(newRequest.type);
             const available = userProfile[leaveType] || 0;
             const label = leaveType === 'sick_days' ? t('leave.sick') : t('leave.vacation');
 
             if (requestedDays > available) {
-                alert(t('leave.quotaExceeded', { requested: requestedDays, available, label }));
+                toast.error(t('leave.quotaExceeded', { requested: requestedDays, available, label }));
                 return;
             }
         }
 
-        setLoading(true);
-        const { error } = await supabase.from('leave_requests').insert({
+        const payload = {
             ...newRequest,
             reason: sanitizeUserInput(newRequest.reason, { maxLength: 500 }),
             employee_id: userProfile.id,
-            status: 'Pending' 
-        });
+            status: 'Pending'
+        };
+
+        // 🟩 OFFLINE QUEUE: if there's no connectivity, queue the submission
+        // (IndexedDB-backed) instead of failing outright — it's replayed
+        // automatically once the browser comes back online (see
+        // OfflineMutationQueue / the 'online' event listener + Background
+        // Sync API registration it attempts where supported).
+        if (!navigator.onLine) {
+            await offlineMutationQueue.enqueue('submitLeaveRequest', payload);
+            setNewRequest({ type: 'Paid Holiday', start_date: '', end_date: '', reason: '' });
+            toast(t('offline.queuedForSync'), { icon: '📴' });
+            return;
+        }
+
+        setLoading(true);
+        const { error } = await supabase.from('leave_requests').insert(payload);
 
         if (error) {
             showUserError('Failed to submit leave request', error);
@@ -154,7 +194,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             // insert into notifications directly (RLS).
             setNewRequest({ type: 'Paid Holiday', start_date: '', end_date: '', reason: '' });
             fetchLeaveRequests();
-            alert(t('leave.requestFiled'));
+            toast.success(t('leave.requestFiled'));
         }
         setLoading(false);
     };
@@ -166,7 +206,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      */
     const handleAdjustBalances = async (e) => {
         e.preventDefault();
-        if (!selectedTargetUser) return alert(t('leave.selectStaffFirst'));
+        if (!selectedTargetUser) return toast.error(t('leave.selectStaffFirst'));
 
         setIsAdjusting(true);
         const targetProfile = allUsers.find(u => u.id === selectedTargetUser);
@@ -189,7 +229,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             if (error) {
                 showUserError('Failed to update leave allocation', error);
             } else {
-                alert(t('leave.allocationSuccess', { name: targetProfile.name }));
+                toast.success(t('leave.allocationSuccess', { name: targetProfile.name }));
                 window.location.reload(); // Performs a clean context sync to flush visual tracking states
             }
         }
@@ -206,7 +246,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      * 3. Deducts the requested days using strict constraints to protect against allocation overflows.
      */
     const handleApproval = async (id, status, request) => {
-        const isQuotaType = request.type === 'Paid Holiday' || request.type === 'Sick Leave';
+        const isQuotaType = LeaveQuotaPolicy.isQuotaType(request.type);
         let daysDiff = 0;
         let leaveType = null;
         let currentDays = null;
@@ -217,11 +257,8 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         // and has to knowingly confirm the override — the system no longer
         // silently approves-and-clamps-to-zero.
         if (status === 'Approved' && isQuotaType) {
-            const start = new Date(request.start_date);
-            const end = new Date(request.end_date);
-            // Computes explicit timeline differences including the active baseline start cell day
-            daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-            leaveType = request.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
+            daysDiff = LeaveQuotaPolicy.calculateRequestedDays(request.start_date, request.end_date);
+            leaveType = LeaveQuotaPolicy.quotaFieldFor(request.type);
 
             const { data: targetProfile, error: fetchError } = await supabase
                 .from('profiles')
@@ -233,19 +270,20 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                 currentDays = targetProfile[leaveType] || 0;
             }
 
-            const overageDays = currentDays !== null ? daysDiff - currentDays : 0;
+            const overageDays = currentDays !== null ? LeaveQuotaPolicy.calculateOverage(currentDays, daysDiff) : 0;
             const label = leaveType === 'sick_days' ? t('leave.sick') : t('leave.vacation');
 
             if (overageDays > 0) {
-                const overrideConfirmed = confirm(
-                    t('leave.overrideConfirm', { name: getUserName(request.employee_id), current: currentDays, label, requested: daysDiff, overage: overageDays })
+                const overrideConfirmed = await confirmDialog(
+                    t('leave.overrideConfirm', { name: getUserName(request.employee_id), current: currentDays, label, requested: daysDiff, overage: overageDays }),
+                    { variant: 'danger' }
                 );
                 if (!overrideConfirmed) return;
             } else {
-                if (!confirm(t('leave.confirmApprove'))) return;
+                if (!(await confirmDialog(t('leave.confirmApprove')))) return;
             }
         } else {
-            if (!confirm(t('leave.confirmStatusChange', { status }))) return;
+            if (!(await confirmDialog(t('leave.confirmStatusChange', { status })))) return;
         }
 
         const { error: updateError } = await supabase.from('leave_requests')
@@ -259,7 +297,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
 
         // Runs dynamic allowance deduction if the supervisor grants approval
         if (status === 'Approved' && isQuotaType && leaveType && currentDays !== null) {
-            const newDays = Math.max(0, currentDays - daysDiff); // Locks deductions to positive coordinates
+            const newDays = LeaveQuotaPolicy.deduct(currentDays, daysDiff);
 
             const { error: profileError } = await supabase.from('profiles')
                 .update({ [leaveType]: newDays })
@@ -297,22 +335,20 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     const handleBulkApproveLeave = async () => {
         const selectedRequests = leaveRequests.filter(r => selectedLeaveIds.has(r.id) && r.status === 'Pending');
         if (selectedRequests.length === 0) return;
-        if (!confirm(t('leave.confirmBulkApprove', { count: selectedRequests.length }))) return;
+        if (!(await confirmDialog(t('leave.confirmBulkApprove', { count: selectedRequests.length })))) return;
 
         setIsBulkProcessingLeave(true);
         const overages = [];
 
         for (const request of selectedRequests) {
-            const isQuotaType = request.type === 'Paid Holiday' || request.type === 'Sick Leave';
+            const isQuotaType = LeaveQuotaPolicy.isQuotaType(request.type);
             let leaveType = null;
             let daysDiff = 0;
             let currentDays = null;
 
             if (isQuotaType) {
-                const start = new Date(request.start_date);
-                const end = new Date(request.end_date);
-                daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-                leaveType = request.type === 'Sick Leave' ? 'sick_days' : 'vacation_days';
+                daysDiff = LeaveQuotaPolicy.calculateRequestedDays(request.start_date, request.end_date);
+                leaveType = LeaveQuotaPolicy.quotaFieldFor(request.type);
 
                 const { data: targetProfile } = await supabase.from('profiles').select('*').eq('id', request.employee_id).single();
                 currentDays = targetProfile ? (targetProfile[leaveType] || 0) : 0;
@@ -323,7 +359,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                         current: currentDays,
                         label: leaveType === 'sick_days' ? t('leave.sick') : t('leave.vacation'),
                         requested: daysDiff,
-                        overage: daysDiff - currentDays,
+                        overage: LeaveQuotaPolicy.calculateOverage(currentDays, daysDiff),
                     }));
                 }
             }
@@ -335,7 +371,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             }
 
             if (isQuotaType && leaveType && currentDays !== null) {
-                const newDays = Math.max(0, currentDays - daysDiff);
+                const newDays = LeaveQuotaPolicy.deduct(currentDays, daysDiff);
                 await supabase.from('profiles').update({ [leaveType]: newDays }).eq('id', request.employee_id);
             }
         }
@@ -346,7 +382,10 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         if (selectedRequests.some(r => r.employee_id === userProfile.id)) fetchProfile();
 
         if (overages.length > 0) {
-            alert(t('leave.bulkOverageSummary', { count: overages.length }) + '\n\n' + overages.join('\n'));
+            toast.error(
+                t('leave.bulkOverageSummary', { count: overages.length }) + '\n\n' + overages.join('\n'),
+                { style: { whiteSpace: 'pre-line' }, duration: 8000 }
+            );
         }
     };
 
@@ -415,7 +454,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
             
             {/* --- LAYOUT HEADER CONTROLS --- */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 dark:border-gray-700 pb-4 gap-4">
@@ -671,16 +710,16 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                         <thead className="bg-gray-50/80 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
                                 {userProfile.role === 'supervisor' && <th className="p-4 w-8"></th>}
-                                <th className="p-4">{t('leave.colStaffName')}</th>
-                                <th className="p-4">{t('leave.colCategory')}</th>
-                                <th className="p-4">{t('leave.colBoundaries')}</th>
+                                <SortableTh label={t('leave.colStaffName')} sortKey="name" sortConfig={sortConfig} onSort={toggleSort} />
+                                <SortableTh label={t('leave.colCategory')} sortKey="type" sortConfig={sortConfig} onSort={toggleSort} />
+                                <SortableTh label={t('leave.colBoundaries')} sortKey="start_date" sortConfig={sortConfig} onSort={toggleSort} />
                                 <th className="p-4">{t('leave.colReason')}</th>
-                                <th className="p-4">{t('leave.colStatus')}</th>
+                                <SortableTh label={t('leave.colStatus')} sortKey="status" sortConfig={sortConfig} onSort={toggleSort} />
                                 {userProfile.role === 'supervisor' && <th className="p-4 text-right">{t('leave.colActions')}</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700 text-xs">
-                            {filteredLeaveRequests.map(req => (
+                            {sortedLeaveRequests.map(req => (
                                 <tr key={req.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-all font-semibold">
                                     {userProfile.role === 'supervisor' && (
                                         <td className="p-4">

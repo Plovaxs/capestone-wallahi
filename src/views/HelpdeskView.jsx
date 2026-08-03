@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
+import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosave';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
@@ -13,7 +14,7 @@ const PROBLEM_TYPE_KEYS = {
     'Additional Resource': 'problemAdditionalResource',
 };
 
-const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchHelpdeskTickets }) => {
+const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets }) => {
     const { t } = useTranslation();
     const [newTitle, setNewTitle] = useState('');
     const [newContent, setNewContent] = useState('');
@@ -23,6 +24,22 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
     const [statusFilter, setStatusFilter] = useState('Open');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submittingReplyId, setSubmittingReplyId] = useState(null);
+
+    // --- DRAFT AUTOSAVE (ticket composer only — replies are short-lived and not worth persisting) ---
+    const draftKey = userProfile?.id ? `draft:helpdesk-ticket:${userProfile.id}` : null;
+    const hasRestoredDraft = useRef(false);
+    useEffect(() => {
+        if (!draftKey || hasRestoredDraft.current) return;
+        hasRestoredDraft.current = true;
+        const saved = loadDraft(draftKey);
+        if (saved) {
+            setNewTitle(saved.newTitle || '');
+            setNewContent(saved.newContent || '');
+            setTicketCategory(saved.ticketCategory || 'Help Request ❓');
+            setSelectedProblemTypes(saved.selectedProblemTypes || []);
+        }
+    }, [draftKey]);
+    useDraftAutosave(draftKey, { newTitle, newContent, ticketCategory, selectedProblemTypes });
 
     const TICKET_CATEGORIES = [
         { name: 'Help Request ❓', color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800' },
@@ -67,6 +84,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
             setNewTitle('');
             setNewContent('');
             setSelectedProblemTypes([]);
+            if (draftKey) clearDraft(draftKey);
             fetchHelpdeskTickets();
         }
         setIsSubmitting(false);
@@ -177,7 +195,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                     <button
                         type="button"
                         onClick={handleCreateTicket}
-                        disabled={!newTitle.trim() || !newContent.trim()}
+                        disabled={!newTitle.trim() || !newContent.trim() || isSubmitting}
                         className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
                     >
                         {t('helpdesk.fileTicket')}
@@ -291,7 +309,7 @@ const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchH
                                 <button
                                     type="button"
                                     onClick={() => handleSendReply(ticket.id)}
-                                    disabled={!(replyInputs[ticket.id] || '').trim()}
+                                    disabled={!(replyInputs[ticket.id] || '').trim() || submittingReplyId === ticket.id}
                                     className="px-3 py-2 text-xs font-bold text-blue-600 hover:text-blue-800 disabled:opacity-40"
                                 >
                                     {t('helpdesk.send')}

@@ -1,5 +1,45 @@
 import React, { useState, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import Modal from './Modal';
+
+/**
+ * Builds the CSV string on a Web Worker so serializing a large dataset
+ * doesn't block the main thread / freeze the UI. Falls back to building
+ * it inline (same logic) if Workers are unavailable or fail to spin up —
+ * this must never be the reason an export silently doesn't happen.
+ */
+function buildCsvOffThread(columns, data) {
+    return new Promise((resolve, reject) => {
+        try {
+            const worker = new Worker(new URL('../workers/csvExportWorker.js', import.meta.url), { type: 'module' });
+            worker.onmessage = (event) => {
+                resolve(event.data.csvContent);
+                worker.terminate();
+            };
+            worker.onerror = (err) => {
+                reject(err);
+                worker.terminate();
+            };
+            worker.postMessage({ columns, data });
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+function buildCsvInline(columns, data) {
+    const headers = columns.map((c) => c.label).join(',');
+    const rows = data.map((row) =>
+        columns
+            .map((c) => {
+                const value = row[c.key];
+                const stringValue = value === null || value === undefined ? '' : String(value);
+                return `"${stringValue.replace(/"/g, '""')}"`;
+            })
+            .join(',')
+    );
+    return [headers, ...rows].join('\n');
+}
 
 /**
  * COMPONENT: ExportButton
@@ -23,7 +63,7 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
 
     const openPicker = () => {
         if (!data || data.length === 0) {
-            alert('No data available to export.');
+            toast.error('No data available to export.');
             return;
         }
         setSelectedKeys(new Set(availableColumns.map((c) => c.key)));
@@ -42,26 +82,21 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
     const selectAll = () => setSelectedKeys(new Set(availableColumns.map((c) => c.key)));
     const selectNone = () => setSelectedKeys(new Set());
 
-    const handleDownload = () => {
+    const handleDownload = async () => {
         if (!selectedKeys || selectedKeys.size === 0) {
-            alert('Pick at least one column to export.');
+            toast.error('Pick at least one column to export.');
             return;
         }
 
         const chosenColumns = availableColumns.filter((c) => selectedKeys.has(c.key));
-        const headers = chosenColumns.map((c) => c.label).join(',');
 
-        const rows = data.map((row) =>
-            chosenColumns
-                .map((c) => {
-                    const value = row[c.key];
-                    const stringValue = value === null || value === undefined ? '' : String(value);
-                    return `"${stringValue.replace(/"/g, '""')}"`;
-                })
-                .join(',')
-        );
+        let csvContent;
+        try {
+            csvContent = await buildCsvOffThread(chosenColumns, data);
+        } catch {
+            csvContent = buildCsvInline(chosenColumns, data);
+        }
 
-        const csvContent = [headers, ...rows].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');

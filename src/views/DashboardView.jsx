@@ -4,6 +4,35 @@ import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+import { memoizeWithLru } from '../patterns/LRUCache';
+
+/**
+ * Pure, module-scope so the LRU cache below survives across renders and
+ * across component instances. Keyed on a cheap summary of the inputs
+ * (ids + lengths), not a full JSON.stringify of every task/attendance
+ * row — the leaderboard is recomputed only when that summary actually
+ * changes, e.g. not on every 20s notification poll that leaves this data
+ * untouched.
+ */
+const computeLeaderboard = memoizeWithLru(
+    (employeeUsers, tasks, attendance) => employeeUsers
+        .map(emp => {
+            const empTasks = tasks.filter(task => (task.assigned_to || []).includes(emp.id));
+            const approvedCount = empTasks.filter(task => task.status === 'Approved').length;
+            const empAttendance = attendance.filter(a => a.employee_id === emp.id);
+            const punctuality = empAttendance.length > 0
+                ? Math.round((empAttendance.filter(a => a.status === 'Present').length / empAttendance.length) * 100)
+                : null;
+            return { id: emp.id, name: emp.name, approvedCount, punctuality };
+        })
+        .sort((a, b) => b.approvedCount - a.approvedCount)
+        .slice(0, 5),
+    {
+        capacity: 10,
+        keyFn: (employeeUsers, tasks, attendance) =>
+            `${employeeUsers.map((e) => e.id).join(',')}|${tasks.length}:${tasks.map((t) => t.id).join(',')}|${attendance.length}`,
+    }
+);
 
 /**
  * COMPONENT: DashboardView
@@ -40,6 +69,41 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const toggleWidget = (key) => {
         setWidgets(prev => ({ ...prev, [key]: !prev[key] }));
     };
+
+    // --- WIDGET MICROKERNEL: each dashboard card is an independent, named
+    // slot that can be shown/hidden (widgets state above) AND reordered
+    // (widgetOrder below) at runtime — a small plugin-registry flavor
+    // instead of a fixed hardcoded layout. Order is persisted per-browser. ---
+    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'chartsGrid', 'recentReviews'];
+    const [widgetOrder, setWidgetOrder] = useState(() => {
+        const saved = localStorage.getItem('dashboard_widget_order');
+        if (!saved) return DEFAULT_WIDGET_ORDER;
+        try {
+            const parsed = JSON.parse(saved);
+            // Guard against a stale saved order missing a slot introduced later.
+            const missing = DEFAULT_WIDGET_ORDER.filter((id) => !parsed.includes(id));
+            return [...parsed, ...missing];
+        } catch {
+            return DEFAULT_WIDGET_ORDER;
+        }
+    });
+
+    useEffect(() => {
+        localStorage.setItem('dashboard_widget_order', JSON.stringify(widgetOrder));
+    }, [widgetOrder]);
+
+    const moveWidget = (id, direction) => {
+        setWidgetOrder((prev) => {
+            const index = prev.indexOf(id);
+            const swapWith = index + direction;
+            if (swapWith < 0 || swapWith >= prev.length) return prev;
+            const next = [...prev];
+            [next[index], next[swapWith]] = [next[swapWith], next[index]];
+            return next;
+        });
+    };
+
+    const orderOf = (id) => widgetOrder.indexOf(id);
 
     // --- 2. SYNCHRONIZED METRICS ---
     
@@ -170,19 +234,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
     // --- LEADERBOARD: ranks employees by approved/completed task volume,
-    // with punctuality as a tiebreaker signal shown alongside it. ---
-    const leaderboard = employeeUsers
-        .map(emp => {
-            const empTasks = tasks.filter(task => (task.assigned_to || []).includes(emp.id));
-            const approvedCount = empTasks.filter(task => task.status === 'Approved').length;
-            const empAttendance = attendance.filter(a => a.employee_id === emp.id);
-            const punctuality = empAttendance.length > 0
-                ? Math.round((empAttendance.filter(a => a.status === 'Present').length / empAttendance.length) * 100)
-                : null;
-            return { id: emp.id, name: emp.name, approvedCount, punctuality };
-        })
-        .sort((a, b) => b.approvedCount - a.approvedCount)
-        .slice(0, 5);
+    // with punctuality as a tiebreaker signal shown alongside it.
+    // LRU-memoized (see computeLeaderboard above) since this view re-renders
+    // on every notification poll even when tasks/attendance haven't changed. ---
+    const leaderboard = computeLeaderboard(employeeUsers, tasks, attendance);
 
     // --- INDIVIDUAL PERFORMANCE TREND: only meaningful once a single
     // employee is picked in the selector above (not the "all" aggregate). ---
@@ -197,7 +252,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         : [];
 
     return (
-        <div className="p-8 relative space-y-6">
+        <div className="p-4 md:p-8 relative space-y-6">
             
             {/* --- HEADER --- */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-gray-700/60 pb-4">
@@ -252,6 +307,31 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     </>
                                 )}
                             </div>
+
+                            <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider mb-2 mt-4">{t('dashboard.widgetOrder')}</h3>
+                            <div className="space-y-1.5">
+                                {widgetOrder.map((id, index) => (
+                                    <div key={id} className="flex items-center justify-between gap-2 text-xs font-bold text-gray-700 dark:text-gray-300">
+                                        <span>{t(`dashboard.widgetSlot_${id}`)}</span>
+                                        <span className="flex gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => moveWidget(id, -1)}
+                                                disabled={index === 0}
+                                                aria-label={t('dashboard.moveUp')}
+                                                className="w-5 h-5 flex items-center justify-center rounded border border-gray-200 dark:border-gray-600 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-700"
+                                            >↑</button>
+                                            <button
+                                                type="button"
+                                                onClick={() => moveWidget(id, 1)}
+                                                disabled={index === widgetOrder.length - 1}
+                                                aria-label={t('dashboard.moveDown')}
+                                                className="w-5 h-5 flex items-center justify-center rounded border border-gray-200 dark:border-gray-600 disabled:opacity-30 hover:bg-gray-50 dark:hover:bg-gray-700"
+                                            >↓</button>
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -271,9 +351,13 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                 </div>
             )}
 
+            {/* --- REORDERABLE WIDGET SLOTS (microkernel: shown/hidden via `widgets`,
+                positioned via `widgetOrder` — both persisted per-browser) --- */}
+            <div className="flex flex-col gap-6">
+
             {/* --- CORE STAT WIDGET CARDS --- */}
             {widgets.metrics && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in-down">
+                <div style={{ order: orderOf('metrics') }} className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in-down">
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500 dark:bg-gray-800 dark:border-gray-700/60 dark:border-l-blue-500">
                         <h3 className="font-bold text-xs text-gray-400 uppercase tracking-wider">
                             {userProfile.role === 'supervisor' ? t('dashboard.teamActiveWorkload') : t('dashboard.myPendingTasks')}
@@ -311,7 +395,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
             {/* --- ASSIGNMENT & CONTRACT CARD --- */}
             {widgets.contractInfo && (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                <div style={{ order: orderOf('contractInfo') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
                     <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.assignmentAndContract')}</h2>
                     {userProfile.department || contractStatus.hasContract ? (
                         <div className="space-y-3 max-w-md">
@@ -346,7 +430,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
             {/* --- LEADERBOARD: top performers by approved task volume --- */}
             {widgets.leaderboard && userProfile.role === 'supervisor' && (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                <div style={{ order: orderOf('leaderboard') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
                     <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.leaderboard')}</h2>
                     {leaderboard.length > 0 ? (
                         <div className="space-y-2">
@@ -374,7 +458,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             )}
 
             {/* --- RECHARTS TIMELINE GRAPH GRIDS --- */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div style={{ order: orderOf('chartsGrid') }} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {widgets.attendanceChart && (
                     <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
                         <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.attendanceTrendsTimeline')}</h2>
@@ -447,7 +531,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
             {/* --- RECENT APPRAISAL LOGS TRANSCRIPTS --- */}
             {widgets.recentReviews && (
-                <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                <div style={{ order: orderOf('recentReviews') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
                     <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.performanceTranscriptLog')}</h2>
                     {reviews && reviews.length > 0 ? (
                         <div className="space-y-4">
@@ -497,6 +581,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                     )}
                 </div>
             )}
+            </div>
         </div>
     );
 };

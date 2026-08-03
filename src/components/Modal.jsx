@@ -50,14 +50,14 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 
     if (!isOpen) return null;
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
             <div
                 ref={containerRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="modal-title"
                 tabIndex={-1}
-                className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 dark:bg-gray-800 focus:outline-none"
+                className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 dark:bg-gray-800 focus:outline-none"
             >
                 <div className="flex justify-between items-center mb-4">
                     <h3 id="modal-title" className="text-xl font-bold dark:text-white">{title}</h3>

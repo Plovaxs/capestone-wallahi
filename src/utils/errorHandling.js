@@ -1,3 +1,4 @@
+import toast from 'react-hot-toast';
 import i18n from '../i18n';
 
 /**
@@ -9,5 +10,5 @@ import i18n from '../i18n';
  */
 export const showUserError = (context, error) => {
   console.error(context, error);
-  alert(`${context}. ${i18n.t('common.tryAgainOrContactSupport')}`);
+  toast.error(`${context}. ${i18n.t('common.tryAgainOrContactSupport')}`);
 };
