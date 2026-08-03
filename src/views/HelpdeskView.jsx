@@ -1,79 +1,21 @@
 import React, { useState } from 'react';
-
-/**
- * COMPONENT: HelpdeskView (MOCK / PREVIEW MODE)
- * PURPOSE: A fully working, click-through mock of the Helpdesk feature —
- * no Supabase reads or writes happen here. Everything lives in local React
- * state, seeded with sample tickets, so this is 100% safe to demo or drop
- * into the app before the backend (ticket_status column + RLS policy split)
- * exists.
- *
- * WHEN THE BACKEND IS READY: swap the three handlers below
- * (handleCreateTicket, handleChangeStatus, handleSendReply) for real
- * supabase calls, and replace `mockTickets` state with the real
- * `contributions` prop. The JSX/UI below doesn't need to change at all.
- *
- * SCHEMA NOTE for whoever does the SQL side: a ticket now needs a `title`
- * column (separate from the existing `contribution` content column) and a
- * `problem_types` column — a text array, e.g. {"Hardware","Workflow"} —
- * since a ticket can be tagged with more than one problem type.
- */
+import { supabase } from '../supabaseClient';
+import { showUserError } from '../utils/errorHandling';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
 
-// --- SAMPLE DATA (mock only — replace with real `contributions` prop later) ---
-const SAMPLE_TICKETS = [
-    {
-        id: 'mock-1',
-        employee_id: 'mock-emp-1',
-        employee_name: 'Jonathan Ezra',
-        category: 'Urgent Blocker 🚨',
-        title: "Can't push to final-form branch",
-        contribution: "Getting a permissions error on GitHub whenever I try to push. Worked fine yesterday.",
-        problem_types: ['Git Control'],
-        ticket_status: 'Open',
-        date: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-        replies: [],
-    },
-    {
-        id: 'mock-2',
-        employee_id: 'mock-emp-2',
-        employee_name: 'Sheva Saurina',
-        category: 'Help Request ❓',
-        title: 'Which storage bucket for avatars?',
-        contribution: 'Not sure which Supabase bucket the avatar uploads should go to — avatars or profile-pics?',
-        problem_types: ['Software', 'Workflow'],
-        ticket_status: 'In Progress',
-        date: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-        replies: [
-            { id: 'r1', author_id: 'mock-sup-1', author_name: 'Josh', message: 'Use the avatars bucket, I just checked.' },
-        ],
-    },
-    {
-        id: 'mock-3',
-        employee_id: 'mock-emp-1',
-        employee_name: 'Jonathan Ezra',
-        category: 'Help Request ❓',
-        title: 'Face enrollment failing on laptop camera',
-        contribution: 'Keeps failing to detect my face during enrollment, might be low light?',
-        problem_types: ['Hardware'],
-        ticket_status: 'Resolved',
-        date: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
-        replies: [
-            { id: 'r2', author_id: 'mock-sup-1', author_name: 'Josh', message: 'Try enrolling near a window, should fix the detection confidence.' },
-        ],
-    },
-];
 
-const HelpdeskView = ({ userProfile }) => {
-    const [mockTickets, setMockTickets] = useState(SAMPLE_TICKETS);
+
+const HelpdeskView = ({ userProfile, allUsers = [], helpdeskTickets = [], fetchHelpdeskTickets }) => {
     const [newTitle, setNewTitle] = useState('');
     const [newContent, setNewContent] = useState('');
     const [ticketCategory, setTicketCategory] = useState('Help Request ❓');
     const [selectedProblemTypes, setSelectedProblemTypes] = useState([]);
     const [replyInputs, setReplyInputs] = useState({});
     const [statusFilter, setStatusFilter] = useState('Open');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submittingReplyId, setSubmittingReplyId] = useState(null);
 
     const TICKET_CATEGORIES = [
         { name: 'Help Request ❓', color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800' },
@@ -99,51 +41,58 @@ const HelpdeskView = ({ userProfile }) => {
         );
     };
 
-    // --- MOCK HANDLER: local state only, no network call ---
-    const handleCreateTicket = () => {
+    // Handle creating a new ticket (network call to Supabase)
+    const handleCreateTicket = async () => {
         if (!newTitle.trim() || !newContent.trim()) return;
-        const ticket = {
-            id: `mock-${Date.now()}`,
-            employee_id: userProfile?.id || 'you',
-            employee_name: userProfile?.name || 'You',
-            category: ticketCategory,
+        setIsSubmitting(true);
+        const { error } = await supabase.from('helpdesk_tickets').insert({
+            employee_id: userProfile.id,
             title: newTitle.trim(),
             contribution: newContent.trim(),
+            category: ticketCategory,
             problem_types: selectedProblemTypes,
-            ticket_status: 'Open',
-            date: new Date().toISOString(),
-            replies: [],
-        };
-        setMockTickets(prev => [ticket, ...prev]);
-        setNewTitle('');
-        setNewContent('');
-        setSelectedProblemTypes([]);
+        });
+        if (error) {
+            showUserError('Failed to file ticket', error);
+        } else {
+            setNewTitle('');
+            setNewContent('');
+            setSelectedProblemTypes([]);
+            fetchHelpdeskTickets();
+        }
+        setIsSubmitting(false);
     };
 
-    // --- MOCK HANDLER: local state only, no network call ---
-    const handleChangeStatus = (ticketId, newStatus) => {
-        setMockTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ticket_status: newStatus } : t));
+    const handleChangeStatus = async (ticketId, newStatus) => {
+        const { error } = await supabase
+            .from('helpdesk_tickets')
+            .update({ ticket_status: newStatus })
+            .eq('id', ticketId);
+        if (error) {
+            showUserError('Failed to update ticket status', error);
+        } else {
+            fetchHelpdeskTickets();
+        }
     };
 
-    // --- MOCK HANDLER: local state only, no network call ---
-    const handleSendReply = (ticketId) => {
+    const handleSendReply = async (ticketId) => {
         const message = (replyInputs[ticketId] || '').trim();
         if (!message) return;
-        setMockTickets(prev => prev.map(t =>
-            t.id === ticketId
-                ? { ...t, replies: [...t.replies, { id: `mock-r-${Date.now()}`, author_id: userProfile?.id || 'you', author_name: userProfile?.name || 'You', message }] }
-                : t
-        ));
-        setReplyInputs(prev => ({ ...prev, [ticketId]: '' }));
+        setSubmittingReplyId(ticketId);
+        const { error } = await supabase
+            .from('helpdesk_replies')
+            .insert({ ticket_id: ticketId, author_id: userProfile.id, message });
+        if (error) {
+            showUserError('Failed to send reply', error);
+        } else {
+            setReplyInputs(prev => ({ ...prev, [ticketId]: '' }));
+            fetchHelpdeskTickets();
+        }
+        setSubmittingReplyId(null);
     };
 
     return (
         <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
-
-            {/* --- MOCK MODE BANNER --- */}
-            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-xs font-bold px-4 py-2.5 rounded-xl dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300">
-                🧪 Preview Mode — sample data only, nothing here is saved to the database yet.
-            </div>
 
             <div className="flex items-center justify-between">
                 <div>

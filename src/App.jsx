@@ -38,6 +38,7 @@ export default function App() {
   const [attendance, setAttendance] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [contributions, setContributions] = useState([]);
+  const [helpdeskTickets, setHelpdeskTickets] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [activeView, setActiveView] = useState('dashboard');
@@ -115,6 +116,28 @@ export default function App() {
    setContributions(merged);
   };
 
+  //Added fetchHelpdeskTickets function to fetch tickets and their replies
+  const fetchHelpdeskTickets = async (profile) => {
+    if (!profile) return;
+    const { data, error } = await supabase
+      .from('helpdesk_tickets')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) { console.error("fetchHelpdeskTickets DB Error:", error.message); return; }
+
+    const { data: replies, error: repliesError } = await supabase
+      .from('helpdesk_replies')
+      .select('id, ticket_id, author_id, message, created_at')
+      .order('created_at', { ascending: true });
+    if (repliesError) console.error("fetchHelpdeskReplies DB Error:", repliesError.message);
+
+    const merged = (data || []).map(ticket => ({
+      ...ticket,
+      replies: (replies || []).filter(r => r.ticket_id === ticket.id),
+    }));
+    setHelpdeskTickets(merged);
+  };
+
   // 🟩 ROBUST FIX: Corrected table name to 'performance_evaluations'
   const fetchReviews = async (profile) => {
     if (!profile) return;
@@ -176,6 +199,7 @@ export default function App() {
       fetchAttendance(),
       fetchLeaveRequests(profile),
       fetchContributions(),
+      fetchHelpdeskTickets(profile),
       fetchReviews(profile),
       fetchNotifications(profile)
     ]);
@@ -252,7 +276,7 @@ export default function App() {
     <div className="flex min-h-screen font-sans bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
       <Toaster position="top-right" toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
 
-      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={contributions.filter(c => ((c.category || '').includes('Help') || (c.category || '').includes('Blocker')) && (c.ticket_status || 'Open') === 'Open').length} />
+      <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={helpdeskTickets.filter(t => t.ticket_status === 'Open').length} />
 
       <div className="flex-1 flex flex-col md:ml-64 transition-all duration-300 relative w-full">
         <Header userProfile={userProfile} onLogout={handleLogout} notifications={notifications} onNotificationsRead={handleNotificationsRead} isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} toggleMobileSidebar={() => setIsMobileOpen(!isMobileOpen)} />
@@ -272,6 +296,8 @@ export default function App() {
             fetchLeaveRequests={() => fetchLeaveRequests(userProfile)}
             contributions={contributions}
             fetchContributions={() => fetchContributions()}
+            helpdeskTickets={helpdeskTickets}
+            fetchHelpdeskTickets={() => fetchHelpdeskTickets(userProfile)}
             fetchProfile={() => fetchProfile(userProfile.id)}
             createNotification={createNotification}
             reviews={reviews}
