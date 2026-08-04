@@ -12,6 +12,18 @@ const Modal = ({ isOpen, onClose, title, children }) => {
     const { t } = useTranslation();
     const containerRef = useRef(null);
     const triggerElementRef = useRef(null);
+    // 🟩 BUG FIX: most callers pass `onClose={() => setX(false)}` as a fresh
+    // inline function every render. With `onClose` in the effect's
+    // dependency array, ANY unrelated re-render of the caller (e.g. every
+    // keystroke into a form field inside this modal, since that's a state
+    // update in the parent) reran this whole effect — including the
+    // "set initial focus" line — which stole focus back to the modal's
+    // first focusable element (typically the × close button) on every
+    // keystroke. A ref always holds the latest onClose without needing it
+    // in the dependency array, so the effect (and the focus-stealing) now
+    // only ever runs on an actual open/close transition.
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
 
     useEffect(() => {
         if (!isOpen) return;
@@ -23,7 +35,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
-                onClose();
+                onCloseRef.current();
                 return;
             }
             if (e.key !== 'Tab' || !container) return;
@@ -47,7 +59,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
             document.removeEventListener('keydown', handleKeyDown);
             triggerElementRef.current?.focus?.();
         };
-    }, [isOpen, onClose]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 

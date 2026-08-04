@@ -42,6 +42,17 @@ const OnboardingTour = ({ userProfile, onClose }) => {
     // so Tab could cycle a keyboard user straight through to the dimmed
     // background content behind the overlay, and nothing set initial focus
     // when the tour opened.
+    //
+    // 🟩 BUG FIX: App.jsx passes `onClose={dismissOnboarding}`, a function
+    // recreated on every App.jsx render (e.g. the 3-minute notification
+    // poll, a realtime update) — with `onClose` in this effect's dependency
+    // array, any of those unrelated re-renders reran the whole effect and
+    // stole focus back to the tour's first focusable element mid-read. A
+    // ref holds the latest onClose without needing it in the dependency
+    // array, so this now only runs once, on mount.
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+
     useEffect(() => {
         triggerElementRef.current = document.activeElement;
         const container = containerRef.current;
@@ -50,7 +61,7 @@ const OnboardingTour = ({ userProfile, onClose }) => {
 
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
-                onClose();
+                onCloseRef.current();
                 return;
             }
             if (e.key !== 'Tab' || !container) return;
@@ -74,7 +85,7 @@ const OnboardingTour = ({ userProfile, onClose }) => {
             document.removeEventListener('keydown', handleKeyDown);
             triggerElementRef.current?.focus?.();
         };
-    }, [onClose]);
+    }, []);
 
     return (
         <div className="fixed inset-0 bg-black/50 z-[60] flex justify-center items-center p-4" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
