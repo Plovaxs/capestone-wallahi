@@ -19,6 +19,8 @@
     "dotenv": "^17.2.3",
     "face-api.js": "^0.22.2",
     "i18next": "^26.3.6",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.561.0",
     "react": "^19.1.1",
