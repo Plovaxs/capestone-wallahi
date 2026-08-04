@@ -154,6 +154,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const lowLightStreakRef = useRef(0);
     const isLowLightRef = useRef(false);
     const [torchActive, setTorchActive] = useState(false);
+    // 🟩 Throttles the expensive full-frame lens-obstruction scan (see below)
+    // to once every 5 ticks instead of every scan tick.
+    const lensCheckTickRef = useRef(0);
+    const cachedLensResultRef = useRef({ ok: true, reason: null });
+    const LENS_CHECK_INTERVAL_TICKS = 5;
     // 🟩 SENSOR FUSION: fuses devicemotion's x/y/z accelerometer axes into a
     // rolling stability signal — mobile-only (desktop webcams have no
     // accelerometer, so this just never becomes `ready` there, which is the
@@ -507,7 +512,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     useEffect(() => {
         if (!userProfile || userProfile.role === 'supervisor' || typeof DeviceMotionEvent === 'undefined') return;
 
+        // 🟩 devicemotion can fire as often as ~60Hz on capable hardware —
+        // the tracker only needs enough samples to see whether the device is
+        // trembling naturally or dead-still, so readings are throttled to
+        // roughly 10/sec instead of processing (and array-pushing) every
+        // single event. Real battery/CPU savings on mobile with no loss of
+        // signal quality for what this is actually detecting.
+        let lastSampleAt = 0;
+        const MOTION_SAMPLE_INTERVAL_MS = 100;
         const handleMotion = (event) => {
+            const now = Date.now();
+            if (now - lastSampleAt < MOTION_SAMPLE_INTERVAL_MS) return;
+            lastSampleAt = now;
             const acc = event.accelerationIncludingGravity || event.acceleration;
             if (!acc) return;
             motionTrackerRef.current.addReading({ x: acc.x, y: acc.y, z: acc.z });
@@ -766,9 +782,20 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             // 🟩 LENS FOG/DIRT DETECTION: sampled across the *whole* frame
                             // (not just the face box) — a fogged or smudged lens blurs
                             // the background too, which is what distinguishes it from a
-                            // face that's merely soft-focused or backlit.
-                            const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
-                            lensObstruction = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                            // face that's merely soft-focused or backlit. A dirty lens is
+                            // a slow-changing physical condition (doesn't appear/clear
+                            // within one 1.2s tick), so the full-frame getImageData + scan
+                            // only actually runs every Nth tick instead of every single
+                            // one — the cached verdict is reused in between, cutting this
+                            // check's CPU cost by ~80% for the same responsiveness.
+                            lensCheckTickRef.current += 1;
+                            if (lensCheckTickRef.current % LENS_CHECK_INTERVAL_TICKS === 0) {
+                                const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                lensObstruction = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                cachedLensResultRef.current = lensObstruction;
+                            } else {
+                                lensObstruction = cachedLensResultRef.current;
+                            }
                         } catch (_err) {
                             // getImageData can throw on a tainted canvas in some browsers — skip the check, don't crash the loop.
                         }
