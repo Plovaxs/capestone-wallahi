@@ -4,6 +4,9 @@ import toast from 'react-hot-toast';
 import * as faceapi from 'face-api.js';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
+import { checkFraming, checkOcclusion } from '../vision/faceQuality';
+import { calculateFrameReadiness } from '../vision/scanReadiness';
+import ScanReadinessBar from '../components/ScanReadinessBar';
 
 function calculateEAR(eyeLandmarks) {
   if (!eyeLandmarks || eyeLandmarks.length < 6) return 1;
@@ -58,8 +61,9 @@ export default function LoginPage() {
   const lastAttemptRef = useRef(0);
   const ATTEMPT_COOLDOWN_MS = 4000;
 
-  const [modelsLoaded, setModelsLoaded] = useState(false); 
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [blinkCount, setBlinkCount] = useState(0);
+  const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -140,6 +144,14 @@ export default function LoginPage() {
           .withFaceDescriptor();
 
         if (detection) {
+          // 🟩 READINESS BAR: reuses the same framing/occlusion gates the
+          // Attendance scan loop uses (vision/faceQuality.js) purely as a
+          // 0-100 UX signal here -- doesn't block login, just shows the user
+          // how well-positioned they are while they wait to blink.
+          const framing = checkFraming(detection.detection.box, videoRef.current.videoWidth, videoRef.current.videoHeight);
+          const occlusion = checkOcclusion(detection.detection.score);
+          setScanReadiness(calculateFrameReadiness({ framing: framing.ok, occlusion: occlusion.ok }));
+
           const leftEAR = calculateEAR(detection.landmarks.getLeftEye());
           const rightEAR = calculateEAR(detection.landmarks.getRightEye());
           const avgEAR = (leftEAR + rightEAR) / 2;
@@ -175,6 +187,7 @@ export default function LoginPage() {
             }
           }
         } else {
+          setScanReadiness(0);
           setBiometricStatus(t('login.statusNoFace'));
         }
       } catch (err) {
@@ -425,6 +438,10 @@ export default function LoginPage() {
           <div aria-live="polite" className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
             {biometricStatus}
           </div>
+        </div>
+
+        <div className="w-full max-w-[220px] sm:max-w-xs mb-4">
+          <ScanReadinessBar readiness={scanReadiness} label={t('login.scanReadinessLabel')} />
         </div>
 
         <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">{t('login.zeroTouchGate')}</h3>

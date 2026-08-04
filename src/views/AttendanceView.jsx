@@ -18,6 +18,8 @@ import { classifyMatch } from '../vision/matchConfidence';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { recordMatchDistance, clearStalenessCounter } from '../vision/descriptorStaleness';
 import { checkEnrollmentQuality } from '../vision/enrollmentQuality';
+import { calculatePoseReadiness, calculateFrameReadiness } from '../vision/scanReadiness';
+import ScanReadinessBar from '../components/ScanReadinessBar';
 import { saveEnrollmentProgress, loadEnrollmentProgress, clearEnrollmentProgress } from '../vision/enrollmentProgress';
 import { isTorchSupported, setTorch } from '../utils/torchControl';
 import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
@@ -117,9 +119,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // already made for the liveness thresholds earlier this session.
     const POSE_YAW_THRESHOLD = 0.06;
     const POSE_PITCH_THRESHOLD = 0.06;
+    // Center uses its own, looser thresholds (isPoseAchieved below) since it's
+    // a "stay near dead-center" gate rather than a directional-turn gate --
+    // kept as named constants so the readiness bar (calculatePoseReadiness)
+    // can share the exact same numbers instead of drifting out of sync.
+    const CENTER_YAW_THRESHOLD = 0.08;
+    const CENTER_PITCH_THRESHOLD = 0.10;
     const isPoseAchieved = (pose, yaw, pitch) => {
         switch (pose) {
-            case 'center': return Math.abs(yaw) < 0.08 && Math.abs(pitch) < 0.10;
+            case 'center': return Math.abs(yaw) < CENTER_YAW_THRESHOLD && Math.abs(pitch) < CENTER_PITCH_THRESHOLD;
             case 'left': return yaw < -POSE_YAW_THRESHOLD;
             case 'right': return yaw > POSE_YAW_THRESHOLD;
             case 'up': return pitch < -POSE_PITCH_THRESHOLD;
@@ -162,6 +170,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
     const [isFaceVerified, setIsFaceVerified] = useState(false);
     const [hasBlinked, setHasBlinked] = useState(false); // 🟩 NEW: liveness gate — a matched face still can't clock in until the liveness challenge is confirmed
+    const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar during the live clock-in scan
     const [challengeType, setChallengeType] = useState(null); // 🟩 NEW: which liveness challenge is active this session (blink or head-turn)
     const [showConsentModal, setShowConsentModal] = useState(false); // 🟩 NEW: biometric-data consent gate before first enrollment
     // 🟩 LOW-LIGHT MITIGATION: don't just reject a dark scan — actively try to
@@ -856,6 +865,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const occlusion = checkOcclusion(liveDet.detection?.score);
                     const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !lensObstruction.ok ? lensObstruction : !occlusion.ok ? occlusion : null;
 
+                    // 🟩 READINESS BAR: same gates the pass/fail check above uses,
+                    // just turned into a 0-100 score for the visual bar instead of
+                    // a hard cutoff -- so the user sees themself approaching "green"
+                    // rather than a flat "scanning..." message the whole time.
+                    setScanReadiness(calculateFrameReadiness({
+                        singleFace: singleFace.ok,
+                        framing: framing.ok,
+                        brightness: brightness.ok,
+                        lensObstruction: lensObstruction.ok,
+                        occlusion: occlusion.ok
+                    }));
+
                     if (qualityIssue) {
                         setIsFaceVerified(false);
                         setHasBlinked(false);
@@ -956,6 +977,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setFaceOverlayBox(null);
                     setFaceMatchDistance(null);
                     setIsFaceVerified(false);
+                    setScanReadiness(0);
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
@@ -1011,6 +1033,23 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         return () => clearInterval(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enrollmentStepIndex, isCameraReady, isTabVisible]);
+
+    // 🟩 AUTO-CAPTURE: once the readiness bar hits green (pose achieved),
+    // capture automatically instead of waiting for a manual button press —
+    // matches the "like a YouTube buffer bar" behavior asked for. Waits
+    // briefly for the pose to hold steady first so a fleeting, jittery
+    // "achieved" frame right at the threshold doesn't grab a blurry
+    // mid-motion capture; if the pose slips back out of range before that,
+    // the timer is cleared and nothing fires. The manual "Capture This
+    // Angle" button is left in place as a fallback either way.
+    useEffect(() => {
+        if (enrollmentStepIndex < 0 || !enrollmentPoseReading.achieved || isEnrolling) return;
+        const timer = setTimeout(() => {
+            handleCaptureEnrollmentPose();
+        }, 600);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [enrollmentPoseReading.achieved, enrollmentStepIndex, isEnrolling]);
 
     // ==========================================
     // MATHEMATICAL MATRIX POSITION CALCULATOR
@@ -1618,6 +1657,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 </div>
                             </div>
 
+                            {/* 🟩 SCAN READINESS BAR: live clock-in scan only (enrollment wizard has its own, pose-specific bar above) */}
+                            {isCameraReady && hasStoredFace && !todayRecord && enrollmentStepIndex < 0 && (
+                                <div className="mt-3 w-full max-w-md">
+                                    <ScanReadinessBar readiness={scanReadiness} label={t('attendance.scanReadinessLabel')} />
+                                </div>
+                            )}
+
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
                                 <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling || enrollmentStepIndex >= 0} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-white dark:disabled:bg-slate-800 disabled:text-gray-500 dark:disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
                                 <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling || enrollmentStepIndex >= 0} className="px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
@@ -1637,6 +1683,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     <p className="text-sm font-bold text-gray-900 dark:text-white">
                                         {t(`attendance.enrollPoseInstruction_${ENROLLMENT_POSES[enrollmentStepIndex]}`)}
                                     </p>
+                                    <ScanReadinessBar
+                                        readiness={calculatePoseReadiness(
+                                            ENROLLMENT_POSES[enrollmentStepIndex],
+                                            enrollmentPoseReading.yaw,
+                                            enrollmentPoseReading.pitch,
+                                            ENROLLMENT_POSES[enrollmentStepIndex] === 'center' ? CENTER_YAW_THRESHOLD : POSE_YAW_THRESHOLD,
+                                            ENROLLMENT_POSES[enrollmentStepIndex] === 'center' ? CENTER_PITCH_THRESHOLD : POSE_PITCH_THRESHOLD
+                                        )}
+                                        label={t('attendance.enrollPoseReady')}
+                                    />
                                     <div className="flex items-center gap-3 text-[10px] font-mono text-gray-500 dark:text-slate-400">
                                         <span>yaw: {enrollmentPoseReading.yaw.toFixed(2)}</span>
                                         <span>pitch: {enrollmentPoseReading.pitch.toFixed(2)}</span>
