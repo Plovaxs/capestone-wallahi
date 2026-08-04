@@ -21,6 +21,21 @@ const closedEye = [
     { x: 2, y: 5 },
 ];
 
+// A "soft" partial blink (EAR ≈ 0.25) — not fully collapsed like closedEye,
+// but well within the real-world range some users' blinks land in. This is
+// exactly the shape of the regression this session found: it satisfied
+// LoginPage.jsx's own 0.26 threshold but not livenessDetector's old,
+// stricter 0.23 one, so the same person could log in but never pass the
+// Attendance liveness challenge.
+const softBlinkEye = [
+    { x: 0, y: 5 },
+    { x: 2, y: 4.25 },
+    { x: 4, y: 4.25 },
+    { x: 6, y: 5 },
+    { x: 4, y: 5.75 },
+    { x: 2, y: 5.75 },
+];
+
 const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50) => ({
     getLeftEye: () => eye,
     getRightEye: () => eye,
@@ -38,6 +53,10 @@ describe('calculateEAR', () => {
     it('returns 0 for a degenerate (zero-width) eye shape', () => {
         const degenerate = [{ x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }, { x: 1, y: 1 }];
         expect(calculateEAR(degenerate)).toBe(0);
+    });
+
+    it('a soft/partial blink lands around 0.25 EAR', () => {
+        expect(calculateEAR(softBlinkEye)).toBeCloseTo(0.25, 2);
     });
 });
 
@@ -98,6 +117,13 @@ describe('RandomLivenessChallenge', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
+    });
+
+    it('confirms a blink challenge from a soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(softBlinkEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 

@@ -60,8 +60,17 @@ export function calculatePitchRatio(landmarks) {
     return (noseTip.y - (browY + chinY) / 2) / faceHeight;
 }
 
-const EAR_CLOSED_THRESHOLD = 0.23;
-const EAR_OPEN_THRESHOLD = 0.24;
+// 🟩 BUG FIX: these were stricter than LoginPage.jsx's own (separate,
+// hand-rolled) blink check, which uses a single 0.26 crossing point and has
+// been reliably working there. A user whose blink only dipped to ~0.24-0.25
+// (a real, common range depending on eye shape/camera angle/lighting) could
+// log in fine via LoginPage but never satisfy the stricter 0.23 threshold
+// here on the Attendance liveness challenge — "face detected, blinks
+// registering on Login, but Attendance's blink challenge never confirms."
+// Aligned the closed threshold with LoginPage's proven 0.26, with a wider
+// hysteresis gap to the open threshold so noise can't double-count a blink.
+const EAR_CLOSED_THRESHOLD = 0.26;
+const EAR_OPEN_THRESHOLD = 0.28;
 const HEAD_TURN_THRESHOLD = 0.07;
 const DEFAULT_CHALLENGE_TIMEOUT_MS = 15000;
 
