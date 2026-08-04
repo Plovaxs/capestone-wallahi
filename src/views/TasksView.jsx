@@ -98,6 +98,12 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     // --- BULK APPROVAL SELECTION (supervisor only, Completed tasks) ---
     const [selectedTaskIds, setSelectedTaskIds] = useState(new Set());
     const [isBulkApproving, setIsBulkApproving] = useState(false);
+    // 🟩 DOUBLE-SUBMIT GUARDS: unlike Contributions/Helpdesk/Leave's create
+    // flows, task creation and single-task approval had no in-flight
+    // tracking — a double-click fired two inserts (duplicate task rows) or
+    // two redundant/racing updates.
+    const [isCreatingTask, setIsCreatingTask] = useState(false);
+    const [approvingTaskIds, setApprovingTaskIds] = useState(new Set());
 
     // 🟩 FIX: This guard used to sit ABOVE all the useState calls, which meant
     // React ran 0 hooks while userProfile was still loading and then suddenly
@@ -163,8 +169,12 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     );
 
     const processedTasks = tasksWithOptimisticUpdates.filter(t => {
-        const matchesSearch = t.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                              t.description.toLowerCase().includes(searchTerm.toLowerCase());
+        // 🟩 NULL-SAFETY: description is a nullable column — a task with no
+        // description previously crashed this filter (and therefore the
+        // whole Kanban/timeline view, for every viewer) the instant it
+        // rendered, since `.toLowerCase()` on `undefined`/`null` throws.
+        const matchesSearch = (t.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              (t.description || '').toLowerCase().includes(searchTerm.toLowerCase());
         
         // Security logic: Enforces scope boundaries so interns can never look into others' card files
         const effectiveTargetEmp = userProfile.role === 'supervisor' ? filterEmployee : userProfile.id;
@@ -221,6 +231,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
      * TELEMETRY: Loops through every selected assignee array slot to dispatch matching workspace notice cards.
      */
     const handleCreateTask = async () => {
+        if (isCreatingTask) return;
         // Zod is the real validation engine here (schemaRegistry.taskAssignment);
         // the toast still shows the app's translated generic message so this
         // doesn't regress the i18n coverage with hardcoded English text.
@@ -228,24 +239,29 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             toast.error(t('tasks.fillRequiredFields'));
             return;
         }
-        const { error } = await supabase.from('tasks').insert({
-            title: newTask.title,
-            description: sanitizeUserInput(newTask.description, { maxLength: 2000 }),
-            assigned_to: newTask.assigned_to, 
-            due_date: newTask.due_date,
-            priority: newTask.priority,
-            status: 'To Do', 
-            is_extended: false
-        });
-        if (error) showUserError('Failed to create task', error);
-        else {
-            // Notifying assignees is now handled server-side by the
-            // notify_task_assigned trigger — the client can no longer
-            // insert into notifications directly (RLS).
-            toast.success(t('tasks.taskAssignedSuccess'));
-            setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal' });
-            setIsModalOpen(false);
-            fetchTasks(); 
+        setIsCreatingTask(true);
+        try {
+            const { error } = await supabase.from('tasks').insert({
+                title: newTask.title,
+                description: sanitizeUserInput(newTask.description, { maxLength: 2000 }),
+                assigned_to: newTask.assigned_to,
+                due_date: newTask.due_date,
+                priority: newTask.priority,
+                status: 'To Do',
+                is_extended: false
+            });
+            if (error) showUserError('Failed to create task', error);
+            else {
+                // Notifying assignees is now handled server-side by the
+                // notify_task_assigned trigger — the client can no longer
+                // insert into notifications directly (RLS).
+                toast.success(t('tasks.taskAssignedSuccess'));
+                setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal' });
+                setIsModalOpen(false);
+                fetchTasks();
+            }
+        } finally {
+            setIsCreatingTask(false);
         }
     };
 
@@ -255,18 +271,28 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
      * TELEMETRY: Transmits confirmation logs straight to intern notification feeds.
      */
     const handleApproveTask = async (task) => {
-        const { error } = await supabase
-            .from('tasks')
-            .update({ status: 'Approved' })
-            .eq('id', task.id);
+        if (approvingTaskIds.has(task.id)) return;
+        setApprovingTaskIds((prev) => new Set(prev).add(task.id));
+        try {
+            const { error } = await supabase
+                .from('tasks')
+                .update({ status: 'Approved' })
+                .eq('id', task.id);
 
-        if (error) {
-            showUserError('Failed to update task status', error);
-        } else {
-            // Notifying assignees is now handled server-side by the
-            // notify_task_status_change trigger — the client can no longer
-            // insert into notifications directly (RLS).
-            fetchTasks();
+            if (error) {
+                showUserError('Failed to update task status', error);
+            } else {
+                // Notifying assignees is now handled server-side by the
+                // notify_task_status_change trigger — the client can no longer
+                // insert into notifications directly (RLS).
+                fetchTasks();
+            }
+        } finally {
+            setApprovingTaskIds((prev) => {
+                const next = new Set(prev);
+                next.delete(task.id);
+                return next;
+            });
         }
     };
 
@@ -476,7 +502,11 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     };
 
     const handleViewSubmission = async (path) => {
-        const { data } = await supabase.storage.from('task_submission').createSignedUrl(path, 60);
+        const { data, error } = await supabase.storage.from('task_submission').createSignedUrl(path, 60);
+        if (error) {
+            showUserError('Failed to open submitted file', error);
+            return;
+        }
         if (data) window.open(data.signedUrl, '_blank');
     };
 
@@ -579,7 +609,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                         {/* Master Supervisor Action Controls Matrix */}
                         {userProfile.role === 'supervisor' && task.status === 'Completed' && (
                             <>
-                                <button onClick={() => handleApproveTask(task)} className="text-green-600 hover:text-green-800 font-bold bg-green-50 px-2 py-1 rounded dark:bg-green-900/20 dark:text-green-400">{t('tasks.approve')}</button>
+                                <button onClick={() => handleApproveTask(task)} disabled={approvingTaskIds.has(task.id)} className="text-green-600 hover:text-green-800 font-bold bg-green-50 px-2 py-1 rounded dark:bg-green-900/20 dark:text-green-400 disabled:opacity-50 disabled:cursor-not-allowed">{t('tasks.approve')}</button>
                                 <button onClick={() => {
                                     setExtensionTask(task);
                                     setExtensionDate(tomorrowStr);
@@ -813,7 +843,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                             ))}
                         </div>
                     </div>
-                    <button type="button" onClick={handleCreateTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800">{t('tasks.confirmAssignment')}</button>
+                    <button type="button" onClick={handleCreateTask} disabled={isCreatingTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed">{t('tasks.confirmAssignment')}</button>
                 </div>
             </Modal>
 

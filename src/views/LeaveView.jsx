@@ -40,6 +40,13 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
     // --- BULK APPROVAL SELECTION (supervisor only, Pending requests) ---
     const [selectedLeaveIds, setSelectedLeaveIds] = useState(new Set());
     const [isBulkProcessingLeave, setIsBulkProcessingLeave] = useState(false);
+    // 🟩 DOUBLE-SUBMIT GUARD: handleApproval used to have no in-flight
+    // tracking at all — a supervisor double-clicking "Approve" (or clicking
+    // again before the confirm dialog's promise settled) could fire two
+    // concurrent approvals for the same request, each reading the same
+    // pre-deduction quota balance and writing back independently, silently
+    // deducting the leave days TWICE for one approved request.
+    const [processingRequestIds, setProcessingRequestIds] = useState(new Set());
 
     // --- SORTABLE TABLE COLUMNS (request log) ---
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
@@ -218,34 +225,47 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      */
     const handleAdjustBalances = async (e) => {
         e.preventDefault();
+        // 🟩 Defense-in-depth: the form itself is only rendered for
+        // supervisors, but the handler had no guard of its own — mirrors
+        // the same fix applied to the other supervisor-only actions.
+        if (userProfile.role !== 'supervisor') return;
         if (!selectedTargetUser) return toast.error(t('leave.selectStaffFirst'));
 
         setIsAdjusting(true);
-        const targetProfile = allUsers.find(u => u.id === selectedTargetUser);
-        
-        if (targetProfile) {
-            const currentVacation = targetProfile.vacation_days || 0;
-            const currentSick = targetProfile.sick_days || 0;
+        try {
+            const targetProfile = allUsers.find(u => u.id === selectedTargetUser);
 
-            const newVacation = Math.max(0, currentVacation + parseInt(adjustVacationAmount));
-            const newSick = Math.max(0, currentSick + parseInt(adjustSickAmount));
+            if (targetProfile) {
+                const currentVacation = targetProfile.vacation_days || 0;
+                const currentSick = targetProfile.sick_days || 0;
 
-            const { error } = await supabase
-                .from('profiles')
-                .update({ 
-                    vacation_days: newVacation,
-                    sick_days: newSick
-                })
-                .eq('id', selectedTargetUser);
+                // 🟩 NaN GUARD: parseInt('') is NaN, and NaN + N is NaN — an
+                // emptied input field previously silently corrupted the
+                // balance to NaN in the database. `|| 0` treats a
+                // non-numeric/empty adjustment as "no change" instead.
+                const vacationDelta = parseInt(adjustVacationAmount, 10) || 0;
+                const sickDelta = parseInt(adjustSickAmount, 10) || 0;
+                const newVacation = Math.max(0, currentVacation + vacationDelta);
+                const newSick = Math.max(0, currentSick + sickDelta);
 
-            if (error) {
-                showUserError('Failed to update leave allocation', error);
-            } else {
-                toast.success(t('leave.allocationSuccess', { name: targetProfile.name }));
-                window.location.reload(); // Performs a clean context sync to flush visual tracking states
+                const { error } = await supabase
+                    .from('profiles')
+                    .update({
+                        vacation_days: newVacation,
+                        sick_days: newSick
+                    })
+                    .eq('id', selectedTargetUser);
+
+                if (error) {
+                    showUserError('Failed to update leave allocation', error);
+                } else {
+                    toast.success(t('leave.allocationSuccess', { name: targetProfile.name }));
+                    window.location.reload(); // Performs a clean context sync to flush visual tracking states
+                }
             }
+        } finally {
+            setIsAdjusting(false);
         }
-        setIsAdjusting(false);
     };
 
     /**
@@ -258,6 +278,20 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
      * 3. Deducts the requested days using strict constraints to protect against allocation overflows.
      */
     const handleApproval = async (id, status, request) => {
+        if (processingRequestIds.has(id)) return;
+        setProcessingRequestIds((prev) => new Set(prev).add(id));
+        try {
+            await handleApprovalInner(id, status, request);
+        } finally {
+            setProcessingRequestIds((prev) => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+        }
+    };
+
+    const handleApprovalInner = async (id, status, request) => {
         const isQuotaType = LeaveQuotaPolicy.isQuotaType(request.type);
         let daysDiff = 0;
         let leaveType = null;
@@ -775,8 +809,8 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                                         <td className="p-4 text-right">
                                             {req.status === 'Pending' ? (
                                                 <div className="inline-flex gap-2">
-                                                    <button type="button" onClick={() => handleApproval(req.id, 'Approved', req)} className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow-sm transition-all">{t('leave.approve')}</button>
-                                                    <button type="button" onClick={() => handleApproval(req.id, 'Denied', req)} className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow-sm transition-all">{t('leave.deny')}</button>
+                                                    <button type="button" onClick={() => handleApproval(req.id, 'Approved', req)} disabled={processingRequestIds.has(req.id)} className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed">{t('leave.approve')}</button>
+                                                    <button type="button" onClick={() => handleApproval(req.id, 'Denied', req)} disabled={processingRequestIds.has(req.id)} className="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed">{t('leave.deny')}</button>
                                                 </div>
                                             ) : (
                                                 <span className="text-gray-400 text-xs italic font-medium pr-2">{t('leave.evaluated')}</span>

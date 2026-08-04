@@ -48,6 +48,7 @@ const SettingsView = ({
     const [editingStaffId, setEditingStaffId] = useState(null);
     const [staffEditDraft, setStaffEditDraft] = useState({ department: '', contract_start_date: '', contract_end_date: '' });
     const [savingStaffId, setSavingStaffId] = useState(null);
+    const [isSavingPassword, setIsSavingPassword] = useState(false);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
 
     /**
@@ -122,6 +123,7 @@ const SettingsView = ({
      * BOUNDARY CONDITIONS: Enforces minimum character parameters matching strict Supabase schemas.
      */
     const handlePasswordChange = async () => {
+        if (isSavingPassword) return;
         if (password !== confirmPassword) {
             toast.error(t('settings.passwordMismatch'));
             return;
@@ -138,15 +140,25 @@ const SettingsView = ({
             return;
         }
 
-        // Requests an authenticated account update mutation pipeline from Supabase Auth
-        const { error } = await supabase.auth.updateUser({ password: password });
+        setIsSavingPassword(true);
+        try {
+            // Requests an authenticated account update mutation pipeline from Supabase Auth
+            const { error } = await supabase.auth.updateUser({ password: password });
 
-        if (error) {
-            showUserError('Failed to update password', error);
-        } else {
-            toast.success(t('settings.passwordChanged'));
-            setPassword('');
-            setConfirmPassword('');
+            if (error) {
+                showUserError('Failed to update password', error);
+            } else {
+                toast.success(t('settings.passwordChanged'));
+                setPassword('');
+                setConfirmPassword('');
+            }
+        } catch (err) {
+            // supabase-js throws (rather than returning {error}) on genuine
+            // network failures — without this, that case previously failed
+            // completely silently with no feedback at all.
+            showUserError('Failed to update password', err);
+        } finally {
+            setIsSavingPassword(false);
         }
     };
 
@@ -159,22 +171,30 @@ const SettingsView = ({
      */
     const handleSaveStaffAssignment = async (targetId) => {
         setSavingStaffId(targetId);
-        const { error } = await supabase
-            .from('profiles')
-            .update({
-                department: staffEditDraft.department || null,
-                contract_start_date: staffEditDraft.contract_start_date || null,
-                contract_end_date: staffEditDraft.contract_end_date || null,
-            })
-            .eq('id', targetId);
+        try {
+            const { error } = await supabase
+                .from('profiles')
+                .update({
+                    department: staffEditDraft.department || null,
+                    contract_start_date: staffEditDraft.contract_start_date || null,
+                    contract_end_date: staffEditDraft.contract_end_date || null,
+                })
+                .eq('id', targetId);
 
-        if (error) {
-            showUserError('Failed to update assignment', error);
-        } else {
-            setEditingStaffId(null);
-            fetchAllUsers && fetchAllUsers();
+            if (error) {
+                showUserError('Failed to update assignment', error);
+            } else {
+                setEditingStaffId(null);
+                fetchAllUsers && fetchAllUsers();
+            }
+        } catch (err) {
+            // A thrown (not just {error}) network failure previously left
+            // savingStaffId set forever — the Save button stuck disabled
+            // with no explanation until a full page reload.
+            showUserError('Failed to update assignment', err);
+        } finally {
+            setSavingStaffId(null);
         }
-        setSavingStaffId(null);
     };
 
     const handleLanguageChange = (lang) => {
@@ -285,13 +305,13 @@ const SettingsView = ({
                             />
                         </div>
 
-                        <button 
+                        <button
                             type="button"
                             onClick={handlePasswordChange}
-                            disabled={!password || !confirmPassword}
+                            disabled={!password || !confirmPassword || isSavingPassword}
                             className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all mt-4 text-xs shadow-sm shadow-blue-500/10"
                         >
-                            {t('settings.updatePassword')}
+                            {isSavingPassword ? t('settings.saving') : t('settings.updatePassword')}
                         </button>
                     </div>
                 </div>

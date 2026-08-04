@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -29,6 +29,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     // --- HISTORICAL APPRAISAL STORAGE CONTROLS ---
     const [evaluations, setEvaluations] = useState([]); // Array containing loaded historic review records
     const [isLoadingHistory, setIsLoadingHistory] = useState(false); // Network fallback tracking flag for data lists
+    const latestFetchIdRef = useRef(0); // Discards a fetchEvaluations response if a newer request has since started
     const [editingEvalId, setEditingEvalId] = useState(null); // Populated with a row ID if amending an existing review
     const [selectedHistoricalEval, setSelectedHistoricalEval] = useState(null); // Controls read-only overlay transcripts
 
@@ -123,19 +124,29 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
      * SECURITY: Enforces database row filters so interns can only look at their own records.
      */
     const fetchEvaluations = async () => {
+        // 🟩 RACE-CONDITION GUARD: this effect has no cancellation guard on
+        // its own, and userProfile can get a new object identity from a
+        // parent re-render while a prior fetch is still in flight — if that
+        // older request resolves *after* a newer one, it would silently
+        // overwrite fresher `evaluations` state with stale data. Each call
+        // stamps its own request id and only commits its result if it's
+        // still the most recent request by the time the response lands.
+        const requestId = ++latestFetchIdRef.current;
         setIsLoadingHistory(true);
         // 🟩 ROBUST FIX: Pulls data safely to avoid Postgres RLS/Column crashes
         const { data, error } = await supabase.from('performance_evaluations').select('*').order('created_at', { ascending: false });
-        
+
+        if (requestId !== latestFetchIdRef.current) return; // a newer fetch has since started — discard this stale result
+
         if (error) {
             showUserError('Failed to load performance reviews', error);
         }
-        
+
         let filtered = data || [];
         if (userProfile.role !== 'supervisor') {
             filtered = filtered.filter(e => e.employee_id === userProfile.id);
         }
-        
+
         setEvaluations(filtered);
         setIsLoadingHistory(false);
     };

@@ -536,7 +536,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                     {reviews && reviews.length > 0 ? (
                         <div className="space-y-4">
                             {reviews.slice(0, 3).map(review => {
-                                const textToDisplay = review.comments || review.review_text || t('dashboard.noObservations');
+                                // Defensive fallback to '' — safe today since the translation
+                                // helper always returns a string, but that's an assumption this
+                                // line shouldn't silently depend on to avoid crashing.
+                                const textToDisplay = review.comments || review.review_text || t('dashboard.noObservations') || '';
                                 const truncatedText = textToDisplay.length > 100 ? textToDisplay.substring(0, 100) + '...' : textToDisplay;
 
                                 return (

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
 import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosave';
+import { sanitizeUserInput } from '../utils/sanitize';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
@@ -24,6 +25,7 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
     const [statusFilter, setStatusFilter] = useState('Open');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submittingReplyId, setSubmittingReplyId] = useState(null);
+    const [changingStatusId, setChangingStatusId] = useState(null);
 
     // --- DRAFT AUTOSAVE (ticket composer only — replies are short-lived and not worth persisting) ---
     const draftKey = userProfile?.id ? `draft:helpdesk-ticket:${userProfile.id}` : null;
@@ -71,51 +73,74 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
     const handleCreateTicket = async () => {
         if (!newTitle.trim() || !newContent.trim()) return;
         setIsSubmitting(true);
-        const { error } = await supabase.from('helpdesk_tickets').insert({
-            employee_id: userProfile.id,
-            title: newTitle.trim(),
-            contribution: newContent.trim(),
-            category: ticketCategory,
-            problem_types: selectedProblemTypes,
-        });
-        if (error) {
-            showUserError('Failed to file ticket', error);
-        } else {
-            setNewTitle('');
-            setNewContent('');
-            setSelectedProblemTypes([]);
-            if (draftKey) clearDraft(draftKey);
-            fetchHelpdeskTickets();
+        try {
+            const { error } = await supabase.from('helpdesk_tickets').insert({
+                employee_id: userProfile.id,
+                // 🟩 Consistency fix: every other free-text field in the app
+                // (Contributions, Leave, Tasks) runs through sanitizeUserInput
+                // (control-char stripping + a length clamp) before insert;
+                // this was the one place still just doing a bare `.trim()`.
+                title: sanitizeUserInput(newTitle, { maxLength: 150 }),
+                contribution: sanitizeUserInput(newContent, { maxLength: 2000 }),
+                category: ticketCategory,
+                problem_types: selectedProblemTypes,
+            });
+            if (error) {
+                showUserError('Failed to file ticket', error);
+            } else {
+                setNewTitle('');
+                setNewContent('');
+                setSelectedProblemTypes([]);
+                if (draftKey) clearDraft(draftKey);
+                fetchHelpdeskTickets();
+            }
+        } finally {
+            setIsSubmitting(false);
         }
-        setIsSubmitting(false);
     };
 
     const handleChangeStatus = async (ticketId, newStatus) => {
-        const { error } = await supabase
-            .from('helpdesk_tickets')
-            .update({ ticket_status: newStatus })
-            .eq('id', ticketId);
-        if (error) {
-            showUserError('Failed to update ticket status', error);
-        } else {
-            fetchHelpdeskTickets();
+        // 🟩 Defense-in-depth: the "mark status" buttons are only rendered
+        // for supervisors in the JSX, but this handler itself had no guard —
+        // any employee could call it directly (devtools/console) with an
+        // arbitrary ticketId and close/reopen anyone's ticket. Also adds the
+        // in-flight guard + try/finally every other mutation in this file
+        // already had, so a thrown network error can't leave the status
+        // button stuck disabled forever.
+        if (userProfile.role !== 'supervisor' || changingStatusId === ticketId) return;
+        setChangingStatusId(ticketId);
+        try {
+            const { error } = await supabase
+                .from('helpdesk_tickets')
+                .update({ ticket_status: newStatus })
+                .eq('id', ticketId);
+            if (error) {
+                showUserError('Failed to update ticket status', error);
+            } else {
+                fetchHelpdeskTickets();
+            }
+        } finally {
+            setChangingStatusId(null);
         }
     };
 
     const handleSendReply = async (ticketId) => {
-        const message = (replyInputs[ticketId] || '').trim();
+        const message = sanitizeUserInput(replyInputs[ticketId], { maxLength: 1000 });
         if (!message) return;
         setSubmittingReplyId(ticketId);
-        const { error } = await supabase
-            .from('helpdesk_replies')
-            .insert({ ticket_id: ticketId, author_id: userProfile.id, message });
-        if (error) {
-            showUserError('Failed to send reply', error);
-        } else {
-            setReplyInputs(prev => ({ ...prev, [ticketId]: '' }));
-            fetchHelpdeskTickets();
+        try {
+            const { error } = await supabase
+                .from('helpdesk_replies')
+                .insert({ ticket_id: ticketId, author_id: userProfile.id, message });
+            if (error) {
+                showUserError('Failed to send reply', error);
+            } else {
+                setReplyInputs(prev => ({ ...prev, [ticketId]: '' }));
+                fetchHelpdeskTickets();
+            }
+        } finally {
+            setSubmittingReplyId(null);
         }
-        setSubmittingReplyId(null);
     };
 
     return (
@@ -270,7 +295,7 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                                         <button
                                             key={s}
                                             type="button"
-                                            disabled={status === s}
+                                            disabled={status === s || changingStatusId === ticket.id}
                                             onClick={() => handleChangeStatus(ticket.id, s)}
                                             className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors disabled:opacity-40 disabled:cursor-default ${
                                                 status === s
@@ -285,9 +310,9 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                             )}
 
                             {/* Replies */}
-                            {ticket.replies.length > 0 && (
+                            {(ticket.replies || []).length > 0 && (
                                 <div className="space-y-2 mb-3 pl-3 border-l-2 border-gray-100 dark:border-gray-700">
-                                    {ticket.replies.map(r => (
+                                    {(ticket.replies || []).map(r => (
                                         <div key={r.id} className="text-xs">
                                             <span className="font-bold text-gray-700 dark:text-gray-200">{r.author_name}</span>
                                             <span className="text-gray-500 dark:text-gray-400"> — {r.message}</span>

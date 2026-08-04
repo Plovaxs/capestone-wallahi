@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import toast from 'react-hot-toast';
 import { CommandStack } from './CommandStack';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * Executes a { do, undo, label } command through a per-component
@@ -20,8 +21,16 @@ export function useUndoableAction() {
                 <button
                     type="button"
                     onClick={async () => {
-                        await stackRef.current.undo();
-                        toast.dismiss(activeToast.id);
+                        try {
+                            await stackRef.current.undo();
+                            toast.dismiss(activeToast.id);
+                        } catch (err) {
+                            // Previously an unhandled rejection: if the reversing
+                            // call failed (e.g. network drop), the toast just
+                            // dismissed as if undo had succeeded, with the
+                            // original mutation silently still in effect.
+                            showUserError('Failed to undo', err);
+                        }
                     }}
                     className="font-bold text-blue-600 dark:text-blue-400 hover:underline"
                 >

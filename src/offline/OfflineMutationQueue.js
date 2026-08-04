@@ -13,6 +13,18 @@ const QUEUE_KEY = 'offline_mutation_queue';
 export class OfflineMutationQueue {
     constructor() {
         this.handlers = new Map();
+        // 🟩 RACE-CONDITION FIX: enqueue() and flush() both do an unguarded
+        // read-modify-write against the same IndexedDB-backed queue. Two
+        // overlapping calls (e.g. the 'online' event firing twice in quick
+        // succession, or enqueue() racing a flush() already in progress)
+        // previously each read the same snapshot before either wrote back —
+        // whichever write landed last silently discarded the other's
+        // change, which could resurrect an already-flushed mutation (e.g. a
+        // queued leave request replayed/inserted twice) or drop a newly
+        // queued one entirely. `_chain` serializes every read-modify-write
+        // so they can never overlap, regardless of how many times these are
+        // called concurrently.
+        this._chain = Promise.resolve();
         if (typeof window !== 'undefined') {
             window.addEventListener('online', () => this.flush());
         }
@@ -22,11 +34,19 @@ export class OfflineMutationQueue {
         this.handlers.set(type, handler);
     }
 
-    async enqueue(type, payload) {
-        const queue = (await idbGet(QUEUE_KEY)) || [];
-        queue.push({ type, payload, queuedAt: Date.now() });
-        await idbSet(QUEUE_KEY, queue);
-        this._registerBackgroundSync();
+    _serialize(fn) {
+        const run = this._chain.then(fn, fn); // run fn regardless of whether the previous step rejected
+        this._chain = run.catch(() => {}); // keep the chain alive even if fn itself throws
+        return run;
+    }
+
+    enqueue(type, payload) {
+        return this._serialize(async () => {
+            const queue = (await idbGet(QUEUE_KEY)) || [];
+            queue.push({ type, payload, queuedAt: Date.now() });
+            await idbSet(QUEUE_KEY, queue);
+            this._registerBackgroundSync();
+        });
     }
 
     async _registerBackgroundSync() {
@@ -38,21 +58,23 @@ export class OfflineMutationQueue {
         }
     }
 
-    async flush() {
-        if (!navigator.onLine) return;
-        const queue = (await idbGet(QUEUE_KEY)) || [];
-        if (queue.length === 0) return;
+    flush() {
+        return this._serialize(async () => {
+            if (!navigator.onLine) return;
+            const queue = (await idbGet(QUEUE_KEY)) || [];
+            if (queue.length === 0) return;
 
-        const remaining = [];
-        for (const item of queue) {
-            const handler = this.handlers.get(item.type);
-            try {
-                if (handler) await handler(item.payload);
-            } catch {
-                remaining.push(item); // couldn't apply yet — keep it queued and retry next flush
+            const remaining = [];
+            for (const item of queue) {
+                const handler = this.handlers.get(item.type);
+                try {
+                    if (handler) await handler(item.payload);
+                } catch {
+                    remaining.push(item); // couldn't apply yet — keep it queued and retry next flush
+                }
             }
-        }
-        await idbSet(QUEUE_KEY, remaining);
+            await idbSet(QUEUE_KEY, remaining);
+        });
     }
 
     async getQueueLength() {
