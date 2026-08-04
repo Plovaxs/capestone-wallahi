@@ -17,6 +17,7 @@ import { notificationsRepository } from './data/repositories/notificationsReposi
 import { notificationDispatcher } from './patterns/notificationChannels/NotificationDispatcher';
 import { subscribeToTable } from './realtime/subscribeToTable';
 import { usePresence } from './realtime/usePresence';
+import { usePageVisibility } from './hooks/usePageVisibility';
 
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -112,6 +113,8 @@ export default function App() {
 
   const toggleDarkMode = () => setIsDarkMode(!isDarkMode);
   const onlineUserIds = usePresence(userProfile);
+  const isTabVisible = usePageVisibility();
+  const hasHandledInitialVisibilityRef = useRef(false);
 
   const fetchProfile = async (userId) => {
     if (!userId) return;
@@ -401,14 +404,24 @@ export default function App() {
   // per hour, per open tab, for something realtime already handles).
   // Deliberately scoped to userProfile?.id (a stable primitive), not the
   // whole userProfile object, so this doesn't restart on unrelated fetches.
+  // 🟩 PAGE VISIBILITY: no reason to keep polling every few minutes while
+  // the tab is backgrounded/minimized and nobody's looking at it — that's
+  // pure waste. Pauses the interval entirely while hidden, and does one
+  // immediate refresh (not just resuming the timer) the moment the tab
+  // *returns* to visible, so coming back to the tab shows current data
+  // right away instead of waiting up to 3 more minutes. Skips that extra
+  // fetch on the very first mount — loadAllAppData already covers the
+  // initial load.
   useEffect(() => {
-    if (!userProfile?.id) return;
+    if (!userProfile?.id || !isTabVisible) return;
+    if (hasHandledInitialVisibilityRef.current) fetchNotifications(userProfile);
+    hasHandledInitialVisibilityRef.current = true;
     const intervalId = setInterval(() => {
       fetchNotifications(userProfile);
     }, 180000);
     return () => clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile?.id]);
+  }, [userProfile?.id, isTabVisible]);
 
   // Scrolls the content pane back to the top on every view switch — without
   // this, navigating away from a page scrolled halfway down (e.g. the task

@@ -24,6 +24,7 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
+import { usePageVisibility } from '../hooks/usePageVisibility';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
 
@@ -73,6 +74,13 @@ const YOLO_MODEL_IDS = {
 
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
+    // 🟩 PAGE VISIBILITY: the scan loops below run every 500-1200ms doing
+    // webcam capture + local face-detection inference — real CPU/battery
+    // cost, and the camera stays actively engaged, even though none of it
+    // calls the API directly. None of that serves any purpose while the
+    // tab is backgrounded and nobody can see or click anything, so both
+    // loops pause while hidden and pick back up the moment it's visible.
+    const isTabVisible = usePageVisibility();
     const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
     const YOLO_LOCAL_PATH = import.meta.env.VITE_YOLO_LOCAL_PATH || '/models/yolov8n-face';
     const FACE_MATCH_THRESHOLD = 0.5;
@@ -688,7 +696,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
     // ==========================================
     useEffect(() => {
-        if (!isCameraReady || faceStatus !== 'scanning' || todayRecord) return;
+        if (!isCameraReady || faceStatus !== 'scanning' || todayRecord || !isTabVisible) return;
 
         // Fresh, randomly-typed liveness challenge every time a scan session
         // (re)starts — a blink/head-turn observed in a previous, already-
@@ -885,7 +893,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // steadily. userProfile.work_mode is read fresh via closure each tick;
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo]);
+    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible]);
 
     // ==========================================
     // MULTI-ANGLE ENROLLMENT WIZARD SCAN LOOP
@@ -895,7 +903,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // "Capture" button — no matching, no liveness challenge, no clock-in.
     // ==========================================
     useEffect(() => {
-        if (enrollmentStepIndex < 0 || !isCameraReady) return;
+        if (enrollmentStepIndex < 0 || !isCameraReady || !isTabVisible) return;
 
         const currentPose = ENROLLMENT_POSES[enrollmentStepIndex];
         const timer = setInterval(async () => {
@@ -921,7 +929,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         return () => clearInterval(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [enrollmentStepIndex, isCameraReady]);
+    }, [enrollmentStepIndex, isCameraReady, isTabVisible]);
 
     // ==========================================
     // MATHEMATICAL MATRIX POSITION CALCULATOR
