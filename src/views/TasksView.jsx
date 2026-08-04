@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -105,6 +105,111 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const [isCreatingTask, setIsCreatingTask] = useState(false);
     const [approvingTaskIds, setApprovingTaskIds] = useState(new Set());
 
+    /**
+     * UTILITY FUNCTION: getDeadlineStatus
+     * PURPOSE: Performs system real-time date evaluation vectors to trigger warning alerts.
+     */
+    const getDeadlineStatus = (dueDate, status) => TaskDeadlinePolicy.getStatus(dueDate, status);
+
+    // =========================================================================
+    // 🔍 ENGINE LOGIC DATA PRE-PROCESSING & FILTER CHANNELS
+    // =========================================================================
+    // 🟩 PERFORMANCE: this whole pipeline (map -> filter -> map) used to be
+    // plain consts recomputed on every render — including on every
+    // keystroke in the search box, since the state that drives it lives in
+    // this same component. Wrapping each stage in useMemo means typing a
+    // character only reruns the stages that actually depend on searchTerm,
+    // not the whole chain plus every child render.
+    //
+    // These live ABOVE the `if (!userProfile) return` guard below, together
+    // with every other hook — see that guard's own comment for why hooks
+    // can never sit after a conditional return in this component.
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of (allUsers || [])) map.set(String(u.id), u);
+        return map;
+    }, [allUsers]);
+
+    const tasksWithOptimisticUpdates = useMemo(() => (tasks || []).map(task =>
+        optimisticStatusOverrides[task.id] ? { ...task, status: optimisticStatusOverrides[task.id] } : task
+    ), [tasks, optimisticStatusOverrides]);
+
+    const processedTasks = useMemo(() => tasksWithOptimisticUpdates.filter(t => {
+        // 🟩 NULL-SAFETY: description is a nullable column — a task with no
+        // description previously crashed this filter (and therefore the
+        // whole Kanban/timeline view, for every viewer) the instant it
+        // rendered, since `.toLowerCase()` on `undefined`/`null` throws.
+        const matchesSearch = (t.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              (t.description || '').toLowerCase().includes(searchTerm.toLowerCase());
+
+        // Security logic: Enforces scope boundaries so interns can never look into others' card files
+        const effectiveTargetEmp = userProfile?.role === 'supervisor' ? filterEmployee : userProfile?.id;
+        const matchesEmployee = effectiveTargetEmp === 'all' || (t.assigned_to || []).includes(effectiveTargetEmp);
+        const matchesPriority = filterPriority === 'all' || t.priority === filterPriority;
+
+        return matchesSearch && matchesEmployee && matchesPriority;
+    }), [tasksWithOptimisticUpdates, searchTerm, filterEmployee, filterPriority, userProfile?.role, userProfile?.id]);
+
+    // 🟩 PERFORMANCE: was allUsers.find() per assignee per task (an O(n) scan
+    // repeated for every card, every render) — now an O(1) Map lookup.
+    const getAssigneeNames = (ids) => {
+        if (!ids || !Array.isArray(ids)) return t('tasks.unassigned');
+        return ids.map(id => {
+            const user = usersById.get(String(id));
+            return user ? user.name : t('tasks.unknown');
+        }).join(', ');
+    };
+
+    // Formats filtered parameters into a sanitized format before generating spreadsheet reports
+    const exportData = useMemo(() => processedTasks
+        .filter(task => exportEmployeeId === 'all' || (task.assigned_to || []).includes(exportEmployeeId))
+        .map(task => ({
+        Task: task.title,
+        Description: task.description,
+        Priority: task.priority,
+        Status: task.status,
+        "Due Date": task.due_date,
+        "Deadline Warning": getDeadlineStatus(task.due_date, task.status),
+        "Assigned To": getAssigneeNames(task.assigned_to),
+        Feedback: task.feedback || t('tasks.noneFeedback')
+    // getAssigneeNames/getDeadlineStatus are plain functions recreated every
+    // render; their actual behavior is fully determined by usersById/t,
+    // which are already listed — including the functions themselves would
+    // invalidate this memo every render and defeat the point of memoizing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    })), [processedTasks, exportEmployeeId, usersById, t]);
+
+    // Generates a 7-day row block array to construct layout cells for the timeline view,
+    // shifted by timelineOffsetDays so the view can scroll to other weeks/months.
+    const timelineDates = useMemo(() => {
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date();
+            d.setDate(d.getDate() + timelineOffsetDays + i);
+            days.push(d.toISOString().split('T')[0]);
+        }
+        return days;
+    }, [timelineOffsetDays]);
+
+    // 🟩 PERFORMANCE: the timeline grid used to run
+    // `processedTasks.filter(...)` once per (employee × visible day) cell —
+    // O(employees × days × tasks), recomputed on every render including
+    // unrelated ones (typing in search, an unrelated filter change). This
+    // groups tasks by employee+date once per processedTasks change, so each
+    // cell is an O(1) Map lookup instead of a full re-scan of every task.
+    const tasksByEmployeeAndDate = useMemo(() => {
+        const map = new Map();
+        for (const t of processedTasks) {
+            if (!t.due_date) continue;
+            for (const empId of (t.assigned_to || [])) {
+                const key = `${empId}|${t.due_date}`;
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push(t);
+            }
+        }
+        return map;
+    }, [processedTasks]);
+
     // 🟩 FIX: This guard used to sit ABOVE all the useState calls, which meant
     // React ran 0 hooks while userProfile was still loading and then suddenly
     // ~14 hooks once it resolved — a Rules-of-Hooks violation that throws
@@ -118,7 +223,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
     // Filters active employee roster records for select option loops
     const employeeUsers = (allUsers || []).filter(u => u.role === 'employee');
-    
+
     // Calculates a dynamic baseline tomorrow constraint string used to validate minimum extension boundaries
     const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
@@ -139,7 +244,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             case 'To Do': return 'col_todo';
             case 'In Progress': return 'col_doing';
             case 'Revision Needed': return 'col_doing'; // Locks revisions inside 'In Progress' columns
-            case 'Completed': return 'col_review';      
+            case 'Completed': return 'col_review';
             case 'Approved': return 'col_done';
             default: return 'col_todo';
         }
@@ -154,69 +259,6 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
         'Normal': 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800',
         'Low': 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600'
     }[p] || 'bg-gray-100 text-gray-700');
-
-    /**
-     * UTILITY FUNCTION: getDeadlineStatus
-     * PURPOSE: Performs system real-time date evaluation vectors to trigger warning alerts.
-     */
-    const getDeadlineStatus = (dueDate, status) => TaskDeadlinePolicy.getStatus(dueDate, status);
-
-    // =========================================================================
-    // 🔍 ENGINE LOGIC DATA PRE-PROCESSING & FILTER CHANNELS
-    // =========================================================================
-    const tasksWithOptimisticUpdates = (tasks || []).map(task =>
-        optimisticStatusOverrides[task.id] ? { ...task, status: optimisticStatusOverrides[task.id] } : task
-    );
-
-    const processedTasks = tasksWithOptimisticUpdates.filter(t => {
-        // 🟩 NULL-SAFETY: description is a nullable column — a task with no
-        // description previously crashed this filter (and therefore the
-        // whole Kanban/timeline view, for every viewer) the instant it
-        // rendered, since `.toLowerCase()` on `undefined`/`null` throws.
-        const matchesSearch = (t.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                              (t.description || '').toLowerCase().includes(searchTerm.toLowerCase());
-        
-        // Security logic: Enforces scope boundaries so interns can never look into others' card files
-        const effectiveTargetEmp = userProfile.role === 'supervisor' ? filterEmployee : userProfile.id;
-        const matchesEmployee = effectiveTargetEmp === 'all' || (t.assigned_to || []).includes(effectiveTargetEmp);
-        const matchesPriority = filterPriority === 'all' || t.priority === filterPriority;
-
-        return matchesSearch && matchesEmployee && matchesPriority;
-    });
-
-    const getAssigneeNames = (ids) => {
-        if (!ids || !Array.isArray(ids)) return t('tasks.unassigned');
-        return ids.map(id => {
-            const user = allUsers.find(u => String(u.id) === String(id));
-            return user ? user.name : t('tasks.unknown');
-        }).join(', ');
-    };
-
-    // Formats filtered parameters into a sanitized format before generating spreadsheet reports
-    const exportData = processedTasks
-        .filter(task => exportEmployeeId === 'all' || (task.assigned_to || []).includes(exportEmployeeId))
-        .map(task => ({
-        Task: task.title,
-        Description: task.description,
-        Priority: task.priority,
-        Status: task.status,
-        "Due Date": task.due_date,
-        "Deadline Warning": getDeadlineStatus(task.due_date, task.status),
-        "Assigned To": getAssigneeNames(task.assigned_to),
-        Feedback: task.feedback || t('tasks.noneFeedback')
-    }));
-
-    // Generates a 7-day row block array to construct layout cells for the timeline view,
-    // shifted by timelineOffsetDays so the view can scroll to other weeks/months.
-    const timelineDates = (() => {
-        const days = [];
-        for (let i = 0; i < 7; i++) {
-            const d = new Date();
-            d.setDate(d.getDate() + timelineOffsetDays + i);
-            days.push(d.toISOString().split('T')[0]);
-        }
-        return days;
-    })();
 
     const shiftTimeline = (deltaDays) => setTimelineOffsetDays(prev => prev + deltaDays);
     const resetTimelineToToday = () => setTimelineOffsetDays(0);
@@ -585,7 +627,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                 <div className="mt-2 pt-3 border-t border-gray-100 flex justify-between items-center dark:border-gray-700">
                     <div className="flex -space-x-2">
                         {(task.assigned_to || []).map(uid => {
-                            const u = allUsers.find(user => String(user.id) === String(uid));
+                            const u = usersById.get(String(uid));
                             return <UserAvatar key={uid} user={u} size="w-6 h-6" textSize="text-[9px]" />;
                         })}
                     </div>
@@ -965,7 +1007,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                                         <span className="text-sm font-bold text-gray-700 truncate dark:text-gray-200">{emp.name.split(' ')[0]}</span>
                                     </div>
                                     {timelineDates.map(date => {
-                                        const dailyTasks = processedTasks.filter(t => (t.assigned_to || []).includes(emp.id) && t.due_date === date);
+                                        const dailyTasks = tasksByEmployeeAndDate.get(`${emp.id}|${date}`) || [];
                                         return (
                                             <div key={date} className="border-l border-gray-50 p-1 relative dark:border-gray-700 min-h-[60px]">
                                                 {dailyTasks.map(t => {

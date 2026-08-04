@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -172,7 +172,14 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // =========================================================================
     // 📈 FIXED CALENDAR CHART DATA PROCESSING ENGINE
     // =========================================================================
-    const processChartData = () => {
+    // 🟩 PERFORMANCE: was a plain function re-invoked on every render
+    // (including unrelated ones, like the widget-order localStorage effect
+    // firing) that re-scanned the FULL attendance and tasks arrays once per
+    // (month × employee) pair — O(months × employees × records). Attendance
+    // and tasks are now bucketed by employee+month a single time, turning
+    // each cell into an O(1) Map lookup, and the whole thing is memoized so
+    // it only recomputes when the underlying data or filter actually changes.
+    const { attData, taskData } = useMemo(() => {
         // 🟩 FIX: Rolling 6-month window ending at the current month, instead of
         // a hardcoded Jan-Jun range. The old range silently excluded whatever
         // month it actually is right now — which is exactly where most live
@@ -191,6 +198,24 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
 
         const users = allUsers.filter(u => u.role === 'employee');
 
+        const presentByEmpMonth = new Map();
+        for (const a of attendance) {
+            if (a.status !== 'Present' && a.status !== 'Late') continue;
+            const d = new Date(a.date);
+            const key = `${a.employee_id}|${d.getFullYear()}-${d.getMonth()}`;
+            presentByEmpMonth.set(key, (presentByEmpMonth.get(key) || 0) + 1);
+        }
+
+        const completedByEmpMonth = new Map();
+        for (const t of tasks) {
+            if (t.status !== 'Approved') continue;
+            const d = new Date(t.due_date);
+            for (const empId of (t.assigned_to || [])) {
+                const key = `${empId}|${d.getFullYear()}-${d.getMonth()}`;
+                completedByEmpMonth.set(key, (completedByEmpMonth.get(key) || 0) + 1);
+            }
+        }
+
         const attData = [];
         const taskData = [];
 
@@ -199,27 +224,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             const taskMonth = { name: label };
 
             users.forEach(u => {
-                // Accumulates monthly employee attendance rows
-                const presentCount = attendance.filter(a => {
-                    const d = new Date(a.date);
-                    return a.employee_id === u.id &&
-                        d.getMonth() === month &&
-                        d.getFullYear() === year &&
-                        (a.status === 'Present' || a.status === 'Late');
-                }).length;
-
-                // Accumulates monthly completed/approved items
-                const completedCount = tasks.filter(t => {
-                    const d = new Date(t.due_date);
-                    return (t.assigned_to || []).includes(u.id) &&
-                        t.status === 'Approved' &&
-                        d.getMonth() === month &&
-                        d.getFullYear() === year;
-                }).length;
-
                 if (selectedEmployee === 'all' || selectedEmployee === u.id) {
-                    attMonth[u.name] = presentCount;
-                    taskMonth[u.name] = completedCount;
+                    const key = `${u.id}|${year}-${month}`;
+                    attMonth[u.name] = presentByEmpMonth.get(key) || 0;
+                    taskMonth[u.name] = completedByEmpMonth.get(key) || 0;
                 }
             });
             attData.push(attMonth);
@@ -227,9 +235,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         });
 
         return { attData, taskData };
-    };
-
-    const { attData, taskData } = processChartData();
+    }, [allUsers, attendance, tasks, selectedEmployee]);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
     const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -87,27 +87,38 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         'Denied': 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50',
     }[status] || 'bg-gray-100 dark:bg-gray-700');
 
-    const getUserName = (id) => allUsers.find(u => u.id === id)?.name || t('leave.unknownOfficer');
+    // 🟩 PERFORMANCE: getUserName/getUserCampus were O(n) allUsers.find()
+    // calls, and sortedLeaveRequests' comparator called getUserName twice
+    // per comparison — an O(n log n × m) pattern. A Map built once per
+    // allUsers change turns every lookup into O(1).
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of (allUsers || [])) map.set(u.id, u);
+        return map;
+    }, [allUsers]);
+
+    const getUserName = (id) => usersById.get(id)?.name || t('leave.unknownOfficer');
 
     const getUserCampus = (id) => {
-        const u = allUsers.find(user => user.id === id);
+        const u = usersById.get(id);
         return u?.source || u?.university || t('leave.presidentUniversity');
     };
 
     // =========================================================================
     // 🔍 REAL-TIME DATA INDEX FILTER PIPELINES
     // =========================================================================
-    const filteredLeaveRequests = leaveRequests.filter(req => {
+    const filteredLeaveRequests = useMemo(() => leaveRequests.filter(req => {
         const empName = getUserName(req.employee_id).toLowerCase();
-        const matchesSearch = empName.includes(searchTerm.toLowerCase()) || 
+        const matchesSearch = empName.includes(searchTerm.toLowerCase()) ||
                               (req.reason || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchesStatus = filterStatus === 'all' || req.status === filterStatus;
         const matchesType = filterType === 'all' || req.type === filterType;
 
         return matchesSearch && matchesStatus && matchesType;
-    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getUserName is a plain function recreated every render, fully determined by usersById/t which are already listed
+    }), [leaveRequests, searchTerm, filterStatus, filterType, usersById, t]);
 
-    const sortedLeaveRequests = [...filteredLeaveRequests].sort((a, b) => {
+    const sortedLeaveRequests = useMemo(() => [...filteredLeaveRequests].sort((a, b) => {
         if (!sortConfig.key) return 0;
         let aVal, bVal;
         switch (sortConfig.key) {
@@ -119,7 +130,8 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         }
         const cmp = String(aVal).localeCompare(String(bVal));
         return sortConfig.direction === 'asc' ? cmp : -cmp;
-    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [filteredLeaveRequests, sortConfig, usersById, t]);
 
     // 🟩 VIRTUALIZATION: leave requests only ever accumulate — past a
     // threshold, render just the rows in view instead of the whole log.
@@ -386,41 +398,63 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         setIsBulkProcessingLeave(true);
         const overages = [];
 
-        for (const request of selectedRequests) {
+        // 🟩 PERFORMANCE: this used to process every selected request one at
+        // a time — up to 3 sequential network round trips per row, so
+        // approving 20 requests meant ~40-60 round trips waiting on each
+        // other in sequence. The read step (fetching each employee's
+        // current balance) is independent per request and now runs in
+        // parallel.
+        const quotaFetches = await Promise.all(selectedRequests.map(async (request) => {
             const isQuotaType = LeaveQuotaPolicy.isQuotaType(request.type);
-            let leaveType = null;
-            let daysDiff = 0;
-            let currentDays = null;
+            if (!isQuotaType) return { request, isQuotaType };
+            const leaveType = LeaveQuotaPolicy.quotaFieldFor(request.type);
+            const daysDiff = LeaveQuotaPolicy.calculateRequestedDays(request.start_date, request.end_date);
+            const { data: targetProfile } = await supabase.from('profiles').select('*').eq('id', request.employee_id).single();
+            const currentDays = targetProfile ? (targetProfile[leaveType] || 0) : 0;
+            return { request, isQuotaType, leaveType, daysDiff, currentDays };
+        }));
 
-            if (isQuotaType) {
-                daysDiff = LeaveQuotaPolicy.calculateRequestedDays(request.start_date, request.end_date);
-                leaveType = LeaveQuotaPolicy.quotaFieldFor(request.type);
+        // 🟩 Requests for the SAME employee + same quota field must still be
+        // applied in order: two "Sick Leave" requests approved in one batch
+        // both reading the same starting balance before either writes back
+        // would silently deduct only once instead of twice (the exact race
+        // just fixed in the single-row handleApproval above). Requests for
+        // different employees/fields don't share any state, so those groups
+        // run fully in parallel — the common case for a bulk approval.
+        const groups = new Map();
+        for (const item of quotaFetches) {
+            const key = item.isQuotaType ? `${item.request.employee_id}|${item.leaveType}` : `solo|${item.request.id}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(item);
+        }
 
-                const { data: targetProfile } = await supabase.from('profiles').select('*').eq('id', request.employee_id).single();
-                currentDays = targetProfile ? (targetProfile[leaveType] || 0) : 0;
+        await Promise.all(Array.from(groups.values()).map(async (group) => {
+            let runningBalance = group[0].isQuotaType ? group[0].currentDays : null;
 
-                if (daysDiff > currentDays) {
+            for (const { request, isQuotaType, leaveType, daysDiff } of group) {
+                if (isQuotaType && daysDiff > runningBalance) {
                     overages.push(t('leave.overrideConfirm', {
                         name: getUserName(request.employee_id),
-                        current: currentDays,
+                        current: runningBalance,
                         label: leaveType === 'sick_days' ? t('leave.sick') : t('leave.vacation'),
                         requested: daysDiff,
-                        overage: LeaveQuotaPolicy.calculateOverage(currentDays, daysDiff),
+                        overage: LeaveQuotaPolicy.calculateOverage(runningBalance, daysDiff),
                     }));
                 }
-            }
 
-            const { error: updateError } = await supabase.from('leave_requests').update({ status: 'Approved' }).eq('id', request.id);
-            if (updateError) {
-                showUserError('Failed to update leave request', updateError);
-                continue;
-            }
+                const { error: updateError } = await supabase.from('leave_requests').update({ status: 'Approved' }).eq('id', request.id);
+                if (updateError) {
+                    showUserError('Failed to update leave request', updateError);
+                    continue;
+                }
 
-            if (isQuotaType && leaveType && currentDays !== null) {
-                const newDays = LeaveQuotaPolicy.deduct(currentDays, daysDiff);
-                await supabase.from('profiles').update({ [leaveType]: newDays }).eq('id', request.employee_id);
+                if (isQuotaType) {
+                    const newDays = LeaveQuotaPolicy.deduct(runningBalance, daysDiff);
+                    await supabase.from('profiles').update({ [leaveType]: newDays }).eq('id', request.employee_id);
+                    runningBalance = newDays;
+                }
             }
-        }
+        }));
 
         setSelectedLeaveIds(new Set());
         setIsBulkProcessingLeave(false);
@@ -461,12 +495,18 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         setCalendarDate({ year: now.getFullYear(), month: now.getMonth() });
     };
 
-    const renderCalendar = () => {
+    // 🟩 PERFORMANCE: was a plain function re-invoked (and re-filtering the
+    // whole leaveRequests array once per day of the month) on every render,
+    // including unrelated ones like typing in the search box. Only the
+    // visible month's approved leaves are in scope here, which stays small
+    // regardless of how much leave history accumulates over time, but
+    // there's no reason to recompute it on every keystroke either.
+    const calendarDays = useMemo(() => {
         const { year, month } = calendarDate;
-        
+
         const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const firstDayOfMonth = new Date(year, month, 1).getDay(); 
-        
+        const firstDayOfMonth = new Date(year, month, 1).getDay();
+
         const days = [];
         // Draws empty spacer slots to realign month columns based on weekday starts
         for (let i = 0; i < firstDayOfMonth; i++) {
@@ -476,9 +516,9 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         // Populates valid date grid indices
         for (let d = 1; d <= daysInMonth; d++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dayLeaves = leaveRequests.filter(req => 
-                req.status === 'Approved' && 
-                req.start_date <= dateStr && 
+            const dayLeaves = leaveRequests.filter(req =>
+                req.status === 'Approved' &&
+                req.start_date <= dateStr &&
                 req.end_date >= dateStr
             );
 
@@ -497,7 +537,8 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         }
 
         return days;
-    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getUserName is a plain function fully determined by usersById/t, already listed
+    }, [calendarDate, leaveRequests, usersById, t]);
 
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6">
@@ -669,7 +710,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                     {[t('leave.sun'), t('leave.mon'), t('leave.tue'), t('leave.wed'), t('leave.thu'), t('leave.fri'), t('leave.sat')].map(d => (
                         <div key={d} className="bg-gray-50 p-2.5 text-center text-xs font-bold text-gray-400 border-b border-gray-200 dark:bg-gray-700/60 dark:text-gray-400 dark:border-gray-600">{d}</div>
                     ))}
-                    {renderCalendar()}
+                    {calendarDays}
                 </div>
             </div>
 

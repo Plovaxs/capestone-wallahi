@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -326,7 +326,15 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         setEditingEvalId(null);
     };
 
-    const getUserName = (id) => allUsers.find(u => u.id === id)?.name || t('reviews.unknownUser');
+    // 🟩 PERFORMANCE: was an O(n) allUsers.find() per row in the evaluation
+    // archive table per render; a Map built once per allUsers change turns
+    // every lookup into O(1).
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of allUsers) map.set(u.id, u);
+        return map;
+    }, [allUsers]);
+    const getUserName = (id) => usersById.get(id)?.name || t('reviews.unknownUser');
 
     const handleDownloadPdf = (evaluation) => {
         generateReviewPdf({

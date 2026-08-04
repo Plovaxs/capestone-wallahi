@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -61,8 +61,15 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
     ];
 
     // --- UTILITY USER DICTIONARY MATCHERS ---
-    const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || t('contributions.unknownUser');
-    const getUserRole = (id) => allUsers.find(u => String(u.id) === String(id))?.role || 'employee';
+    // 🟩 PERFORMANCE: was an O(n) allUsers.find() per post/reply per render;
+    // a Map built once per allUsers change turns every lookup into O(1).
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of allUsers) map.set(String(u.id), u);
+        return map;
+    }, [allUsers]);
+    const getUserName = (id) => usersById.get(String(id))?.name || t('contributions.unknownUser');
+    const getUserRole = (id) => usersById.get(String(id))?.role || 'employee';
 
     // =========================================================================
     // ⚙️ BACKEND MUTATION PIPELINES (SUPABASE TRANSACTION CONTROLLERS)
