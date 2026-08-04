@@ -69,8 +69,20 @@ const determineYoloVersion = () => {
 
 const YOLO_MODEL_IDS = {
   nano: 'Xenova/yolov8n-face',
-  medium: 'Xenova/yolov8n-face' 
+  medium: 'Xenova/yolov8n-face'
 };
+
+/** Small presentational tile for the Edge Device Diagnostics panel — pure display, no logic. */
+const DiagnosticTile = ({ label, value, ok, detail }) => (
+    <div className={`rounded-xl border p-2.5 ${ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/10'}`}>
+        <div className="flex items-center gap-1.5 mb-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+            <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</span>
+        </div>
+        <div className={`text-xs font-bold ${ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>{value}</div>
+        {detail && <div className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5 font-mono">{detail}</div>}
+    </div>
+);
 
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
@@ -164,6 +176,25 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // accelerometer, so this just never becomes `ready` there, which is the
     // correct no-op). See sensors/motionStability.js.
     const motionTrackerRef = useRef(createMotionStabilityTracker());
+    // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
+    // the sensor signals already being computed above — network/battery
+    // adaptive mode, ambient light, lens clarity, motion stability. Nothing
+    // here is broadcast anywhere (that's exactly what made the earlier
+    // "Digital Twin" dashboard wasteful and got it removed); this is just
+    // rendering state that already exists locally, at zero extra network
+    // cost, so the IoT/edge-computing work in this view is actually visible
+    // instead of running silently in the background.
+    const [sensorDiagnostics, setSensorDiagnostics] = useState({
+        networkEffectiveType: null,
+        isSlowNetwork: false,
+        batteryLevel: null,
+        isCharging: null,
+        ambientLux: null,
+        isAmbientLowLight: false,
+        lensClear: true,
+        motionReady: false,
+        motionStable: true,
+    });
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterSource, setFilterSource] = useState('all');
@@ -566,7 +597,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // behind a Permissions-Policy header); createAmbientLightWatcher
         // returns null everywhere else and this effect is then a no-op.
         const watcher = createAmbientLightWatcher({
-            onReading: ({ isLowLight }) => {
+            onReading: ({ lux, isLowLight }) => {
+                setSensorDiagnostics((prev) => (prev.ambientLux === lux && prev.isAmbientLowLight === isLowLight
+                    ? prev
+                    : { ...prev, ambientLux: lux, isAmbientLowLight: isLowLight }));
+
                 if (isLowLight === isLowLightRef.current) return;
                 isLowLightRef.current = isLowLight;
                 if (isLowLight) {
@@ -598,6 +633,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             const battery = await getBatteryProfile();
             if (isCancelled) return;
             setDisableYolo(shouldReduceWorkload(network, battery));
+            setSensorDiagnostics((prev) => ({
+                ...prev,
+                networkEffectiveType: network.effectiveType,
+                isSlowNetwork: network.isSlow,
+                batteryLevel: battery.supported ? battery.level : null,
+                isCharging: battery.supported ? battery.charging : null,
+            }));
         };
 
         evaluate();
@@ -793,6 +835,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                                 lensObstruction = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                                 cachedLensResultRef.current = lensObstruction;
+                                // Diagnostics readout only — setState bails out for free when
+                                // the value hasn't actually changed (same object reference).
+                                setSensorDiagnostics((prev) => (prev.lensClear === lensObstruction.ok ? prev : { ...prev, lensClear: lensObstruction.ok }));
                             } else {
                                 lensObstruction = cachedLensResultRef.current;
                             }
@@ -877,6 +922,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         liveDet.box.height + marginY * 2
                                     );
                                     const motionStats = motionTrackerRef.current.getStats();
+                                    setSensorDiagnostics((prev) => (prev.motionReady === motionStats.ready && prev.motionStable === !motionStats.isSuspiciouslyFlat
+                                        ? prev
+                                        : { ...prev, motionReady: motionStats.ready, motionStable: !motionStats.isSuspiciouslyFlat }));
                                     if (checkReplaySuspicion(borderRegion.data).suspicious || (motionStats.ready && motionStats.isSuspiciouslyFlat)) {
                                         toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                     }
@@ -1639,6 +1687,61 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             {filteredMyHistory.length === 0 && (
                                 <p className="col-span-full text-center text-xs text-gray-400 dark:text-slate-500 italic py-6">{t('attendance.noMatchingRecords')}</p>
                             )}
+                        </div>
+                    </div>
+
+                    {/* 🟩 EDGE DEVICE DIAGNOSTICS: local-only readout of the IoT/edge
+                        sensor signals this scan session is already using — nothing
+                        here is sent anywhere, it's just surfacing state that already
+                        exists locally so the sensor-fusion work is actually visible. */}
+                    <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/40 p-4 shadow-inner">
+                        <div className="flex items-center justify-between mb-1">
+                            <span className="text-[11px] font-black uppercase tracking-widest text-gray-500 dark:text-slate-400">{t('attendance.edgeDiagnosticsTitle')}</span>
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">{t('attendance.edgeDiagnosticsLocalOnly')}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500 mb-4">{t('attendance.edgeDiagnosticsDescription')}</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            <DiagnosticTile
+                                label={t('attendance.diagCamera')}
+                                value={cameraError ? t('attendance.diagIssue') : isCameraReady ? t('attendance.diagOk') : t('attendance.diagStarting')}
+                                ok={!cameraError && isCameraReady}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagGeofence')}
+                                value={isInRange ? t('attendance.diagInRange') : t('attendance.diagOutOfRange')}
+                                ok={isInRange}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagLens')}
+                                value={sensorDiagnostics.lensClear ? t('attendance.diagClear') : t('attendance.diagObstructed')}
+                                ok={sensorDiagnostics.lensClear}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagLighting')}
+                                value={sensorDiagnostics.isAmbientLowLight || torchActive ? t('attendance.diagLowLight') : t('attendance.diagNormal')}
+                                ok={!sensorDiagnostics.isAmbientLowLight}
+                                detail={typeof sensorDiagnostics.ambientLux === 'number' ? `${Math.round(sensorDiagnostics.ambientLux)} lux` : (torchActive ? t('attendance.torchActiveLabel') : null)}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagMotion')}
+                                value={!sensorDiagnostics.motionReady ? t('attendance.diagNoSensor') : sensorDiagnostics.motionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
+                                ok={!sensorDiagnostics.motionReady || sensorDiagnostics.motionStable}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagNetwork')}
+                                value={sensorDiagnostics.networkEffectiveType ? sensorDiagnostics.networkEffectiveType.toUpperCase() : t('attendance.diagUnknown')}
+                                ok={!sensorDiagnostics.isSlowNetwork}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagBattery')}
+                                value={typeof sensorDiagnostics.batteryLevel === 'number' ? `${Math.round(sensorDiagnostics.batteryLevel * 100)}%${sensorDiagnostics.isCharging ? ' ⚡' : ''}` : t('attendance.diagUnknown')}
+                                ok={sensorDiagnostics.batteryLevel === null || sensorDiagnostics.batteryLevel > 0.2 || sensorDiagnostics.isCharging}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagModel')}
+                                value={disableYolo ? t('attendance.diagModelReduced') : t('attendance.diagModelFull')}
+                                ok={true}
+                            />
                         </div>
                     </div>
                 </>

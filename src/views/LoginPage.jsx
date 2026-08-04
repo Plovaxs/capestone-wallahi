@@ -262,19 +262,30 @@ export default function LoginPage() {
         const newUser = signUpData?.user;
         if (!newUser) throw new Error(t('login.errorNoUuid'));
 
-        await new Promise(resolve => setTimeout(resolve, 500));
-
         setBiometricStatus(t('login.statusSavingProfile'));
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .upsert([{
-            id: newUser.id,
-            name,
-            email,
-            role: 'employee',
-            initials: initials.toUpperCase(),
-            face_descriptor: stringifiedDescriptor
-          }], { onConflict: 'id' });
+        // 🟩 RELIABILITY: this upsert is keyed by id (onConflict: 'id'), so
+        // retrying it is always safe — re-applying it with the same id
+        // converges to the same row, it can never create a duplicate. A
+        // short retry-with-backoff loop is more robust against the
+        // auth-user -> profile-row-visibility propagation delay varying
+        // under load than a single blind fixed-length wait, which can be
+        // too short sometimes and is unconditionally slow always.
+        let profileError = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+          const result = await supabase
+            .from('profiles')
+            .upsert([{
+              id: newUser.id,
+              name,
+              email,
+              role: 'employee',
+              initials: initials.toUpperCase(),
+              face_descriptor: stringifiedDescriptor
+            }], { onConflict: 'id' });
+          profileError = result.error;
+          if (!profileError) break;
+        }
 
         if (profileError) throw profileError;
 
