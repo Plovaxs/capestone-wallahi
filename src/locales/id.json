@@ -707,7 +707,7 @@
     "statusLivenessVerified": "Keaslian terverifikasi. Mencocokkan...",
     "statusMatrixVerified": "Wajah terverifikasi. Siap mendaftar.",
     "statusBlinkToAuth": "Berkedip untuk masuk",
-    "statusFaceLocked": "Wajah terkunci. Isi form untuk mendaftar.",
+    "statusFaceLocked": "Posisikan wajah di tengah kamera",
     "statusNoFace": "Wajah tidak terdeteksi. Posisikan wajah Anda.",
     "statusVerifyingServer": "Memverifikasi ke server...",
     "statusCapturing": "Menangkap data wajah resolusi tinggi...",

@@ -707,7 +707,7 @@
     "statusLivenessVerified": "Liveness verified. Matching...",
     "statusMatrixVerified": "Matrix verified. Ready to register.",
     "statusBlinkToAuth": "Blink to authenticate",
-    "statusFaceLocked": "Face locked. Fill form to register.",
+    "statusFaceLocked": "Center your face in the frame",
     "statusNoFace": "No face detected. Align your face.",
     "statusVerifyingServer": "Verifying with server...",
     "statusCapturing": "Capturing HIGH DEF face matrix...",

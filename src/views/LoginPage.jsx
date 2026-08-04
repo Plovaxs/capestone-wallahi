@@ -161,17 +161,23 @@ export default function LoginPage() {
             imageHeight: videoRef.current.videoHeight
           });
 
-          const leftEAR = calculateEAR(detection.landmarks.getLeftEye());
-          const rightEAR = calculateEAR(detection.landmarks.getRightEye());
-          const avgEAR = (leftEAR + rightEAR) / 2;
+          // 🟩 BLINK IS LOGIN-ONLY: registration just needs a clear, well-
+          // framed face so the user can hit "Save" -- no blink requirement.
+          // Blink/liveness only matters for the zero-touch login flow below,
+          // where it proves a live person (not a photo) is authenticating.
+          if (authMode !== 'login') {
+            setBiometricStatus(framing.ok && occlusion.ok ? t('login.statusMatrixVerified') : t('login.statusFaceLocked'));
+          } else {
+            const leftEAR = calculateEAR(detection.landmarks.getLeftEye());
+            const rightEAR = calculateEAR(detection.landmarks.getRightEye());
+            const avgEAR = (leftEAR + rightEAR) / 2;
 
-          if (avgEAR < 0.26) {
-            isEyeClosedRef.current = true;
-          } else if (isEyeClosedRef.current) {
-            isEyeClosedRef.current = false;
-            setBlinkCount(p => p + 1);
-            
-            if (authMode === 'login') {
+            if (avgEAR < 0.26) {
+              isEyeClosedRef.current = true;
+            } else if (isEyeClosedRef.current) {
+              isEyeClosedRef.current = false;
+              setBlinkCount(p => p + 1);
+
               if (suggestPasswordFallback) {
                 setBiometricStatus(t('login.statusUsePasswordInstead'));
               } else {
@@ -186,13 +192,7 @@ export default function LoginPage() {
                 }
               }
             } else {
-              setBiometricStatus(t('login.statusMatrixVerified'));
-            }
-          } else {
-            if (authMode === 'login') {
               setBiometricStatus(t('login.statusBlinkToAuth'));
-            } else {
-              setBiometricStatus(t('login.statusFaceLocked'));
             }
           }
         } else {
@@ -498,7 +498,7 @@ export default function LoginPage() {
           {faceOverlayBox && (
             <div
               className={`absolute border-2 rounded-xl z-[15] pointer-events-none transition-all duration-75 ${
-                blinkCount > 0 ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                (authMode === 'login' ? blinkCount > 0 : scanReadiness >= 100) ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
               }`}
               style={getFaceOverlayStyle() || { display: 'none' }}
             />
@@ -514,7 +514,9 @@ export default function LoginPage() {
 
         <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">{t('login.zeroTouchGate')}</h3>
         <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono px-4">
-          {blinkCount > 0 ? t('login.liveVerified') : t('login.blinkToEnter')}
+          {authMode === 'login'
+            ? (blinkCount > 0 ? t('login.liveVerified') : t('login.blinkToEnter'))
+            : (scanReadiness >= 100 ? t('login.statusMatrixVerified') : t('login.statusFaceLocked'))}
         </p>
       </div>
     </div>
