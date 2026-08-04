@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -24,7 +24,6 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
-import { useDeviceTelemetry } from '../realtime/useDeviceTelemetry';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
 
@@ -130,7 +129,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // network or battery status actually changes, both narrowly-supported
     // APIs that degrade to "assume normal conditions" where unavailable.
     const [disableYolo, setDisableYolo] = useState(false);
-    const [deviceConditions, setDeviceConditions] = useState({ networkEffectiveType: null, isSlowNetwork: false, batteryLevel: null, isCharging: null });
     const [, setCurrentModelVersion] = useState(null); // write-only, never displayed
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
@@ -363,26 +361,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const lateDays = myHistory.filter(a => a.status === 'Late').length;
     const punctualityScore = PunctualityPolicy.calculate(myHistory) ?? 0;
 
-    // 🟩 DIGITAL TWIN: a lightweight live snapshot of this browser tab's
-    // local "edge device" state, broadcast over an ephemeral presence
-    // channel (see realtime/useDeviceTelemetry.js) — never persisted to the
-    // database — so supervisors can see device health across every active
-    // scan session in real time.
-    const localTelemetry = useMemo(() => ({
-        cameraStatus: cameraError ? 'error' : isCameraReady ? 'ready' : 'loading',
-        faceStatus,
-        geofenceStatus: isInRange ? 'in-range' : 'out-of-range',
-        yoloTier: disableYolo ? 'disabled-adaptive' : 'active',
-        torchActive,
-        networkEffectiveType: deviceConditions.networkEffectiveType,
-        isSlowNetwork: deviceConditions.isSlowNetwork,
-        batteryLevel: deviceConditions.batteryLevel,
-        isCharging: deviceConditions.isCharging,
-        updatedAt: Date.now(),
-    }), [cameraError, isCameraReady, faceStatus, isInRange, disableYolo, torchActive, deviceConditions]);
-
-    const telemetryByUserId = useDeviceTelemetry(userProfile, localTelemetry);
-
     // 🟩 NEW: Lets an intern filter their own log by On Time / Late instead of
     // scanning every card manually.
     const filteredMyHistory = myHistory.filter(a => historyStatusFilter === 'all' || a.status === historyStatusFilter);
@@ -596,12 +574,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             const battery = await getBatteryProfile();
             if (isCancelled) return;
             setDisableYolo(shouldReduceWorkload(network, battery));
-            setDeviceConditions({
-                networkEffectiveType: network.effectiveType,
-                isSlowNetwork: network.isSlow,
-                batteryLevel: battery.supported ? battery.level : null,
-                isCharging: battery.supported ? battery.charging : null,
-            });
         };
 
         evaluate();
@@ -1289,57 +1261,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
             {userProfile.role === 'supervisor' ? (
                 <div className="space-y-6">
-                    {/* 🟩 DIGITAL TWIN / EDGE TELEMETRY DASHBOARD */}
-                    {Object.keys(telemetryByUserId).length > 0 && (
-                        <div className="bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
-                            <div className="px-5 py-4 border-b border-slate-700/60 bg-slate-800/20">
-                                <h3 className="text-sm font-bold text-white">{t('attendance.digitalTwinTitle')}</h3>
-                                <p className="text-[11px] text-slate-400 mt-0.5">{t('attendance.digitalTwinDescription')}</p>
-                            </div>
-                            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                {Object.entries(telemetryByUserId).map(([employeeId, telemetry]) => {
-                                    const owner = activeEmployees.find((emp) => emp.id === employeeId);
-                                    return (
-                                        <div key={employeeId} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] space-y-1.5">
-                                            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1">
-                                                <span className="font-bold text-white truncate">{owner?.name || employeeId}</span>
-                                                <span className={`px-1.5 py-0.5 rounded font-black uppercase tracking-wider text-[9px] ${telemetry.cameraStatus === 'ready' ? 'bg-emerald-500/10 text-emerald-400' : telemetry.cameraStatus === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-slate-700/50 text-slate-400'}`}>
-                                                    {t(`attendance.digitalTwinCamera_${telemetry.cameraStatus}`)}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between text-slate-400">
-                                                <span>{t('attendance.digitalTwinGeofence')}</span>
-                                                <span className={telemetry.geofenceStatus === 'in-range' ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                                                    {t(telemetry.geofenceStatus === 'in-range' ? 'attendance.digitalTwinInRange' : 'attendance.digitalTwinOutOfRange')}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between text-slate-400">
-                                                <span>{t('attendance.digitalTwinModel')}</span>
-                                                <span className="text-slate-300 font-bold">{t(telemetry.yoloTier === 'active' ? 'attendance.digitalTwinModelFull' : 'attendance.digitalTwinModelReduced')}</span>
-                                            </div>
-                                            {telemetry.torchActive && (
-                                                <div className="flex justify-between text-amber-400">
-                                                    <span>🔦 {t('attendance.torchActiveLabel')}</span>
-                                                </div>
-                                            )}
-                                            {typeof telemetry.batteryLevel === 'number' && (
-                                                <div className="flex justify-between text-slate-400">
-                                                    <span>{t('attendance.digitalTwinBattery')}</span>
-                                                    <span className="text-slate-300 font-bold">{Math.round(telemetry.batteryLevel * 100)}% {telemetry.isCharging ? '⚡' : ''}</span>
-                                                </div>
-                                            )}
-                                            {telemetry.isSlowNetwork && (
-                                                <div className="flex justify-between text-amber-400">
-                                                    <span>{t('attendance.digitalTwinSlowNetwork')}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('attendance.totalRegisteredStaff')}</div>
