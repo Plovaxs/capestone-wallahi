@@ -79,15 +79,18 @@ const DEFAULT_CHALLENGE_TIMEOUT_MS = 15000;
 
 export const CHALLENGE_TYPES = { BLINK: 'blink', HEAD_TURN: 'head_turn' };
 
-const pickRandomChallengeType = () => (Math.random() < 0.5 ? CHALLENGE_TYPES.BLINK : CHALLENGE_TYPES.HEAD_TURN);
+// 🟩 BLINK-ONLY: the random head-turn challenge was reported as slow and
+// confusing in practice ("membuat lama") -- blink is faster, more natural,
+// and works reliably now that its threshold is tuned. HEAD_TURN_TYPE is
+// kept (unused) rather than deleting the whole code path, in case it's
+// ever wanted back as an opt-in rather than a random 50/50 surprise.
+const pickRandomChallengeType = () => CHALLENGE_TYPES.BLINK;
 
 /**
  * Confirms the face in front of the camera is a live person, not a photo
- * or video replay, by requiring the user to complete ONE randomly-chosen
- * challenge — blink, or a small head turn — within a time window. Random
- * selection means a pre-recorded clip prepared for one challenge type
- * won't satisfy the other; the time box means a clip can't just be looped
- * until it happens to line up.
+ * or video replay, by requiring the user to blink within a time window.
+ * The time box means a static photo or a looped clip can't just be held
+ * up indefinitely waiting for a lucky frame.
  */
 export class RandomLivenessChallenge {
     constructor({ challengeType = null, timeoutMs = DEFAULT_CHALLENGE_TIMEOUT_MS } = {}) {

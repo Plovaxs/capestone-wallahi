@@ -919,10 +919,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         if (isMatch) {
                             // 🟩 LIVENESS GATE: a matched descriptor alone doesn't prove a
                             // live person is present — a printed photo or a video replay
-                            // would match too. Require one randomly-chosen challenge
-                            // (blink OR head-turn, time-boxed) before treating the match
-                            // as final — unpredictable and can't be satisfied by a clip
-                            // prepared for only one challenge type.
+                            // would match too. Require a time-boxed blink before treating
+                            // the match as final (head-turn challenge removed — real users
+                            // found the random 50/50 chance of getting it slow/confusing).
                             const challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
                             setHasBlinked(challengeConfirmed);
 

@@ -64,6 +64,7 @@ export default function LoginPage() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [blinkCount, setBlinkCount] = useState(0);
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
+  const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
 
   useEffect(() => {
     async function loadNeuralModels() {
@@ -151,6 +152,14 @@ export default function LoginPage() {
           const framing = checkFraming(detection.detection.box, videoRef.current.videoWidth, videoRef.current.videoHeight);
           const occlusion = checkOcclusion(detection.detection.score);
           setScanReadiness(calculateFrameReadiness({ framing: framing.ok, occlusion: occlusion.ok }));
+          setFaceOverlayBox({
+            x: detection.detection.box.x,
+            y: detection.detection.box.y,
+            width: detection.detection.box.width,
+            height: detection.detection.box.height,
+            imageWidth: videoRef.current.videoWidth,
+            imageHeight: videoRef.current.videoHeight
+          });
 
           const leftEAR = calculateEAR(detection.landmarks.getLeftEye());
           const rightEAR = calculateEAR(detection.landmarks.getRightEye());
@@ -188,6 +197,7 @@ export default function LoginPage() {
           }
         } else {
           setScanReadiness(0);
+          setFaceOverlayBox(null);
           setBiometricStatus(t('login.statusNoFace'));
         }
       } catch (err) {
@@ -205,6 +215,56 @@ export default function LoginPage() {
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);
+
+  // 🟩 FACE BOX POSITIONING: same math as AttendanceView's getFaceOverlayStyle
+  // (video is `object-cover`-scaled into the circular viewport and mirrored
+  // via CSS, so the box has to be scaled/offset and horizontally flipped to
+  // land on the actual face instead of the un-mirrored raw coordinates).
+  const getFaceOverlayStyle = () => {
+    if (!faceOverlayBox || !videoRef.current) return null;
+
+    const videoEl = videoRef.current;
+    const naturalWidth = videoEl.videoWidth || faceOverlayBox.imageWidth;
+    const naturalHeight = videoEl.videoHeight || faceOverlayBox.imageHeight;
+    const viewportWidth = videoEl.clientWidth || 0;
+    const viewportHeight = videoEl.clientHeight || 0;
+
+    if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) return null;
+
+    const naturalRatio = naturalWidth / naturalHeight;
+    const viewportRatio = viewportWidth / viewportHeight;
+
+    let displayedWidth = viewportWidth;
+    let displayedHeight = viewportHeight;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (viewportRatio > naturalRatio) {
+      displayedHeight = viewportHeight;
+      displayedWidth = viewportHeight * naturalRatio;
+      offsetX = (viewportWidth - displayedWidth) / 2;
+    } else {
+      displayedWidth = viewportWidth;
+      displayedHeight = viewportWidth / naturalRatio;
+      offsetY = (viewportHeight - displayedHeight) / 2;
+    }
+
+    const scaleX = displayedWidth / naturalWidth;
+    const scaleY = displayedHeight / naturalHeight;
+
+    const boxWidth = faceOverlayBox.width * scaleX;
+    const boxHeight = faceOverlayBox.height * scaleY;
+
+    const standardLeft = offsetX + (faceOverlayBox.x * scaleX);
+    const mirroredLeft = viewportWidth - standardLeft - boxWidth;
+
+    return {
+      left: `${mirroredLeft}px`,
+      top: `${offsetY + (faceOverlayBox.y * scaleY)}px`,
+      width: `${boxWidth}px`,
+      height: `${boxHeight}px`,
+    };
+  };
 
   const executeBiometricLogin = async (liveDescriptor) => {
        isRedirectingRef.current = true;
@@ -435,6 +495,14 @@ export default function LoginPage() {
             className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
+          {faceOverlayBox && (
+            <div
+              className={`absolute border-2 rounded-xl z-[15] pointer-events-none transition-all duration-75 ${
+                blinkCount > 0 ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+              }`}
+              style={getFaceOverlayStyle() || { display: 'none' }}
+            />
+          )}
           <div aria-live="polite" className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
             {biometricStatus}
           </div>
