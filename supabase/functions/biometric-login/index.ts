@@ -6,8 +6,24 @@ const allowedOrigins = [
   "http://localhost:5173",
 ];
 
+// Every Vercel preview deployment gets its own unique hash subdomain
+// (e.g. capestone-wallahi-1bc0r72cc-tenzin2115-2811s-projects.vercel.app)
+// on top of the stable project alias above — an exact-match list would
+// need a redeploy every single push. This matches any preview URL under
+// either known Vercel project instead.
+const allowedOriginPatterns = [
+  /^https:\/\/capestone-wallahi-[a-z0-9]+-tenzin2115-2811s-projects\.vercel\.app$/,
+  /^https:\/\/capstone-final-[a-z0-9]+-mannltc19s-projects\.vercel\.app$/,
+];
+
+function isAllowedOrigin(origin: string | null): boolean {
+  if (!origin) return false;
+  if (allowedOrigins.includes(origin)) return true;
+  return allowedOriginPatterns.some((pattern) => pattern.test(origin));
+}
+
 function corsHeadersFor(origin: string | null) {
-  const allowOrigin = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  const allowOrigin = isAllowedOrigin(origin) ? origin! : allowedOrigins[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
