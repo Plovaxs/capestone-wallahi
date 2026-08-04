@@ -6,12 +6,20 @@ export class ApiError extends Error {
     }
 }
 
-/** Logs duration + outcome of every repository call. */
+/**
+ * Logs duration + outcome of every repository call. Success logs only run
+ * in development — every table-change realtime event triggers a refetch,
+ * so this line potentially runs very often in a busy multi-user session;
+ * gating it keeps production consoles/CPU quiet. Failures still always log
+ * since a silent, unrecoverable Supabase error is worse than console noise.
+ */
 export const loggingMiddleware = async (ctx, next) => {
     const start = performance.now();
     try {
         const result = await next();
-        console.debug(`[api] ${ctx.label} ok in ${(performance.now() - start).toFixed(1)}ms`);
+        if (import.meta.env.DEV) {
+            console.debug(`[api] ${ctx.label} ok in ${(performance.now() - start).toFixed(1)}ms`);
+        }
         return result;
     } catch (err) {
         console.error(`[api] ${ctx.label} failed in ${(performance.now() - start).toFixed(1)}ms —`, err);

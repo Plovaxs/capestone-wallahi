@@ -43,7 +43,9 @@ class WebVitalsBatcher {
         this.buffer = [];
         clearTimeout(this.timer);
         this.timer = null;
-        console.debug('[web-vitals] flushing batch', batch);
+        if (import.meta.env.DEV) {
+            console.debug('[web-vitals] flushing batch', batch);
+        }
     }
 }
 

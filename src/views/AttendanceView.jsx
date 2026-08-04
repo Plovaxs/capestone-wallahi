@@ -195,7 +195,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     }
                 }
             } catch (_error) {
-                console.info('YOLO fallback to face-api full frame.');
+                if (import.meta.env.DEV) console.info('YOLO fallback to face-api full frame.');
             }
         }
 
@@ -365,7 +365,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         }
                     }
                 } catch (e) {
-                    console.info(e);
+                    if (import.meta.env.DEV) console.info(e);
                 }
             },
             (_err) => {
