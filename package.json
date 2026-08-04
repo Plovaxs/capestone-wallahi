@@ -13,7 +13,6 @@
     "seed:demo": "node scripts/seedDemoData.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@huggingface/transformers": "^4.2.0",
     "@supabase/supabase-js": "^2.76.0",
     "dotenv": "^17.2.3",

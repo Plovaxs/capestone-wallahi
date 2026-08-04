@@ -1217,7 +1217,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     };
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-slate-100">
+        // 🟩 CONTRAST FIX: this whole view is styled as a dark "ops monitoring"
+        // panel (bg-slate-800/900, near-white text, neon accent borders) —
+        // it never had light-mode counterparts, so when the app's global
+        // theme toggle is on light mode (the default for a fresh user, since
+        // there's no saved preference yet), that near-white text landed on
+        // the light page background and became close to unreadable. Giving
+        // this page its own solid dark background makes it render
+        // consistently regardless of the global toggle, instead of
+        // half-heartedly reworking 60+ individual color classes.
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-slate-100 bg-slate-950 rounded-3xl">
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-white">

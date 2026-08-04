@@ -281,17 +281,6 @@
     "replyPlaceholder": "Reply...",
     "send": "Send"
   },
-  "chatbot": {
-    "loading": "Loading your assistant...",
-    "greeting": "Hi {{name}}! I see you have {{count}} active tasks. How can I help you today?",
-    "connectionError": "I'm having trouble connecting. Please try again.",
-    "title": "AI Assistant",
-    "close": "Close chat",
-    "openToggle": "Open assistant chat",
-    "closeToggle": "Close assistant chat",
-    "inputPlaceholder": "Ask about tasks...",
-    "sendMessage": "Send message"
-  },
   "dashboard": {
     "welcome": "Welcome, {{name}}!",
     "subtitle": "Operational monitoring systems status review matrix.",

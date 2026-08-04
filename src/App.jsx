@@ -21,7 +21,6 @@ import { usePageVisibility } from './hooks/usePageVisibility';
 
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
-import ChatBot from './components/ChatBot';
 import OnboardingTour from './components/OnboardingTour';
 import ConfirmDialogHost from './components/ConfirmDialogHost';
 import CommandPalette from './components/CommandPalette';
@@ -551,14 +550,6 @@ export default function App() {
             onlineUserIds={onlineUserIds}
           /></React.Suspense>}
         </main>
-      </div>
-
-      {/* Rendered as a sibling of .app-content-shell, not inside it — ChatBot
-          is position:fixed, and a `filter` on an ancestor (high-contrast /
-          colorblind mode) becomes that ancestor's fixed-position containing
-          block, which would detach the chat bubble from the viewport. */}
-      <div className="no-print">
-        <ChatBot userProfile={userProfile} tasks={tasks} />
       </div>
 
       {showOnboarding && (

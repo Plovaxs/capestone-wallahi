@@ -281,17 +281,6 @@
     "replyPlaceholder": "Balas...",
     "send": "Kirim"
   },
-  "chatbot": {
-    "loading": "Memuat asisten Anda...",
-    "greeting": "Hai {{name}}! Saya lihat kamu punya {{count}} tugas aktif. Ada yang bisa saya bantu hari ini?",
-    "connectionError": "Sedang ada gangguan koneksi. Silakan coba lagi.",
-    "title": "Asisten AI",
-    "close": "Tutup obrolan",
-    "openToggle": "Buka obrolan asisten",
-    "closeToggle": "Tutup obrolan asisten",
-    "inputPlaceholder": "Tanyakan tentang tugas...",
-    "sendMessage": "Kirim pesan"
-  },
   "dashboard": {
     "welcome": "Selamat datang, {{name}}!",
     "subtitle": "Matriks tinjauan status sistem pemantauan operasional.",
