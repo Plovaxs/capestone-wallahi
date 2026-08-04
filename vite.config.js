@@ -35,6 +35,26 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // 🟩 BUNDLE SIZE: vendor libraries change far less often than app
+        // code, but without explicit grouping Rollup was folding them into
+        // the same entry chunk as App.jsx — so every deploy invalidated the
+        // browser's cached copy of React/Supabase/i18next too, not just the
+        // app code that actually changed. Splitting them into their own
+        // chunks lets returning users skip re-downloading these on a deploy
+        // that only touched app code.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'vendor-react';
+          if (id.includes('@supabase')) return 'vendor-supabase';
+          if (id.includes('i18next')) return 'vendor-i18n';
+          return undefined;
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.js'],

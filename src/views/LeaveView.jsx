@@ -9,6 +9,7 @@ import { offlineMutationQueue } from '../offline/OfflineMutationQueue';
 import { showUserError } from '../utils/errorHandling';
 import { confirmDialog } from '../utils/confirm';
 import { sanitizeUserInput } from '../utils/sanitize';
+import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
 
 /**
  * COMPONENT: LeaveView
@@ -112,6 +113,17 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         const cmp = String(aVal).localeCompare(String(bVal));
         return sortConfig.direction === 'asc' ? cmp : -cmp;
     });
+
+    // 🟩 VIRTUALIZATION: leave requests only ever accumulate — past a
+    // threshold, render just the rows in view instead of the whole log.
+    const LEAVE_VIRTUALIZE_THRESHOLD = 30;
+    const LEAVE_ROW_HEIGHT = 61;
+    const leaveVirtual = useVirtualizedRows(sortedLeaveRequests.length, LEAVE_ROW_HEIGHT, { containerHeight: 480 });
+    const shouldVirtualizeLeave = sortedLeaveRequests.length > LEAVE_VIRTUALIZE_THRESHOLD;
+    const visibleLeaveRequests = shouldVirtualizeLeave
+        ? sortedLeaveRequests.slice(leaveVirtual.startIndex, leaveVirtual.endIndex)
+        : sortedLeaveRequests;
+    const leaveTableColSpan = userProfile.role === 'supervisor' ? 7 : 5;
 
     // Reformats filtered leave objects before passing data into Excel exports
     const [exportEmployeeId, setExportEmployeeId] = useState('all'); // 🟩 NEW: single-employee export filter
@@ -705,7 +717,11 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                         {userProfile.role === 'supervisor' ? t('leave.rosterManagementQueue') : t('leave.personalRequestLog')}
                      </h2>
                  </div>
-                 <div className="overflow-x-auto">
+                 <div
+                     className="overflow-x-auto"
+                     style={shouldVirtualizeLeave ? { maxHeight: leaveVirtual.containerHeight, overflowY: 'auto' } : undefined}
+                     onScroll={shouldVirtualizeLeave ? leaveVirtual.onScroll : undefined}
+                 >
                      <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-50/80 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
@@ -719,7 +735,10 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700 text-xs">
-                            {sortedLeaveRequests.map(req => (
+                            {shouldVirtualizeLeave && leaveVirtual.topPadding > 0 && (
+                                <tr aria-hidden="true"><td colSpan={leaveTableColSpan} style={{ height: leaveVirtual.topPadding, padding: 0 }} /></tr>
+                            )}
+                            {visibleLeaveRequests.map(req => (
                                 <tr key={req.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-all font-semibold">
                                     {userProfile.role === 'supervisor' && (
                                         <td className="p-4">
@@ -766,6 +785,9 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                                     )}
                                 </tr>
                             ))}
+                            {shouldVirtualizeLeave && leaveVirtual.bottomPadding > 0 && (
+                                <tr aria-hidden="true"><td colSpan={leaveTableColSpan} style={{ height: leaveVirtual.bottomPadding, padding: 0 }} /></tr>
+                            )}
                         </tbody>
                      </table>
                  </div>

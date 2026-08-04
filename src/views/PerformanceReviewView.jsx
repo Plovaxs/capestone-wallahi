@@ -7,6 +7,7 @@ import { showUserError } from '../utils/errorHandling';
 import { confirmDialog } from '../utils/confirm';
 import { generateReviewPdf } from '../utils/generateReviewPdf';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
+import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -30,6 +31,17 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     const [isLoadingHistory, setIsLoadingHistory] = useState(false); // Network fallback tracking flag for data lists
     const [editingEvalId, setEditingEvalId] = useState(null); // Populated with a row ID if amending an existing review
     const [selectedHistoricalEval, setSelectedHistoricalEval] = useState(null); // Controls read-only overlay transcripts
+
+    // 🟩 VIRTUALIZATION: the appraisal archive only ever grows (one row per
+    // employee per review period, forever) — past a threshold, render just
+    // the rows in view instead of the whole history.
+    const EVAL_VIRTUALIZE_THRESHOLD = 30;
+    const EVAL_ROW_HEIGHT = 57;
+    const evalVirtual = useVirtualizedRows(evaluations.length, EVAL_ROW_HEIGHT, { containerHeight: 480 });
+    const shouldVirtualizeEvals = evaluations.length > EVAL_VIRTUALIZE_THRESHOLD;
+    const visibleEvaluations = shouldVirtualizeEvals
+        ? evaluations.slice(evalVirtual.startIndex, evalVirtual.endIndex)
+        : evaluations;
 
     // --- ROSTER SELECTION AND FILTER CONTROLS ---
     const [searchIntern, setSearchIntern] = useState('');
@@ -531,7 +543,11 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         {userProfile.role === 'supervisor' ? t('reviews.historicalLogs') : t('reviews.myAppraisals')}
                     </h2>
                 </div>
-                <div className="overflow-x-auto">
+                <div
+                    className="overflow-x-auto"
+                    style={shouldVirtualizeEvals ? { maxHeight: evalVirtual.containerHeight, overflowY: 'auto' } : undefined}
+                    onScroll={shouldVirtualizeEvals ? evalVirtual.onScroll : undefined}
+                >
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-50/80 dark:bg-gray-700/40 border-b border-gray-100 dark:border-gray-700 text-[11px] font-bold text-gray-400 uppercase tracking-wider">
                             <tr>
@@ -543,7 +559,10 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-gray-700 text-xs">
-                            {evaluations.map(record => (
+                            {shouldVirtualizeEvals && evalVirtual.topPadding > 0 && (
+                                <tr aria-hidden="true"><td colSpan="5" style={{ height: evalVirtual.topPadding, padding: 0 }} /></tr>
+                            )}
+                            {visibleEvaluations.map(record => (
                                 <tr key={record.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-all">
                                     <td className="p-4 font-mono font-bold text-gray-500">{new Date(record.created_at).toLocaleDateString('en-GB')}</td>
                                     <td className="p-4 font-bold text-gray-800 dark:text-gray-200">{getUserName(record.employee_id)}</td>
@@ -569,6 +588,9 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                     </td>
                                 </tr>
                             ))}
+                            {shouldVirtualizeEvals && evalVirtual.bottomPadding > 0 && (
+                                <tr aria-hidden="true"><td colSpan="5" style={{ height: evalVirtual.bottomPadding, padding: 0 }} /></tr>
+                            )}
                             {evaluations.length === 0 && !isLoadingHistory && (
                                 <tr>
                                     <td colSpan="5" className="p-8 text-center text-xs text-gray-400 italic">{t('reviews.noEvaluations')}</td>

@@ -42,10 +42,19 @@ export default function LoginPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
+  // 🟩 PASSWORD FALLBACK: the zero-touch face login silently retries forever
+  // on every blink — a legitimate user with a stale/no-longer-matching
+  // descriptor (lighting, new glasses, re-enrollment needed) gets stuck in
+  // an invisible retry loop with no signal to just use the password fields
+  // that are already on screen. After a few consecutive failures, stop
+  // auto-retrying and point them at the password form instead.
+  const [biometricFailCount, setBiometricFailCount] = useState(0);
+  const MAX_BIOMETRIC_FAILURES = 3;
+  const suggestPasswordFallback = biometricFailCount >= MAX_BIOMETRIC_FAILURES;
 
   const videoRef = useRef(null);
   const isEyeClosedRef = useRef(false);
-  const isRedirectingRef = useRef(false); 
+  const isRedirectingRef = useRef(false);
   const lastAttemptRef = useRef(0);
   const ATTEMPT_COOLDOWN_MS = 4000;
 
@@ -142,15 +151,19 @@ export default function LoginPage() {
             setBlinkCount(p => p + 1);
             
             if (authMode === 'login') {
-              const now = Date.now();
-             if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
-               // Ignore blinks/noise while still cooling down from the last attempt
-               setBiometricStatus(t('login.statusPleaseWait'));
-             } else {
-               lastAttemptRef.current = now;
-               setBiometricStatus(t('login.statusLivenessVerified'));
-               await executeBiometricLogin(detection.descriptor);
-             }
+              if (suggestPasswordFallback) {
+                setBiometricStatus(t('login.statusUsePasswordInstead'));
+              } else {
+                const now = Date.now();
+                if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
+                  // Ignore blinks/noise while still cooling down from the last attempt
+                  setBiometricStatus(t('login.statusPleaseWait'));
+                } else {
+                  lastAttemptRef.current = now;
+                  setBiometricStatus(t('login.statusLivenessVerified'));
+                  await executeBiometricLogin(detection.descriptor);
+                }
+              }
             } else {
               setBiometricStatus(t('login.statusMatrixVerified'));
             }
@@ -178,7 +191,7 @@ export default function LoginPage() {
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [authMode, modelsLoaded]);
+  }, [authMode, modelsLoaded, suggestPasswordFallback]);
 
   const executeBiometricLogin = async (liveDescriptor) => {
        isRedirectingRef.current = true;
@@ -191,6 +204,7 @@ export default function LoginPage() {
    if (error || !data?.token_hash) {
      isRedirectingRef.current = false;
      setError(t('login.errorFaceNotRecognized'));
+     setBiometricFailCount((prev) => prev + 1);
      return;
    }
 
@@ -203,6 +217,7 @@ export default function LoginPage() {
    if (verifyError) {
      isRedirectingRef.current = false;
      setError(t('login.errorSessionVerification'));
+     setBiometricFailCount((prev) => prev + 1);
      return;
    }
    // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
@@ -273,7 +288,14 @@ export default function LoginPage() {
         if (loginError) throw loginError;
       }
     } catch (err) {
-      setError(err.message);
+      // Our own `new Error(t('login.error...'))` throws are already safe,
+      // user-facing i18n strings. Anything else (raw Supabase auth/Postgres
+      // errors — e.g. "duplicate key value violates unique constraint...")
+      // carries a `code`/`status` and must not be shown verbatim, since it
+      // can expose table/column/constraint names to the end user.
+      console.error('[login] auth flow failed:', err);
+      const isRawBackendError = err && (err.code !== undefined || err.status !== undefined);
+      setError(isRawBackendError ? t('login.errorGenericAuthFailed') : err.message);
       setBiometricStatus(t('login.statusFailed'));
     } finally {
       setLoading(false);
@@ -289,6 +311,19 @@ export default function LoginPage() {
             <h2 className="text-2xl font-bold text-white mb-1">{t('login.companyName')}</h2>
             <p className="text-blue-200 text-xs uppercase tracking-wider">{t('login.systemSubtitle')}</p>
           </div>
+
+          {authMode === 'login' && suggestPasswordFallback && (
+            <div role="status" className="mb-4 text-xs bg-amber-500/15 border border-amber-500/30 text-amber-200 p-3 rounded-lg flex items-center justify-between gap-2">
+              <span>{t('login.faceLoginStrugglingUsePassword')}</span>
+              <button
+                type="button"
+                onClick={() => setBiometricFailCount(0)}
+                className="shrink-0 underline hover:text-white bg-transparent border-none cursor-pointer font-bold"
+              >
+                {t('login.retryFaceLogin')}
+              </button>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {authMode === 'register' && (
@@ -352,6 +387,7 @@ export default function LoginPage() {
               onClick={() => {
                 setAuthMode(authMode === 'login' ? 'register' : 'login');
                 setError('');
+                setBiometricFailCount(0);
               }}
               className="text-blue-200 text-sm hover:text-white underline bg-transparent border-none cursor-pointer"
             >

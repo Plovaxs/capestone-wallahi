@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace } from './faceQuality';
+import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from './faceQuality';
 
 describe('checkFraming', () => {
     const imageWidth = 640;
@@ -85,5 +85,54 @@ describe('checkSingleFace', () => {
 
     it('rejects when a second face is flagged ambiguous (photo-next-to-face attack shape)', () => {
         expect(checkSingleFace(2, true)).toEqual({ ok: false, reason: 'multiple-faces' });
+    });
+});
+
+describe('checkLensObstruction', () => {
+    const width = 20;
+    const height = 20;
+
+    const makeFlatImageData = (value) => {
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = value; data[i + 1] = value; data[i + 2] = value; data[i + 3] = 255;
+        }
+        return data;
+    };
+
+    const makeCheckerboardImageData = () => {
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const value = (x + y) % 2 === 0 ? 20 : 235;
+                data[idx] = value; data[idx + 1] = value; data[idx + 2] = value; data[idx + 3] = 255;
+            }
+        }
+        return data;
+    };
+
+    it('flags a perfectly uniform frame as a fogged/dirty/obstructed lens', () => {
+        expect(checkLensObstruction(makeFlatImageData(128), width, height)).toEqual({ ok: false, reason: 'lens-obstructed' });
+    });
+
+    it('accepts a frame with real high-frequency detail', () => {
+        expect(checkLensObstruction(makeCheckerboardImageData(), width, height)).toEqual({ ok: true, reason: null });
+    });
+
+    it('passes through when there is no image data to check', () => {
+        expect(checkLensObstruction(null, width, height)).toEqual({ ok: true, reason: null });
+    });
+
+    it('a dim-but-detailed frame is not flagged as lens obstruction (dark != obstructed)', () => {
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const value = (x + y) % 2 === 0 ? 5 : 45;
+                data[idx] = value; data[idx + 1] = value; data[idx + 2] = value; data[idx + 3] = 255;
+            }
+        }
+        expect(checkLensObstruction(data, width, height)).toEqual({ ok: true, reason: null });
     });
 });

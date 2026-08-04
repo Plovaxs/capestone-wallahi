@@ -47,6 +47,41 @@ export function checkOcclusion(detectionScore, minScore = 0.25) {
 }
 
 /**
+ * Detects a fogged, smudged, or otherwise physically obstructed lens by
+ * measuring high-frequency detail (a cheap pixel-gradient proxy for
+ * sharpness) across the *whole* captured frame, not just the face region.
+ * A dirty/fogged lens blurs everything uniformly — background included —
+ * which is what separates it from "face is just a bit soft" (which the
+ * per-face occlusion/confidence check above already covers) or "scene is
+ * dark" (a dim-but-clear image still has sharp edges, just faint ones).
+ *
+ * Samples on a stride instead of every pixel — this runs once per scan
+ * tick and only needs to be a rough signal, not a precise metric.
+ */
+export function checkLensObstruction(imageData, width, height, { minSharpness = 6, sampleStride = 4 } = {}) {
+    if (!imageData || !width || !height) return { ok: true, reason: null };
+
+    const luminance = (i) => 0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2];
+
+    let gradientSum = 0;
+    let sampleCount = 0;
+    for (let y = 0; y < height - 1; y += sampleStride) {
+        for (let x = 0; x < width - 1; x += sampleStride) {
+            const idx = (y * width + x) * 4;
+            const idxRight = (y * width + (x + 1)) * 4;
+            const idxDown = ((y + 1) * width + x) * 4;
+            gradientSum += Math.abs(luminance(idx) - luminance(idxRight)) + Math.abs(luminance(idx) - luminance(idxDown));
+            sampleCount += 1;
+        }
+    }
+
+    if (sampleCount === 0) return { ok: true, reason: null };
+    const avgGradient = gradientSum / sampleCount;
+    if (avgGradient < minSharpness) return { ok: false, reason: 'lens-obstructed' };
+    return { ok: true, reason: null };
+}
+
+/**
  * Only rejects on `isAmbiguous` (a second face similarly-sized AND adjacent
  * to the primary one — the actual "hold up someone else's photo" attack
  * shape), not merely on faceCount > 1. Extra faces from bystanders in a

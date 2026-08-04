@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -9,14 +9,22 @@ import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
+import { getServerNow } from '../utils/serverTime';
 import { RandomLivenessChallenge, CHALLENGE_TYPES, calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
-import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace } from '../vision/faceQuality';
+import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
 import { classifyMatch } from '../vision/matchConfidence';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { recordMatchDistance, clearStalenessCounter } from '../vision/descriptorStaleness';
 import { checkEnrollmentQuality } from '../vision/enrollmentQuality';
+import { saveEnrollmentProgress, loadEnrollmentProgress, clearEnrollmentProgress } from '../vision/enrollmentProgress';
+import { isTorchSupported, setTorch } from '../utils/torchControl';
+import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
+import { createMotionStabilityTracker } from '../sensors/motionStability';
+import { createAmbientLightWatcher } from '../sensors/ambientLight';
+import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
+import { useDeviceTelemetry } from '../realtime/useDeviceTelemetry';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
 
@@ -29,6 +37,7 @@ const QUALITY_HINT_KEYS = {
     'too-dark': 'attendance.statusTooDark',
     'too-bright': 'attendance.statusTooBright',
     'low-confidence': 'attendance.statusLowConfidence',
+    'lens-obstructed': 'attendance.statusLensObstructed',
 };
 
 const CHALLENGE_HINT_KEYS = {
@@ -40,6 +49,14 @@ const ENROLL_QUALITY_HINT_KEYS = {
     'too-dark': 'attendance.enrollQualityTooDark',
     'too-bright': 'attendance.enrollQualityTooBright',
     'too-blurry': 'attendance.enrollQualityTooBlurry',
+};
+
+const CAMERA_ERROR_I18N_KEYS = {
+    denied: { title: 'attendance.cameraErrorDeniedTitle', body: 'attendance.cameraErrorDeniedBody' },
+    'not-found': { title: 'attendance.cameraErrorNotFoundTitle', body: 'attendance.cameraErrorNotFoundBody' },
+    busy: { title: 'attendance.cameraErrorBusyTitle', body: 'attendance.cameraErrorBusyBody' },
+    unsupported: { title: 'attendance.cameraErrorUnsupportedTitle', body: 'attendance.cameraErrorUnsupportedBody' },
+    unknown: { title: 'attendance.cameraErrorUnknownTitle', body: 'attendance.cameraErrorUnknownBody' },
 };
 
 const determineYoloVersion = () => {
@@ -94,13 +111,26 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [liveDistance, setLiveDistance] = useState(null); 
     const [isInRange, setIsInRange] = useState(false); 
     const [currentCoords, setCurrentCoords] = useState(null); 
-    const [isCameraReady, setIsCameraReady] = useState(false); 
+    const [isCameraReady, setIsCameraReady] = useState(false);
     const [, setCameraStatus] = useState('idle'); // cameraStatus itself is never read, only tracked
+    // 🟩 CAMERA FALLBACK: distinguishes *why* the webcam gate failed (denied
+    // permission vs. no camera hardware vs. browser/context doesn't support
+    // getUserMedia at all vs. camera already claimed by another app) so the
+    // UI can tell the employee what to actually do about it, instead of the
+    // scan panel just silently sitting there forever.
+    const [cameraError, setCameraError] = useState(null);
     const [faceStatus, setFaceStatus] = useState('idle'); 
     const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
     const [, setClockInAt] = useState(''); // write-only, never displayed
     const [, setClockInSource] = useState('none'); // write-only, never displayed
-    const [disableYolo] = useState(false); // setter was never called anywhere — always stays false
+    // 🟩 NETWORK & BATTERY ADAPTIVE: YOLO is a heavier model fetch + more
+    // CPU/battery per frame than face-api's tiny detector alone. Previously
+    // this was permanently false (setter was never called) regardless of
+    // device conditions — now it's re-evaluated on mount and whenever the
+    // network or battery status actually changes, both narrowly-supported
+    // APIs that degrade to "assume normal conditions" where unavailable.
+    const [disableYolo, setDisableYolo] = useState(false);
+    const [deviceConditions, setDeviceConditions] = useState({ networkEffectiveType: null, isSlowNetwork: false, batteryLevel: null, isCharging: null });
     const [, setCurrentModelVersion] = useState(null); // write-only, never displayed
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
@@ -110,6 +140,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [hasBlinked, setHasBlinked] = useState(false); // 🟩 NEW: liveness gate — a matched face still can't clock in until the liveness challenge is confirmed
     const [challengeType, setChallengeType] = useState(null); // 🟩 NEW: which liveness challenge is active this session (blink or head-turn)
     const [showConsentModal, setShowConsentModal] = useState(false); // 🟩 NEW: biometric-data consent gate before first enrollment
+    // 🟩 LOW-LIGHT MITIGATION: don't just reject a dark scan — actively try to
+    // fix it. `lowLightStreakRef` counts consecutive dark reads (debounces a
+    // single noisy frame from flicking the torch on/off); once it crosses
+    // the threshold, `isLowLightRef` also tells detectFaceFromImage to boost
+    // brightness/contrast on the capture canvas before running detection.
+    const lowLightStreakRef = useRef(0);
+    const isLowLightRef = useRef(false);
+    const [torchActive, setTorchActive] = useState(false);
+    // 🟩 SENSOR FUSION: fuses devicemotion's x/y/z accelerometer axes into a
+    // rolling stability signal — mobile-only (desktop webcams have no
+    // accelerometer, so this just never becomes `ready` there, which is the
+    // correct no-op). See sensors/motionStability.js.
+    const motionTrackerRef = useRef(createMotionStabilityTracker());
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterSource, setFilterSource] = useState('all');
@@ -203,7 +246,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         sourceCanvas.height = height;
         const sourceContext = sourceCanvas.getContext('2d');
         if (!sourceContext) return null;
+        // 🟩 LOW-LIGHT IMAGE ENHANCEMENT: when recent frames came back too
+        // dark, boost brightness/contrast on the way into the capture canvas
+        // instead of just rejecting every scan until the room gets brighter.
+        // Standard Canvas 2D `filter` — cheap, and only active while dark.
+        sourceContext.filter = isLowLightRef.current ? 'brightness(1.6) contrast(1.15)' : 'none';
         sourceContext.drawImage(imageEl, 0, 0, width, height);
+        sourceContext.filter = 'none';
 
         if (!disableYolo) {
             try {
@@ -314,6 +363,26 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const lateDays = myHistory.filter(a => a.status === 'Late').length;
     const punctualityScore = PunctualityPolicy.calculate(myHistory) ?? 0;
 
+    // 🟩 DIGITAL TWIN: a lightweight live snapshot of this browser tab's
+    // local "edge device" state, broadcast over an ephemeral presence
+    // channel (see realtime/useDeviceTelemetry.js) — never persisted to the
+    // database — so supervisors can see device health across every active
+    // scan session in real time.
+    const localTelemetry = useMemo(() => ({
+        cameraStatus: cameraError ? 'error' : isCameraReady ? 'ready' : 'loading',
+        faceStatus,
+        geofenceStatus: isInRange ? 'in-range' : 'out-of-range',
+        yoloTier: disableYolo ? 'disabled-adaptive' : 'active',
+        torchActive,
+        networkEffectiveType: deviceConditions.networkEffectiveType,
+        isSlowNetwork: deviceConditions.isSlowNetwork,
+        batteryLevel: deviceConditions.batteryLevel,
+        isCharging: deviceConditions.isCharging,
+        updatedAt: Date.now(),
+    }), [cameraError, isCameraReady, faceStatus, isInRange, disableYolo, torchActive, deviceConditions]);
+
+    const telemetryByUserId = useDeviceTelemetry(userProfile, localTelemetry);
+
     // 🟩 NEW: Lets an intern filter their own log by On Time / Late instead of
     // scanning every card manually.
     const filteredMyHistory = myHistory.filter(a => historyStatusFilter === 'all' || a.status === historyStatusFilter);
@@ -397,29 +466,38 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     useEffect(() => {
         if (!navigator.geolocation || !userProfile) return;
 
+        // 🟩 GEOFENCE STATE MACHINE: a plain `dist <= radius` check flickers
+        // whenever GPS noise (routinely several meters) puts a reading right
+        // at the boundary — the "in range" gate would flip on and off every
+        // few seconds for anyone standing near the edge. Hysteresis + a
+        // small debounce (see geo/geofenceStateMachine.js) smooths that out.
+        // A fresh machine per effect run — it should reset if the assigned
+        // office location itself changes.
+        const geofenceMachine = createGeofenceStateMachine({ radiusMeters: ALLOWED_RADIUS_METERS, hysteresisMeters: 25, requiredConsecutiveReads: 2 });
+
         const watchId = navigator.geolocation.watchPosition(
             (position) => {
                 try {
                     const { latitude, longitude } = position.coords;
-                    setCurrentCoords({ latitude, longitude }); 
+                    setCurrentCoords({ latitude, longitude });
 
-                    const earthRadius = 6371000; 
+                    const earthRadius = 6371000;
                     const dLat = (OFFICE_LOCATION.lat - latitude) * Math.PI / 180;
                     const dLon = (OFFICE_LOCATION.lng - longitude) * Math.PI / 180;
                     const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(latitude * Math.PI / 180) * Math.cos(OFFICE_LOCATION.lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
                     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
                     const dist = earthRadius * c;
-                    
+
                     setLiveDistance(dist);
-                    
+
                     if (userProfile.role === 'supervisor') {
-                        setIsInRange(true); 
+                        setIsInRange(true);
                     } else {
                         const assignedMode = userProfile.work_mode || 'WFO';
                         if (assignedMode === 'WFH') {
-                            setIsInRange(true); 
+                            setIsInRange(true);
                         } else {
-                            setIsInRange(dist <= ALLOWED_RADIUS_METERS); 
+                            setIsInRange(geofenceMachine.update(dist).state === 'INSIDE');
                         }
                     }
                 } catch (e) {
@@ -438,6 +516,121 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     }, [userProfile, OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]);
 
     // ==========================================
+    // SENSOR FUSION: DEVICE MOTION STABILITY
+    // ==========================================
+    useEffect(() => {
+        if (!userProfile || userProfile.role === 'supervisor' || typeof DeviceMotionEvent === 'undefined') return;
+
+        const handleMotion = (event) => {
+            const acc = event.accelerationIncludingGravity || event.acceleration;
+            if (!acc) return;
+            motionTrackerRef.current.addReading({ x: acc.x, y: acc.y, z: acc.z });
+        };
+
+        let cancelled = false;
+        const tracker = motionTrackerRef.current;
+        // iOS 13+ requires an explicit, user-gesture-triggered permission
+        // prompt for motion sensors; every other platform just works.
+        const attach = async () => {
+            try {
+                if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                    const permission = await DeviceMotionEvent.requestPermission();
+                    if (permission !== 'granted' || cancelled) return;
+                }
+                window.addEventListener('devicemotion', handleMotion);
+            } catch {
+                // Sensor unavailable/denied — motion tracker just stays "not ready" forever, which is fine.
+            }
+        };
+        attach();
+
+        return () => {
+            cancelled = true;
+            window.removeEventListener('devicemotion', handleMotion);
+            tracker.reset();
+        };
+    }, [userProfile]);
+
+    // ==========================================
+    // AMBIENT LIGHT SENSOR (where available)
+    // ==========================================
+    useEffect(() => {
+        if (!userProfile || userProfile.role === 'supervisor') return;
+
+        // 🟩 Feeds the *same* low-light mitigation path as the pixel-
+        // brightness check (item 17) — a real lux reading can catch a dim
+        // room before the user even starts scanning, instead of waiting for
+        // 3 dark camera frames. Support is rare (Chrome desktop/Android
+        // behind a Permissions-Policy header); createAmbientLightWatcher
+        // returns null everywhere else and this effect is then a no-op.
+        const watcher = createAmbientLightWatcher({
+            onReading: ({ isLowLight }) => {
+                if (isLowLight === isLowLightRef.current) return;
+                isLowLightRef.current = isLowLight;
+                if (isLowLight) {
+                    if (webcamStreamRef.current && isTorchSupported(webcamStreamRef.current)) {
+                        setTorch(webcamStreamRef.current, true).then((ok) => ok && setTorchActive(true));
+                    }
+                } else {
+                    lowLightStreakRef.current = 0;
+                    if (webcamStreamRef.current) {
+                        setTorch(webcamStreamRef.current, false).then(() => setTorchActive(false));
+                    }
+                }
+            },
+        });
+
+        return () => watcher?.stop();
+    }, [userProfile]);
+
+    // ==========================================
+    // NETWORK & BATTERY ADAPTIVE WORKLOAD
+    // ==========================================
+    useEffect(() => {
+        if (!userProfile || userProfile.role === 'supervisor') return;
+        let isCancelled = false;
+        let batteryRef = null;
+
+        const evaluate = async () => {
+            const network = getNetworkProfile();
+            const battery = await getBatteryProfile();
+            if (isCancelled) return;
+            setDisableYolo(shouldReduceWorkload(network, battery));
+            setDeviceConditions({
+                networkEffectiveType: network.effectiveType,
+                isSlowNetwork: network.isSlow,
+                batteryLevel: battery.supported ? battery.level : null,
+                isCharging: battery.supported ? battery.charging : null,
+            });
+        };
+
+        evaluate();
+
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        connection?.addEventListener?.('change', evaluate);
+
+        (async () => {
+            if (typeof navigator.getBattery !== 'function') return;
+            try {
+                const battery = await navigator.getBattery();
+                if (isCancelled) return;
+                batteryRef = battery;
+                battery.addEventListener('levelchange', evaluate);
+                battery.addEventListener('chargingchange', evaluate);
+            } catch {
+                // Battery API unavailable/denied — network signal alone still applies.
+            }
+        })();
+
+        return () => {
+            isCancelled = true;
+            connection?.removeEventListener?.('change', evaluate);
+            batteryRef?.removeEventListener('levelchange', evaluate);
+            batteryRef?.removeEventListener('chargingchange', evaluate);
+        };
+    }, [userProfile]);
+
+    // ==========================================
     // VIDEO LIFE CYCLE CONTROLLER
     // ==========================================
     useEffect(() => {
@@ -447,6 +640,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         const startWebcam = async () => {
             setCameraStatus('loading');
+            setCameraError(null);
+
+            if (!navigator.mediaDevices?.getUserMedia) {
+                // Very old browser, or a non-secure (http, non-localhost) context —
+                // getUserMedia is unavailable entirely rather than throwing.
+                setCameraStatus('error');
+                setCameraError('unsupported');
+                return;
+            }
+
             try {
                 stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
                 if (isCancelled) {
@@ -459,8 +662,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 }
                 setIsCameraReady(true);
                 setCameraStatus('ready');
-            } catch (_error) {
+            } catch (error) {
                 setCameraStatus('error');
+                if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+                    setCameraError('denied');
+                } else if (error?.name === 'NotFoundError' || error?.name === 'OverconstrainedError') {
+                    setCameraError('not-found');
+                } else if (error?.name === 'NotReadableError') {
+                    setCameraError('busy');
+                } else {
+                    setCameraError('unknown');
+                }
             }
         };
 
@@ -541,11 +753,42 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     // trusting a match — a low-quality read shouldn't silently
                     // count toward liveness or clock-in either way.
                     let brightness = { ok: true, reason: null };
+                    let lensObstruction = { ok: true, reason: null };
                     if (liveDet.box && liveDet.sourceCanvas) {
                         try {
                             const ctx = liveDet.sourceCanvas.getContext('2d');
                             const region = ctx.getImageData(liveDet.box.x, liveDet.box.y, liveDet.box.width, liveDet.box.height);
                             brightness = checkBrightness(region.data);
+
+                            // 🟩 LOW-LIGHT MITIGATION: 3 consecutive dark reads (not just
+                            // one noisy frame) before reacting — flips on the enhancement
+                            // filter for the *next* capture and, where the device exposes
+                            // a torch, turns it on. Recovers the same way in reverse.
+                            const LOW_LIGHT_STREAK_THRESHOLD = 3;
+                            if (brightness.reason === 'too-dark') {
+                                lowLightStreakRef.current += 1;
+                                if (lowLightStreakRef.current >= LOW_LIGHT_STREAK_THRESHOLD && !isLowLightRef.current) {
+                                    isLowLightRef.current = true;
+                                    if (webcamStreamRef.current && isTorchSupported(webcamStreamRef.current)) {
+                                        setTorch(webcamStreamRef.current, true).then((ok) => ok && setTorchActive(true));
+                                    }
+                                }
+                            } else if (isLowLightRef.current) {
+                                lowLightStreakRef.current = 0;
+                                isLowLightRef.current = false;
+                                if (webcamStreamRef.current) {
+                                    setTorch(webcamStreamRef.current, false).then(() => setTorchActive(false));
+                                }
+                            } else {
+                                lowLightStreakRef.current = 0;
+                            }
+
+                            // 🟩 LENS FOG/DIRT DETECTION: sampled across the *whole* frame
+                            // (not just the face box) — a fogged or smudged lens blurs
+                            // the background too, which is what distinguishes it from a
+                            // face that's merely soft-focused or backlit.
+                            const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                            lensObstruction = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                         } catch (_err) {
                             // getImageData can throw on a tainted canvas in some browsers — skip the check, don't crash the loop.
                         }
@@ -553,7 +796,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
                     const singleFace = checkSingleFace(liveDet.faceCount ?? 1, liveDet.isAmbiguous);
                     const occlusion = checkOcclusion(liveDet.detection?.score);
-                    const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
+                    const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !lensObstruction.ok ? lensObstruction : !occlusion.ok ? occlusion : null;
 
                     if (qualityIssue) {
                         setIsFaceVerified(false);
@@ -626,7 +869,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         liveDet.box.width + marginX * 2,
                                         liveDet.box.height + marginY * 2
                                     );
-                                    if (checkReplaySuspicion(borderRegion.data).suspicious) {
+                                    const motionStats = motionTrackerRef.current.getStats();
+                                    if (checkReplaySuspicion(borderRegion.data).suspicious || (motionStats.ready && motionStats.isSuspiciouslyFlat)) {
                                         toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                     }
                                 } catch (_err) {
@@ -767,38 +1011,75 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             return false;
         }
 
-        setIsLoading(true);
-        try {
-            const now = new Date();
-            const time = now.toLocaleTimeString('en-GB', { hour12: false });
-            const status = time > WORK_START_TIME ? 'Late' : 'Present';
+        // 🟩 DOUBLE CLOCK-IN GUARD: the UI already disables this button once
+        // `todayRecord` is loaded, but that state can be stale — the same
+        // employee open in two browser tabs, or clocking in from a phone a
+        // moment after a desktop tab, both pass that check before either
+        // insert lands. Web Locks (where supported) serializes concurrent
+        // attempts *within this browser* across tabs; a fresh existence
+        // check right before the insert then closes most of what's left of
+        // the cross-device race window (can't fully close it without a DB
+        // unique constraint, which is out of scope here).
+        const runClockIn = async () => {
+            setIsLoading(true);
+            try {
+                const { data: existing, error: existingCheckError } = await supabase
+                    .from(ATTENDANCE_TABLE)
+                    .select('id')
+                    .eq('employee_id', userProfile.id)
+                    .eq('date', today)
+                    .maybeSingle();
 
-            const { error } = await supabase.from(ATTENDANCE_TABLE).insert([{ 
-                employee_id: userProfile.id,
-                date: today,
-                status,
-                clock_in: time,
-                latitude: currentCoords ? currentCoords.latitude : null,
-                longitude: currentCoords ? currentCoords.longitude : null,
-            }]);
+                if (existingCheckError) {
+                    showUserError('Failed to record attendance', existingCheckError);
+                    return false;
+                }
+                if (existing) {
+                    toast.error(t('attendance.alreadyClockedInToday'));
+                    await fetchAttendance();
+                    return false;
+                }
 
-            if (error) {
-                showUserError('Failed to record attendance', error);
-                return false;
+                // 🟩 Uses the Supabase server's clock (via its response `Date`
+                // header), not the device's — otherwise punctuality is decided
+                // by a value the user's own OS clock controls, trivially
+                // spoofable by winding the system time back before clocking in.
+                const now = await getServerNow();
+                const time = now.toLocaleTimeString('en-GB', { hour12: false });
+                const status = time > WORK_START_TIME ? 'Late' : 'Present';
+
+                const { error } = await supabase.from(ATTENDANCE_TABLE).insert([{
+                    employee_id: userProfile.id,
+                    date: today,
+                    status,
+                    clock_in: time,
+                    latitude: currentCoords ? currentCoords.latitude : null,
+                    longitude: currentCoords ? currentCoords.longitude : null,
+                }]);
+
+                if (error) {
+                    showUserError('Failed to record attendance', error);
+                    return false;
+                }
+
+                setClockInAt(time);
+                setClockInSource(source);
+                await fetchAttendance();
+                return true;
+            } finally {
+                setIsLoading(false);
             }
+        };
 
-            setClockInAt(time);
-            setClockInSource(source);
-            await fetchAttendance();
-            return true;
-        } finally {
-            setIsLoading(false);
+        if (navigator.locks?.request) {
+            return navigator.locks.request(`attendance-clock-in-${userProfile.id}`, runClockIn);
         }
+        return runClockIn();
     };
 
     const handleClockOut = async () => {
-        setIsLoading(true); 
-        const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        setIsLoading(true);
+        const time = (await getServerNow()).toLocaleTimeString('en-GB', { hour12: false });
         await supabase.from(ATTENDANCE_TABLE).update({ clock_out: time }).eq('id', todayRecord.id);
         await fetchAttendance(); 
         setIsLoading(false); 
@@ -841,16 +1122,28 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     };
 
     const startEnrollmentWizard = () => {
-        setEnrollmentCaptures([]);
+        // 🟩 INTERRUPTION RECOVERY: a closed tab, dropped camera, or accidental
+        // navigation mid-wizard previously threw away every pose already
+        // captured — resume from localStorage-backed progress if any exists
+        // for this user instead of forcing a full restart.
+        const saved = loadEnrollmentProgress(userProfile.id);
         setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
         latestEnrollmentDetectionRef.current = null;
-        setEnrollmentStepIndex(0);
+        if (saved) {
+            setEnrollmentCaptures(saved.captures);
+            setEnrollmentStepIndex(saved.stepIndex);
+            toast.success(t('attendance.enrollResumedProgress', { step: saved.stepIndex + 1, total: ENROLLMENT_POSES.length }));
+        } else {
+            setEnrollmentCaptures([]);
+            setEnrollmentStepIndex(0);
+        }
     };
 
     const cancelEnrollmentWizard = () => {
         setEnrollmentStepIndex(-1);
         setEnrollmentCaptures([]);
         latestEnrollmentDetectionRef.current = null;
+        clearEnrollmentProgress(userProfile.id);
     };
 
     // 🟩 MULTI-ANGLE ENROLLMENT: captures one descriptor per pose (center,
@@ -887,6 +1180,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             setEnrollmentStepIndex(enrollmentStepIndex + 1);
             setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
             latestEnrollmentDetectionRef.current = null;
+            saveEnrollmentProgress(userProfile.id, enrollmentStepIndex + 1, nextCaptures);
             toast.success(t('attendance.enrollPoseCaptured', { step: enrollmentStepIndex + 1, total: ENROLLMENT_POSES.length }));
             return;
         }
@@ -900,9 +1194,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 .eq('id', userProfile.id);
 
             if (error) {
+                // Keep the saved progress on failure — the captures are still
+                // good, only the final profile write failed, so let them
+                // retry finalization without re-scanning every pose.
                 showUserError('Failed to enroll face', error);
             } else {
                 clearStalenessCounter(userProfile.id);
+                clearEnrollmentProgress(userProfile.id);
                 toast.success(t('attendance.faceEnrolled'));
                 fetchProfile?.();
                 setEnrollmentStepIndex(-1);
@@ -991,6 +1289,57 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
             {userProfile.role === 'supervisor' ? (
                 <div className="space-y-6">
+                    {/* 🟩 DIGITAL TWIN / EDGE TELEMETRY DASHBOARD */}
+                    {Object.keys(telemetryByUserId).length > 0 && (
+                        <div className="bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
+                            <div className="px-5 py-4 border-b border-slate-700/60 bg-slate-800/20">
+                                <h3 className="text-sm font-bold text-white">{t('attendance.digitalTwinTitle')}</h3>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{t('attendance.digitalTwinDescription')}</p>
+                            </div>
+                            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {Object.entries(telemetryByUserId).map(([employeeId, telemetry]) => {
+                                    const owner = activeEmployees.find((emp) => emp.id === employeeId);
+                                    return (
+                                        <div key={employeeId} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[11px] space-y-1.5">
+                                            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1">
+                                                <span className="font-bold text-white truncate">{owner?.name || employeeId}</span>
+                                                <span className={`px-1.5 py-0.5 rounded font-black uppercase tracking-wider text-[9px] ${telemetry.cameraStatus === 'ready' ? 'bg-emerald-500/10 text-emerald-400' : telemetry.cameraStatus === 'error' ? 'bg-red-500/10 text-red-400' : 'bg-slate-700/50 text-slate-400'}`}>
+                                                    {t(`attendance.digitalTwinCamera_${telemetry.cameraStatus}`)}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-slate-400">
+                                                <span>{t('attendance.digitalTwinGeofence')}</span>
+                                                <span className={telemetry.geofenceStatus === 'in-range' ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                                                    {t(telemetry.geofenceStatus === 'in-range' ? 'attendance.digitalTwinInRange' : 'attendance.digitalTwinOutOfRange')}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between text-slate-400">
+                                                <span>{t('attendance.digitalTwinModel')}</span>
+                                                <span className="text-slate-300 font-bold">{t(telemetry.yoloTier === 'active' ? 'attendance.digitalTwinModelFull' : 'attendance.digitalTwinModelReduced')}</span>
+                                            </div>
+                                            {telemetry.torchActive && (
+                                                <div className="flex justify-between text-amber-400">
+                                                    <span>🔦 {t('attendance.torchActiveLabel')}</span>
+                                                </div>
+                                            )}
+                                            {typeof telemetry.batteryLevel === 'number' && (
+                                                <div className="flex justify-between text-slate-400">
+                                                    <span>{t('attendance.digitalTwinBattery')}</span>
+                                                    <span className="text-slate-300 font-bold">{Math.round(telemetry.batteryLevel * 100)}% {telemetry.isCharging ? '⚡' : ''}</span>
+                                                </div>
+                                            )}
+                                            {telemetry.isSlowNetwork && (
+                                                <div className="flex justify-between text-amber-400">
+                                                    <span>{t('attendance.digitalTwinSlowNetwork')}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('attendance.totalRegisteredStaff')}</div>
@@ -1204,7 +1553,32 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     className="absolute inset-0 w-full h-full object-cover"
                                     style={{ transform: 'scaleX(-1)' }}
                                 />
-                                
+
+                                {/* 🟩 CAMERA FALLBACK: covers the (empty/black) video element with an
+                                    actionable message instead of leaving the panel silently stuck. */}
+                                {cameraError && (
+                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-slate-950/95 text-center p-6">
+                                        <span className="text-3xl" aria-hidden="true">📷🚫</span>
+                                        <h4 className="text-sm font-bold text-white">{t(CAMERA_ERROR_I18N_KEYS[cameraError].title)}</h4>
+                                        <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+                                            {t(CAMERA_ERROR_I18N_KEYS[cameraError].body)}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => window.location.reload()}
+                                            className="mt-1 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 uppercase tracking-wider transition-colors"
+                                        >
+                                            {t('attendance.cameraErrorReload')}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {torchActive && (
+                                    <div className="absolute top-2 right-2 z-30 flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold uppercase tracking-wider">
+                                        <span aria-hidden="true">🔦</span> {t('attendance.torchActiveLabel')}
+                                    </div>
+                                )}
+
                                 {/* 🟩 RESTORED: Pure geometric YOLO-style HTML wireframe bounding box */}
                                 {faceOverlayBox && isCameraReady && (
                                     <div

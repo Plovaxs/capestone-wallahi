@@ -336,18 +336,38 @@ export default function App() {
   // fires and the app behaves exactly as before.
   useEffect(() => {
     if (!userProfile) return;
+
+    // 🟩 CONNECTION HEALTH: 9 independent channels each report their own
+    // status — without coalescing, a single network blip would fire up to
+    // 9 separate "reconnecting" toasts at once. Track how many are
+    // currently degraded and only show one toast for the whole group,
+    // dismissing it once every channel is healthy again.
+    const degradedChannels = new Set();
+    const handleHealthChange = (channelLabel) => (status) => {
+      if (status === 'SUBSCRIBED') {
+        degradedChannels.delete(channelLabel);
+        if (degradedChannels.size === 0) toast.dismiss('realtime-reconnecting');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        degradedChannels.add(channelLabel);
+        toast(t('offline.reconnectingLiveUpdates'), { id: 'realtime-reconnecting', icon: '🔄', duration: Infinity });
+      }
+    };
+
     const unsubscribers = [
-      subscribeToTable('tasks', () => fetchTasks(userProfile)),
-      subscribeToTable('attendance', () => fetchAttendance()),
-      subscribeToTable('leave_requests', () => fetchLeaveRequests(userProfile)),
-      subscribeToTable('contributions', () => fetchContributions()),
-      subscribeToTable('contribution_replies', () => fetchContributions()),
-      subscribeToTable('helpdesk_tickets', () => fetchHelpdeskTickets(userProfile)),
-      subscribeToTable('helpdesk_replies', () => fetchHelpdeskTickets(userProfile)),
-      subscribeToTable('performance_evaluations', () => fetchReviews(userProfile)),
-      subscribeToTable('notifications', () => fetchNotifications(userProfile)),
+      subscribeToTable('tasks', () => fetchTasks(userProfile), { onHealthChange: handleHealthChange('tasks') }),
+      subscribeToTable('attendance', () => fetchAttendance(), { onHealthChange: handleHealthChange('attendance') }),
+      subscribeToTable('leave_requests', () => fetchLeaveRequests(userProfile), { onHealthChange: handleHealthChange('leave_requests') }),
+      subscribeToTable('contributions', () => fetchContributions(), { onHealthChange: handleHealthChange('contributions') }),
+      subscribeToTable('contribution_replies', () => fetchContributions(), { onHealthChange: handleHealthChange('contribution_replies') }),
+      subscribeToTable('helpdesk_tickets', () => fetchHelpdeskTickets(userProfile), { onHealthChange: handleHealthChange('helpdesk_tickets') }),
+      subscribeToTable('helpdesk_replies', () => fetchHelpdeskTickets(userProfile), { onHealthChange: handleHealthChange('helpdesk_replies') }),
+      subscribeToTable('performance_evaluations', () => fetchReviews(userProfile), { onHealthChange: handleHealthChange('performance_evaluations') }),
+      subscribeToTable('notifications', () => fetchNotifications(userProfile), { onHealthChange: handleHealthChange('notifications') }),
     ];
-    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      toast.dismiss('realtime-reconnecting');
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 
