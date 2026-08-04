@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Icons } from './Icons';
 
@@ -49,7 +50,14 @@ const Modal = ({ isOpen, onClose, title, children }) => {
     }, [isOpen, onClose]);
 
     if (!isOpen) return null;
-    return (
+
+    // Portaled straight to <body> — not rendered in place. Whatever view
+    // opens this Modal usually sits inside .app-content-shell, which gets a
+    // CSS `filter` applied under high-contrast/colorblind mode; a `filter`
+    // on an ancestor becomes the containing block for `position: fixed`
+    // descendants, which would otherwise detach this overlay from the
+    // viewport. Portaling to body sidesteps that regardless of call site.
+    return createPortal(
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
             <div
                 ref={containerRef}
@@ -68,7 +76,8 @@ const Modal = ({ isOpen, onClose, title, children }) => {
                 {/* Children will inherit dark text styles from view components */}
                 {children}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

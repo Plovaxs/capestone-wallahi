@@ -494,11 +494,17 @@ export default function App() {
             onReplayOnboarding={() => setShowOnboarding(true)}
             onlineUserIds={onlineUserIds}
           /></React.Suspense>}
-          <div className="no-print">
-            <ChatBot userProfile={userProfile} tasks={tasks} />
-          </div>
         </main>
       </div>
+
+      {/* Rendered as a sibling of .app-content-shell, not inside it — ChatBot
+          is position:fixed, and a `filter` on an ancestor (high-contrast /
+          colorblind mode) becomes that ancestor's fixed-position containing
+          block, which would detach the chat bubble from the viewport. */}
+      <div className="no-print">
+        <ChatBot userProfile={userProfile} tasks={tasks} />
+      </div>
+
       {showOnboarding && (
         <div className="no-print">
           <OnboardingTour userProfile={userProfile} onClose={dismissOnboarding} />

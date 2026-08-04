@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -581,7 +582,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             {/* ========================================================================= */}
             {/* POPUP FULL READ-ONLY MODAL OVERLAY (FIXED INTERN DISPLAY TRANSCRIPTS)    */}
             {/* ========================================================================= */}
-            {selectedHistoricalEval && (
+            {selectedHistoricalEval && createPortal(
                 <div
                     className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex justify-center items-center p-4"
                     onClick={() => setSelectedHistoricalEval(null)}
@@ -685,7 +686,8 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                         </div>
 
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );
