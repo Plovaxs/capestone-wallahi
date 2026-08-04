@@ -110,7 +110,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // (mirrored camera preview can flip perceived left/right) — the live
     // numeric readout shown to the user is the real feedback loop, the
     // instruction text is just a starting hint.
-    const ENROLLMENT_POSES = ['center', 'left', 'right', 'up', 'down'];
+    // 🟩 SIMPLIFIED: real-user feedback said the left/right/up/down turns
+    // were confusing and made enrollment feel broken/stuck ("susah bener
+    // enroll wajah nya") -- a single straight-on capture is far more
+    // reliable to complete, at the cost of the multi-angle matching
+    // robustness the extra poses used to buy.
+    const ENROLLMENT_POSES = ['center'];
     // 🟩 LOOSENED (repeated real-user feedback: "susah bener enroll wajah
     // nya"): these required a bigger head turn/tilt than most people
     // naturally make in front of a webcam to register as "achieved" at
@@ -1020,9 +1025,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const pitch = calculatePitchRatio(det.landmarks);
                     latestEnrollmentDetectionRef.current = det;
                     setEnrollmentPoseReading({ yaw, pitch, achieved: isPoseAchieved(currentPose, yaw, pitch) });
+                    // 🟩 FACE BOX DURING ENROLLMENT: previously only the main
+                    // clock-in loop drew the bounding box, so enrollment gave
+                    // no visual confirmation a face was actually being seen —
+                    // easy to mistake for "not scanning" when it was working.
+                    if (det.box) {
+                        setFaceOverlayBox({
+                            ...det.box,
+                            imageWidth: webcamVideoRef.current.videoWidth,
+                            imageHeight: webcamVideoRef.current.videoHeight,
+                            source: det.source
+                        });
+                    }
                 } else {
                     latestEnrollmentDetectionRef.current = null;
                     setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
+                    setFaceOverlayBox(null);
                 }
             } catch (err) {
                 console.error(err);
@@ -1640,7 +1658,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 {faceOverlayBox && isCameraReady && (
                                     <div
                                         className={`absolute border-2 rounded-xl z-20 pointer-events-none transition-all duration-75 ${
-                                            faceStatus === 'matched' ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                                            (faceStatus === 'matched' || (enrollmentStepIndex >= 0 && enrollmentPoseReading.achieved)) ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
                                         }`}
                                         style={getFaceOverlayStyle() || { display: 'none' }}
                                     >
