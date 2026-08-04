@@ -118,7 +118,16 @@ export default function App() {
     try {
       const data = await profilesRepository.getById(userId);
       if (data) {
-        setUserProfile(data);
+        // 🟩 API WASTE FIX: Supabase silently re-fires the auth listener on
+        // TOKEN_REFRESHED (roughly hourly) and on tab refocus in some
+        // setups — each one called fetchProfile and handed React a brand
+        // new object even when nothing about the profile had actually
+        // changed. Every effect keyed on `userProfile` throughout the app
+        // (data reloads, the webcam, geolocation, model loading...) then
+        // saw that as a "change" and re-ran. Comparing against the current
+        // value first means a no-op refresh doesn't cascade into a wave of
+        // unnecessary refetches and restarts.
+        setUserProfile((prev) => (prev && JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
       } else {
         console.warn('Profile row missing or cleared from schema database.');
         handleLogout();
@@ -321,12 +330,23 @@ export default function App() {
    // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
 
+  // 🟩 API WASTE FIX: this previously depended on the whole `userProfile`
+  // object, not its id — but `fetchProfile` sets a brand-new object on
+  // *every* auth event, including the silent TOKEN_REFRESHED Supabase
+  // fires roughly once an hour to keep the session alive (and on tab
+  // refocus in some setups). That was re-running this 8-call bulk load
+  // (tasks/attendance/leave/contributions/helpdesk/reviews/notifications/
+  // allUsers) every time, for every open tab, even though nothing about
+  // the logged-in user had actually changed. Depending on the id (a
+  // stable primitive) instead means it only fires on an actual login or
+  // user switch.
   useEffect(() => {
     if (userProfile) loadAllAppData(userProfile);
-    // Intentional: only re-run when userProfile changes. loadAllAppData isn't
-    // memoized, so including it would refetch everything on every render.
+    // Intentional: only re-run when the logged-in user actually changes.
+    // loadAllAppData isn't memoized, so including it would refetch
+    // everything on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userProfile]);
+  }, [userProfile?.id]);
 
   // 🟩 LIVE DATA: Supabase Realtime subscriptions layered on top of the
   // existing fetches so tasks/attendance/leave/etc. update near-instantly
