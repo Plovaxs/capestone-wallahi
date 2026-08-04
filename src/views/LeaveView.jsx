@@ -99,6 +99,14 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
 
     const getUserName = (id) => usersById.get(id)?.name || t('leave.unknownOfficer');
 
+    // 🟩 Drives both the "days remaining" readout on the allowance card and
+    // the submission-time cap check — kept in sync by deriving both from
+    // the same leaveRequests prop instead of duplicating the calculation.
+    const unpaidLeaveUsedDays = useMemo(
+        () => LeaveQuotaPolicy.calculateUnpaidLeaveUsedDays(leaveRequests, userProfile?.id),
+        [leaveRequests, userProfile?.id]
+    );
+
     const getUserCampus = (id) => {
         const u = usersById.get(id);
         return u?.source || u?.university || t('leave.presidentUniversity');
@@ -191,6 +199,22 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
 
             if (requestedDays > available) {
                 toast.error(t('leave.quotaExceeded', { requested: requestedDays, available, label }));
+                return;
+            }
+        } else if (newRequest.type === 'Unpaid Leave') {
+            // 🟩 BUG FIX: Unpaid Leave never drew from a stored balance, so
+            // it previously had no limit enforcement at all — an intern
+            // could submit any number of unpaid-leave requests of any
+            // length. Caps it against an annual total instead, computed
+            // from their own existing requests (no new database column).
+            const alreadyUsed = LeaveQuotaPolicy.calculateUnpaidLeaveUsedDays(leaveRequests, userProfile.id);
+            const remaining = LeaveQuotaPolicy.UNPAID_LEAVE_ANNUAL_CAP_DAYS - alreadyUsed;
+            if (requestedDays > remaining) {
+                toast.error(t('leave.unpaidLeaveCapExceeded', {
+                    requested: requestedDays,
+                    remaining: Math.max(0, remaining),
+                    cap: LeaveQuotaPolicy.UNPAID_LEAVE_ANNUAL_CAP_DAYS,
+                }));
                 return;
             }
         }
@@ -573,6 +597,12 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                         <h3 className="font-bold text-xs text-blue-100 uppercase tracking-wider mb-4">{t('leave.myRemainingAllowance')}</h3>
                         <div className="text-4xl font-black mb-1">{userProfile?.vacation_days || 0} <span className="text-xs font-bold text-blue-200 uppercase tracking-wide block sm:inline">{t('leave.vacationDays')}</span></div>
                         <div className="text-2xl font-bold">{userProfile?.sick_days || 0} <span className="text-xs font-bold text-blue-200 uppercase tracking-wide block sm:inline">{t('leave.sickDays')}</span></div>
+                        {/* 🟩 Surfaces the same annual cap now enforced on submission (see
+                            LeaveQuotaPolicy.calculateUnpaidLeaveUsedDays) — previously unpaid
+                            leave had no visible limit at all, paid or otherwise. */}
+                        <div className="text-lg font-bold text-blue-200 mt-1">
+                            {Math.max(0, LeaveQuotaPolicy.UNPAID_LEAVE_ANNUAL_CAP_DAYS - unpaidLeaveUsedDays)} <span className="text-xs font-bold text-blue-300 uppercase tracking-wide block sm:inline">{t('leave.unpaidDaysRemaining', { cap: LeaveQuotaPolicy.UNPAID_LEAVE_ANNUAL_CAP_DAYS })}</span>
+                        </div>
                     </div>
                     <p className="text-[11px] text-blue-200/70 mt-6 italic">{t('leave.autoDeductionNote')}</p>
                 </div>
