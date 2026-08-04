@@ -37,6 +37,29 @@ export function calculateHeadTurnRatio(landmarks) {
     return (noseTip.x - (leftJaw.x + rightJaw.x) / 2) / faceWidth;
 }
 
+/**
+ * Pitch ratio: a 2D approximation of up/down head tilt. Compares where the
+ * nose tip sits between the eyebrow line and the chin — tilting the head
+ * down shifts the nose tip proportionally toward the chin; tilting up
+ * shifts it toward the brows. Same landmarks-only approach as the other
+ * two signals, no 3D head-pose model needed.
+ */
+export function calculatePitchRatio(landmarks) {
+    const nose = landmarks.getNose?.();
+    const jaw = landmarks.getJawOutline?.();
+    const leftBrow = landmarks.getLeftEyeBrow?.();
+    const rightBrow = landmarks.getRightEyeBrow?.();
+    if (!nose?.length || !jaw?.length || !leftBrow?.length || !rightBrow?.length) return 0;
+
+    const noseTip = nose[nose.length - 1];
+    const browY = (leftBrow[Math.floor(leftBrow.length / 2)].y + rightBrow[Math.floor(rightBrow.length / 2)].y) / 2;
+    const chinY = jaw[Math.floor(jaw.length / 2)].y;
+    const faceHeight = chinY - browY;
+    if (faceHeight === 0) return 0;
+
+    return (noseTip.y - (browY + chinY) / 2) / faceHeight;
+}
+
 const EAR_CLOSED_THRESHOLD = 0.23;
 const EAR_OPEN_THRESHOLD = 0.24;
 const HEAD_TURN_THRESHOLD = 0.07;

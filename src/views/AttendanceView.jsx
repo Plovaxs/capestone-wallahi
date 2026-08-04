@@ -9,8 +9,10 @@ import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
-import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { RandomLivenessChallenge, CHALLENGE_TYPES, calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace } from '../vision/faceQuality';
+import { selectPrimaryFace } from '../vision/primaryFaceSelector';
+import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
 import { classifyMatch } from '../vision/matchConfidence';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { recordMatchDistance, clearStalenessCounter } from '../vision/descriptorStaleness';
@@ -63,8 +65,32 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const FACE_SCAN_INTERVAL_MS = 1800;
     const FACE_DETECT_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.15 });
 
-    const [isLoading, setIsLoading] = useState(false); 
+    // 🟩 MULTI-ANGLE ENROLLMENT: one template captured per pose instead of a
+    // single frontal snapshot — matched against all of them at clock-in time
+    // (see multiTemplateMatcher.js) for meaningfully better day-to-day
+    // accuracy. Yaw/pitch sign conventions below are a best-effort approximation
+    // (mirrored camera preview can flip perceived left/right) — the live
+    // numeric readout shown to the user is the real feedback loop, the
+    // instruction text is just a starting hint.
+    const ENROLLMENT_POSES = ['center', 'left', 'right', 'up', 'down'];
+    const POSE_YAW_THRESHOLD = 0.10;
+    const POSE_PITCH_THRESHOLD = 0.10;
+    const isPoseAchieved = (pose, yaw, pitch) => {
+        switch (pose) {
+            case 'center': return Math.abs(yaw) < 0.06 && Math.abs(pitch) < 0.08;
+            case 'left': return yaw < -POSE_YAW_THRESHOLD;
+            case 'right': return yaw > POSE_YAW_THRESHOLD;
+            case 'up': return pitch < -POSE_PITCH_THRESHOLD;
+            case 'down': return pitch > POSE_PITCH_THRESHOLD;
+            default: return false;
+        }
+    };
+
+    const [isLoading, setIsLoading] = useState(false);
     const [isEnrolling, setIsEnrolling] = useState(false); // 🟩 NEW: guards against rapid re-clicks on Enroll Facial Matrix
+    const [enrollmentStepIndex, setEnrollmentStepIndex] = useState(-1); // -1 = wizard not active
+    const [enrollmentCaptures, setEnrollmentCaptures] = useState([]);
+    const [enrollmentPoseReading, setEnrollmentPoseReading] = useState({ yaw: 0, pitch: 0, achieved: false });
     const [liveDistance, setLiveDistance] = useState(null); 
     const [isInRange, setIsInRange] = useState(false); 
     const [currentCoords, setCurrentCoords] = useState(null); 
@@ -123,16 +149,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // trivially bypassable client-side — just avoids hammering the scan loop
     // indefinitely; per utils/tokenBucket.js's documented purpose).
     const mismatchBucketRef = useRef(getBucket(`face-scan-${userProfile.id}`, { capacity: 8, refillRatePerSec: 8 / 30 }));
+    const enrollmentScanBusyRef = useRef(false);
+    const latestEnrollmentDetectionRef = useRef(null);
 
+    // 🟩 MULTI-TEMPLATE: returns an array of Float32Array templates instead
+    // of a single descriptor. Handles both a legacy single-angle enrollment
+    // (wrapped as a 1-element array) and a multi-angle enrollment (several
+    // templates, one per captured pose) — see vision/multiTemplateMatcher.js.
+    // No schema change: the profiles.face_descriptor column already stores
+    // arbitrary JSON text, this is just a different shape within it.
     const parseStoredDescriptor = (value) => {
-        if (!value) return null;
+        if (!value) return [];
         let parsed = value;
         if (typeof value === 'string') {
-            try { parsed = JSON.parse(value); } catch { return null; }
+            try { parsed = JSON.parse(value); } catch { return []; }
         }
-        if (Array.isArray(parsed)) return new Float32Array(parsed);
-        if (parsed && Array.isArray(parsed.data)) return new Float32Array(parsed.data);
-        return null;
+        return normalizeStoredTemplates(parsed).map((t) => new Float32Array(t));
     };
 
     const getRecordClockInTime = (record) => record?.clock_in || record?.created_at || '';
@@ -176,19 +208,30 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         if (!disableYolo) {
             try {
                 const detector = await ensureYoloFaceDetector();
-                const detections = await detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD });
-                const bestDetection = detections.sort((a, b) => (b.score || 0) - (a.score || 0))[0];
+                const rawDetections = await detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD });
+                // 🟩 CROWDED-SCENE HANDLING: pick the primary (largest + most
+                // centered) face among everyone YOLO found in the frame instead
+                // of blindly taking the highest-confidence box — a bystander
+                // walking past shouldn't be able to outrank the person actually
+                // standing in front of the camera. isAmbiguous only flags when a
+                // second face is both similar in size AND physically adjacent to
+                // the primary — the actual "photo held next to face" attack shape.
+                const candidates = rawDetections
+                    .map((d) => ({ box: normalizeBoundingBox(d.box), score: d.score }))
+                    .filter((d) => d.box);
+                const { primary, isAmbiguous } = selectPrimaryFace(candidates, width, height);
 
-                if (bestDetection?.box) {
-                    const cropCanvas = cropFaceCanvas(sourceCanvas, bestDetection.box);
+                if (primary?.box) {
+                    const cropCanvas = cropFaceCanvas(sourceCanvas, primary.box);
                     if (cropCanvas) {
                         const croppedDetection = await detectWithFaceApi(cropCanvas);
                         if (croppedDetection) {
                             return {
                                 ...croppedDetection,
                                 source: 'yolo',
-                                box: normalizeBoundingBox(bestDetection.box),
-                                faceCount: detections.length, // YOLO's whole-frame count takes precedence over the single crop's own count
+                                box: primary.box,
+                                faceCount: candidates.length, // YOLO's whole-frame count takes precedence over the single crop's own count
+                                isAmbiguous,
                                 sourceCanvas,
                             };
                         }
@@ -199,12 +242,27 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }
         }
 
-        const fallbackDetection = await detectWithFaceApi(sourceCanvas);
-        if (!fallbackDetection) return null;
+        const allFaceApiDetections = await faceapi.detectAllFaces(sourceCanvas, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptors();
+        if (allFaceApiDetections.length > 0) {
+            const candidates = allFaceApiDetections
+                .map((d) => ({ box: normalizeBoundingBox(d.detection?.box), raw: d }))
+                .filter((d) => d.box);
+            const { primary, isAmbiguous } = selectPrimaryFace(candidates, width, height);
+            if (primary) {
+                return { ...primary.raw, source: 'faceapi', box: primary.box, faceCount: candidates.length, isAmbiguous, sourceCanvas };
+            }
+        }
+
+        // Last-resort fallback for the rare case detectAllFaces finds nothing
+        // but the single-face detector's slightly different algorithm does.
+        const single = await faceapi.detectSingleFace(sourceCanvas, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+        if (!single) return null;
         return {
-            ...fallbackDetection,
+            ...single,
             source: 'faceapi',
-            box: normalizeBoundingBox(fallbackDetection.detection?.box || fallbackDetection.box),
+            box: normalizeBoundingBox(single.detection?.box || single.box),
+            faceCount: 1,
+            isAmbiguous: false,
             sourceCanvas,
         };
     };
@@ -428,9 +486,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
                 faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
             ]);
-            const savedDescriptor = parseStoredDescriptor(userProfile.face_descriptor);
-            if (savedDescriptor) {
-                referenceDescriptorRef.current = savedDescriptor;
+            const savedTemplates = parseStoredDescriptor(userProfile.face_descriptor);
+            if (savedTemplates.length > 0) {
+                referenceDescriptorRef.current = savedTemplates;
                 setHasStoredFace(true);
                 setFaceStatus('scanning');
                 setBiometricStatus(t('attendance.statusAlignFace'));
@@ -493,7 +551,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         }
                     }
                     const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
-                    const singleFace = checkSingleFace(liveDet.faceCount ?? 1);
+                    const singleFace = checkSingleFace(liveDet.faceCount ?? 1, liveDet.isAmbiguous);
                     const occlusion = checkOcclusion(liveDet.detection?.score);
                     const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
 
@@ -505,8 +563,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         return;
                     }
 
-                    if (referenceDescriptorRef.current) {
-                        const dist = faceapi.euclideanDistance(liveDet.descriptor, referenceDescriptorRef.current);
+                    if (referenceDescriptorRef.current && referenceDescriptorRef.current.length > 0) {
+                        // 🟩 MULTI-TEMPLATE MATCHING: compares against every angle
+                        // captured at enrollment and keeps the best (lowest-distance)
+                        // result — meaningfully more robust day-to-day than a single
+                        // frontal snapshot (lighting, angle, expression all vary).
+                        const { distance: dist } = matchAgainstTemplates(
+                            liveDet.descriptor,
+                            referenceDescriptorRef.current,
+                            faceapi.euclideanDistance
+                        );
                         const matchTier = classifyMatch(dist, FACE_MATCH_THRESHOLD);
                         setFaceMatchDistance(dist);
                         setFaceDetectionMode(liveDet.source || 'faceapi');
@@ -604,6 +670,42 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo]);
+
+    // ==========================================
+    // MULTI-ANGLE ENROLLMENT WIZARD SCAN LOOP
+    // Runs only while the wizard is active (enrollmentStepIndex >= 0),
+    // separate from the main clock-in scan loop above. Just tracks
+    // yaw/pitch and keeps the latest detection ready for the manual
+    // "Capture" button — no matching, no liveness challenge, no clock-in.
+    // ==========================================
+    useEffect(() => {
+        if (enrollmentStepIndex < 0 || !isCameraReady) return;
+
+        const currentPose = ENROLLMENT_POSES[enrollmentStepIndex];
+        const timer = setInterval(async () => {
+            if (enrollmentScanBusyRef.current || !webcamVideoRef.current) return;
+            enrollmentScanBusyRef.current = true;
+
+            try {
+                const det = await detectFaceFromImage(webcamVideoRef.current);
+                if (det?.landmarks) {
+                    const yaw = calculateHeadTurnRatio(det.landmarks);
+                    const pitch = calculatePitchRatio(det.landmarks);
+                    latestEnrollmentDetectionRef.current = det;
+                    setEnrollmentPoseReading({ yaw, pitch, achieved: isPoseAchieved(currentPose, yaw, pitch) });
+                } else {
+                    latestEnrollmentDetectionRef.current = null;
+                    setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            enrollmentScanBusyRef.current = false;
+        }, 500);
+
+        return () => clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [enrollmentStepIndex, isCameraReady]);
 
     // ==========================================
     // MATHEMATICAL MATRIX POSITION CALCULATOR
@@ -720,7 +822,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // require an explicit, informed opt-in the first time a user enrolls,
     // rather than silently capturing and storing it on first click.
     const handleEnrollFaceFromStream = () => {
-        if (!webcamVideoRef.current || isEnrolling) return;
+        if (!webcamVideoRef.current || isEnrolling || enrollmentStepIndex >= 0) return;
 
         let hasConsented = false;
         try { hasConsented = localStorage.getItem(FACE_CONSENT_KEY) === 'true'; } catch { /* localStorage unavailable — treat as not yet consented */ }
@@ -729,61 +831,82 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             setShowConsentModal(true);
             return;
         }
-        performFaceEnrollment();
+        startEnrollmentWizard();
     };
 
     const handleConsentAccept = () => {
         try { localStorage.setItem(FACE_CONSENT_KEY, 'true'); } catch { /* consent just won't persist across sessions */ }
         setShowConsentModal(false);
-        performFaceEnrollment();
+        startEnrollmentWizard();
     };
 
-    const performFaceEnrollment = async () => {
-        // 🟩 FIX: Without this guard, clicking the button rapidly fired a fresh
-        // detect+update call on every click (no disable-while-processing state),
-        // which can burst enough concurrent Supabase requests to trip its auth
-        // rate limiter.
-        if (isEnrolling) return;
+    const startEnrollmentWizard = () => {
+        setEnrollmentCaptures([]);
+        setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
+        latestEnrollmentDetectionRef.current = null;
+        setEnrollmentStepIndex(0);
+    };
+
+    const cancelEnrollmentWizard = () => {
+        setEnrollmentStepIndex(-1);
+        setEnrollmentCaptures([]);
+        latestEnrollmentDetectionRef.current = null;
+    };
+
+    // 🟩 MULTI-ANGLE ENROLLMENT: captures one descriptor per pose (center,
+    // left, right, up, down) instead of a single frontal snapshot, and
+    // stores all of them as one JSON array in the same face_descriptor
+    // column — no schema change, matching (multiTemplateMatcher.js) just
+    // compares a live scan against every stored angle and keeps the best.
+    const handleCaptureEnrollmentPose = async () => {
+        const det = latestEnrollmentDetectionRef.current;
+        if (!det || !enrollmentPoseReading.achieved || isEnrolling) return;
+
+        // 🟩 ENROLLMENT QUALITY GATE: reject a blurry or badly-lit capture up
+        // front — a poor reference descriptor causes every future clock-in
+        // to be unreliable, and that's much harder to diagnose after the fact.
+        if (det.box && det.sourceCanvas) {
+            try {
+                const ctx = det.sourceCanvas.getContext('2d');
+                const region = ctx.getImageData(det.box.x, det.box.y, det.box.width, det.box.height);
+                const quality = checkEnrollmentQuality(region.data, det.box.width, det.box.height);
+                if (!quality.ok) {
+                    toast.error(t(ENROLL_QUALITY_HINT_KEYS[quality.reason] || 'attendance.faceDetectFailed'));
+                    return;
+                }
+            } catch (_err) {
+                // Quality sampling failed (tainted canvas, etc.) — proceed rather than block enrollment entirely on a non-critical check.
+            }
+        }
+
+        const capturedTemplate = Array.from(det.descriptor);
+        const nextCaptures = [...enrollmentCaptures, capturedTemplate];
+
+        if (enrollmentStepIndex + 1 < ENROLLMENT_POSES.length) {
+            setEnrollmentCaptures(nextCaptures);
+            setEnrollmentStepIndex(enrollmentStepIndex + 1);
+            setEnrollmentPoseReading({ yaw: 0, pitch: 0, achieved: false });
+            latestEnrollmentDetectionRef.current = null;
+            toast.success(t('attendance.enrollPoseCaptured', { step: enrollmentStepIndex + 1, total: ENROLLMENT_POSES.length }));
+            return;
+        }
+
+        // Final pose captured — save every angle at once.
         setIsEnrolling(true);
-
         try {
-            const det = await detectFaceFromImage(webcamVideoRef.current);
+            const { error } = await supabase
+                .from('profiles')
+                .update({ face_descriptor: JSON.stringify(nextCaptures) })
+                .eq('id', userProfile.id);
 
-            if (det) {
-                // 🟩 ENROLLMENT QUALITY GATE: reject a blurry or badly-lit capture up
-                // front — a poor reference descriptor causes every future clock-in
-                // to be unreliable, and that's much harder to diagnose after the fact.
-                if (det.box && det.sourceCanvas) {
-                    try {
-                        const ctx = det.sourceCanvas.getContext('2d');
-                        const region = ctx.getImageData(det.box.x, det.box.y, det.box.width, det.box.height);
-                        const quality = checkEnrollmentQuality(region.data, det.box.width, det.box.height);
-                        if (!quality.ok) {
-                            toast.error(t(ENROLL_QUALITY_HINT_KEYS[quality.reason] || 'attendance.faceDetectFailed'));
-                            return;
-                        }
-                    } catch (_err) {
-                        // Quality sampling failed (tainted canvas, etc.) — proceed rather than block enrollment entirely on a non-critical check.
-                    }
-                }
-
-                // 🟩 FIX: Stringify the array before updating the profile
-                const stringifiedDescriptor = JSON.stringify(Array.from(det.descriptor));
-
-                const { error } = await supabase
-                    .from('profiles')
-                    .update({ face_descriptor: stringifiedDescriptor })
-                    .eq('id', userProfile.id);
-
-                if (error) {
-                    showUserError('Failed to enroll face', error);
-                } else {
-                    clearStalenessCounter(userProfile.id);
-                    toast.success(t('attendance.faceEnrolled'));
-                    fetchProfile?.();
-                }
+            if (error) {
+                showUserError('Failed to enroll face', error);
             } else {
-                toast.error(t('attendance.faceDetectFailed'));
+                clearStalenessCounter(userProfile.id);
+                toast.success(t('attendance.faceEnrolled'));
+                fetchProfile?.();
+                setEnrollmentStepIndex(-1);
+                setEnrollmentCaptures([]);
             }
         } finally {
             setIsEnrolling(false);
@@ -1104,9 +1227,41 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             </div>
 
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
-                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
-                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
+                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling || enrollmentStepIndex >= 0} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
+                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling || enrollmentStepIndex >= 0} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
                             </div>
+
+                            {/* 🟩 MULTI-ANGLE ENROLLMENT WIZARD */}
+                            {enrollmentStepIndex >= 0 && (
+                                <div className="mt-3 w-full max-w-md bg-slate-900/80 border border-blue-500/30 rounded-2xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">
+                                            {t('attendance.enrollStepProgress', { step: enrollmentStepIndex + 1, total: ENROLLMENT_POSES.length })}
+                                        </span>
+                                        <button type="button" onClick={cancelEnrollmentWizard} className="text-[10px] font-bold uppercase text-slate-500 hover:text-slate-300">
+                                            {t('common.close')}
+                                        </button>
+                                    </div>
+                                    <p className="text-sm font-bold text-white">
+                                        {t(`attendance.enrollPoseInstruction_${ENROLLMENT_POSES[enrollmentStepIndex]}`)}
+                                    </p>
+                                    <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400">
+                                        <span>yaw: {enrollmentPoseReading.yaw.toFixed(2)}</span>
+                                        <span>pitch: {enrollmentPoseReading.pitch.toFixed(2)}</span>
+                                        <span className={enrollmentPoseReading.achieved ? 'text-emerald-400 font-bold' : ''}>
+                                            {enrollmentPoseReading.achieved ? t('attendance.enrollPoseReady') : t('attendance.enrollPoseAdjust')}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleCaptureEnrollmentPose}
+                                        disabled={!enrollmentPoseReading.achieved || isEnrolling}
+                                        className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all"
+                                    >
+                                        {isEnrolling ? t('attendance.enrolling') : t('attendance.enrollCapturePose')}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
 

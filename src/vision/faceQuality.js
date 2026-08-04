@@ -46,9 +46,15 @@ export function checkOcclusion(detectionScore, minScore = 0.25) {
     return { ok: true, reason: null };
 }
 
-/** More than one face in frame is exactly the "hold up someone else's photo" attack shape. */
-export function checkSingleFace(faceCount) {
+/**
+ * Only rejects on `isAmbiguous` (a second face similarly-sized AND adjacent
+ * to the primary one — the actual "hold up someone else's photo" attack
+ * shape), not merely on faceCount > 1. Extra faces from bystanders in a
+ * busy background are common in real deployments and shouldn't block a
+ * legitimate scan; see vision/primaryFaceSelector.js for the selection logic.
+ */
+export function checkSingleFace(faceCount, isAmbiguous = false) {
     if (faceCount === 0) return { ok: false, reason: 'no-face' };
-    if (faceCount > 1) return { ok: false, reason: 'multiple-faces' };
+    if (isAmbiguous) return { ok: false, reason: 'multiple-faces' };
     return { ok: true, reason: null };
 }

@@ -79,7 +79,11 @@ describe('checkSingleFace', () => {
         expect(checkSingleFace(0)).toEqual({ ok: false, reason: 'no-face' });
     });
 
-    it('rejects more than one face', () => {
-        expect(checkSingleFace(2)).toEqual({ ok: false, reason: 'multiple-faces' });
+    it('accepts multiple faces as long as none is flagged ambiguous (e.g. a bystander in the background)', () => {
+        expect(checkSingleFace(3, false)).toEqual({ ok: true, reason: null });
+    });
+
+    it('rejects when a second face is flagged ambiguous (photo-next-to-face attack shape)', () => {
+        expect(checkSingleFace(2, true)).toEqual({ ok: false, reason: 'multiple-faces' });
     });
 });

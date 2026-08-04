@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { calculateEAR, calculateHeadTurnRatio, LivenessDetector, RandomLivenessChallenge, CHALLENGE_TYPES } from './livenessDetector';
+import { calculateEAR, calculateHeadTurnRatio, calculatePitchRatio, LivenessDetector, RandomLivenessChallenge, CHALLENGE_TYPES } from './livenessDetector';
 
 // A synthetic "open eye" shape: roughly rectangular, taller than a closed slit.
 const openEye = [
@@ -21,11 +21,13 @@ const closedEye = [
     { x: 2, y: 5 },
 ];
 
-const makeLandmarks = (eye, headTurnRatio = 0) => ({
+const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50) => ({
     getLeftEye: () => eye,
     getRightEye: () => eye,
-    getNose: () => [{ x: 50 + headTurnRatio * 100, y: 50 }],
-    getJawOutline: () => [{ x: 0, y: 100 }, { x: 100, y: 100 }],
+    getNose: () => [{ x: 50 + headTurnRatio * 100, y: noseY }],
+    getJawOutline: () => [{ x: 0, y: 100 }, { x: 50, y: 100 }, { x: 100, y: 100 }],
+    getLeftEyeBrow: () => [{ x: 20, y: 20 }, { x: 30, y: 20 }, { x: 40, y: 20 }],
+    getRightEyeBrow: () => [{ x: 60, y: 20 }, { x: 70, y: 20 }, { x: 80, y: 20 }],
 });
 
 describe('calculateEAR', () => {
@@ -52,6 +54,27 @@ describe('calculateHeadTurnRatio', () => {
 
     it('returns 0 when landmarks are missing nose/jaw accessors', () => {
         expect(calculateHeadTurnRatio({})).toBe(0);
+    });
+});
+
+describe('calculatePitchRatio', () => {
+    it('returns ~0 when the nose sits at the vertical midpoint (facing forward)', () => {
+        const landmarks = makeLandmarks(openEye, 0, 60); // midpoint of brow(20) and chin(100)
+        expect(calculatePitchRatio(landmarks)).toBeCloseTo(0, 1);
+    });
+
+    it('returns a negative ratio when the nose shifts toward the brows (tilted up)', () => {
+        const landmarks = makeLandmarks(openEye, 0, 25);
+        expect(calculatePitchRatio(landmarks)).toBeLessThan(-0.1);
+    });
+
+    it('returns a positive ratio when the nose shifts toward the chin (tilted down)', () => {
+        const landmarks = makeLandmarks(openEye, 0, 95);
+        expect(calculatePitchRatio(landmarks)).toBeGreaterThan(0.1);
+    });
+
+    it('returns 0 when landmarks are missing required accessors', () => {
+        expect(calculatePitchRatio({})).toBe(0);
     });
 });
 
