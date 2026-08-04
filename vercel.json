@@ -5,7 +5,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co https://huggingface.co https://cdn-lfs.huggingface.co; connect-src 'self' https://*.supabase.co https://huggingface.co https://cdn-lfs.huggingface.co; worker-src 'self' blob:; media-src 'self' blob:; upgrade-insecure-requests"
+          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co https://huggingface.co https://cdn-lfs.huggingface.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://huggingface.co https://cdn-lfs.huggingface.co; worker-src 'self' blob:; media-src 'self' blob:; upgrade-insecure-requests"
         },
         {
           "key": "Permissions-Policy",
