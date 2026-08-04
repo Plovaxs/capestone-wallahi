@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * COMPONENT: OnboardingTour
@@ -13,6 +15,8 @@ import { useTranslation } from 'react-i18next';
 const OnboardingTour = ({ userProfile, onClose }) => {
     const { t } = useTranslation();
     const [step, setStep] = useState(0);
+    const containerRef = useRef(null);
+    const triggerElementRef = useRef(null);
 
     const isSupervisor = userProfile.role === 'supervisor';
 
@@ -33,17 +37,48 @@ const OnboardingTour = ({ userProfile, onClose }) => {
     const isLastStep = step === steps.length - 1;
     const current = steps[step];
 
+    // 🟩 ACCESSIBILITY: matches Modal.jsx's focus-trap + restore-on-close —
+    // this dialog had `role="dialog" aria-modal="true"` but no actual trap,
+    // so Tab could cycle a keyboard user straight through to the dimmed
+    // background content behind the overlay, and nothing set initial focus
+    // when the tour opened.
     useEffect(() => {
+        triggerElementRef.current = document.activeElement;
+        const container = containerRef.current;
+        const focusable = container?.querySelectorAll(FOCUSABLE_SELECTOR);
+        (focusable?.[0] || container)?.focus();
+
         const handleKeyDown = (e) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') {
+                onClose();
+                return;
+            }
+            if (e.key !== 'Tab' || !container) return;
+
+            const focusableEls = container.querySelectorAll(FOCUSABLE_SELECTOR);
+            if (focusableEls.length === 0) return;
+            const first = focusableEls[0];
+            const last = focusableEls[focusableEls.length - 1];
+
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
         };
+
         document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            triggerElementRef.current?.focus?.();
+        };
     }, [onClose]);
 
     return (
         <div className="fixed inset-0 bg-black/50 z-[60] flex justify-center items-center p-4" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full p-6 text-center animate-scale-up">
+            <div ref={containerRef} tabIndex={-1} className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full p-6 text-center animate-scale-up focus:outline-none">
                 <div className="text-5xl mb-4">{current.icon}</div>
                 <h2 id="onboarding-title" className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">{current.title}</h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{current.desc}</p>

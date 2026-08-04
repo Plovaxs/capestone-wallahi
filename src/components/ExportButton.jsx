@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import toast from 'react-hot-toast';
 import Modal from './Modal';
+import { sanitizeCsvCell } from '../utils/csvSafety';
 
 /**
  * Builds the CSV string on a Web Worker so serializing a large dataset
@@ -31,11 +32,7 @@ function buildCsvInline(columns, data) {
     const headers = columns.map((c) => c.label).join(',');
     const rows = data.map((row) =>
         columns
-            .map((c) => {
-                const value = row[c.key];
-                const stringValue = value === null || value === undefined ? '' : String(value);
-                return `"${stringValue.replace(/"/g, '""')}"`;
-            })
+            .map((c) => `"${sanitizeCsvCell(row[c.key]).replace(/"/g, '""')}"`)
             .join(',')
     );
     return [headers, ...rows].join('\n');
@@ -54,6 +51,7 @@ function buildCsvInline(columns, data) {
 const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', columns }) => {
     const [isPickerOpen, setIsPickerOpen] = useState(false);
     const [selectedKeys, setSelectedKeys] = useState(null);
+    const [isDownloading, setIsDownloading] = useState(false);
 
     const availableColumns = useMemo(() => {
         if (columns && columns.length > 0) return columns;
@@ -83,31 +81,41 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
     const selectNone = () => setSelectedKeys(new Set());
 
     const handleDownload = async () => {
+        // 🟩 DOUBLE-SUBMIT GUARD: the Download button had no in-flight
+        // tracking — a double-click while buildCsvOffThread's await was
+        // pending spun up two concurrent Web Workers and triggered two
+        // simultaneous file downloads.
+        if (isDownloading) return;
         if (!selectedKeys || selectedKeys.size === 0) {
             toast.error('Pick at least one column to export.');
             return;
         }
 
-        const chosenColumns = availableColumns.filter((c) => selectedKeys.has(c.key));
-
-        let csvContent;
+        setIsDownloading(true);
         try {
-            csvContent = await buildCsvOffThread(chosenColumns, data);
-        } catch {
-            csvContent = buildCsvInline(chosenColumns, data);
+            const chosenColumns = availableColumns.filter((c) => selectedKeys.has(c.key));
+
+            let csvContent;
+            try {
+                csvContent = await buildCsvOffThread(chosenColumns, data);
+            } catch {
+                csvContent = buildCsvInline(chosenColumns, data);
+            }
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `${filename}_${new Date().toISOString().slice(0, 10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            setIsPickerOpen(false);
+        } finally {
+            setIsDownloading(false);
         }
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `${filename}_${new Date().toISOString().slice(0, 10)}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        setIsPickerOpen(false);
     };
 
     return (
@@ -162,9 +170,10 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
                         <button
                             type="button"
                             onClick={handleDownload}
-                            className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold"
+                            disabled={isDownloading}
+                            className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            Download CSV
+                            {isDownloading ? 'Downloading…' : 'Download CSV'}
                         </button>
                     </div>
                 </div>

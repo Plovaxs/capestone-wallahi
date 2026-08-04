@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { Icons } from './Icons';
@@ -20,6 +20,7 @@ const Header = ({
 }) => {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
+    const notificationRef = useRef(null);
     const unreadCount = notifications.filter(n => !n.read).length;
 
     const handleToggle = () => {
@@ -29,14 +30,24 @@ const Header = ({
         }
     }
 
-    // Esc closes the notification dropdown, keeping it consistent with the shared Modal component.
+    // Esc AND click-outside both close the notification dropdown, matching
+    // the same pattern GlobalSearch already uses — this previously only had
+    // Esc, so clicking anywhere else on the page left it open, blocking
+    // whatever was underneath.
     useEffect(() => {
         if (!isOpen) return;
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') setIsOpen(false);
         };
+        const handleClickOutside = (e) => {
+            if (notificationRef.current && !notificationRef.current.contains(e.target)) setIsOpen(false);
+        };
         document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, [isOpen]);
 
     const handleLogout = async () => {
@@ -154,7 +165,7 @@ const Header = ({
                 {/* ========================================== */}
                 {/* 🔔 UPGRADED NOTIFICATION BELL TRAY       */}
                 {/* ========================================== */}
-                <div className="relative">
+                <div className="relative" ref={notificationRef}>
                     <button
                         onClick={handleToggle}
                         aria-label={t('header.notifications')}
@@ -189,7 +200,7 @@ const Header = ({
                                                 <div className="text-xl mt-0.5 drop-shadow-sm">{style.icon}</div>
                                                 <div className="flex-1 space-y-1">
                                                     <div className="flex justify-between items-start mb-1">
-                                                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${style.badgeStyle}`}>
+                                                        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border ${style.badgeStyle}`}>
                                                             {style.badgeText}
                                                         </span>
                                                         {!n.read && <span className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-pulse"></span>}
@@ -197,7 +208,7 @@ const Header = ({
                                                     <p className={`text-[11px] font-bold leading-relaxed ${style.textClass}`}>
                                                         {n.message.replace('📊', '').replace('🎉', '').trim()}
                                                     </p>
-                                                    <p className="text-[9px] text-gray-400 font-mono uppercase mt-1">
+                                                    <p className="text-[10px] text-gray-400 font-mono uppercase mt-1">
                                                         {new Date(n.created_at).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}
                                                     </p>
                                                 </div>

@@ -1,9 +1,22 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icons } from './Icons';
 
 const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMobileOpen, openTicketCount = 0 }) => {
   const { t } = useTranslation();
+
+  // 🟩 ACCESSIBILITY: the mobile backdrop was a bare div with only an
+  // onClick — unreachable and undismissable via keyboard. Escape matches
+  // how every other overlay in this app (Modal, CommandPalette, etc.)
+  // closes, without making the backdrop itself an unusual tab stop.
+  useEffect(() => {
+    if (!isMobileOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setIsMobileOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileOpen, setIsMobileOpen]);
 
   const menuItems = [
     { id: 'dashboard', label: t('nav.dashboard'), icon: Icons.LayoutDashboard },
@@ -59,9 +72,10 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={`
                   w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all duration-200 group
-                  ${isActive 
+                  ${isActive
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30' 
                     : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-blue-600 dark:hover:text-white'
                   }
@@ -83,8 +97,9 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
 
         {/* Settings Link */}
         <div className="p-4 border-t border-gray-100 dark:border-gray-700">
-            <button 
-                onClick={() => handleNavClick('settings')} 
+            <button
+                onClick={() => handleNavClick('settings')}
+                aria-current={activeView === 'settings' ? 'page' : undefined}
                 className={`
                     w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all duration-200 group
                     ${activeView === 'settings' 

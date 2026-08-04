@@ -5,17 +5,15 @@
  * and triggering the browser download) still happens back on the main
  * thread in ExportButton.jsx, since workers can't touch the document.
  */
+import { sanitizeCsvCell } from '../utils/csvSafety.js';
+
 self.onmessage = (event) => {
     const { columns, data } = event.data;
 
     const headers = columns.map((c) => c.label).join(',');
     const rows = data.map((row) =>
         columns
-            .map((c) => {
-                const value = row[c.key];
-                const stringValue = value === null || value === undefined ? '' : String(value);
-                return `"${stringValue.replace(/"/g, '""')}"`;
-            })
+            .map((c) => `"${sanitizeCsvCell(row[c.key]).replace(/"/g, '""')}"`)
             .join(',')
     );
 

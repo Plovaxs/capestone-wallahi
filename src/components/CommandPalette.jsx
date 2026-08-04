@@ -9,12 +9,16 @@ import { openFeatureFlagPanel } from '../feature-flags/panelOpener';
  * fuzzy record search GlobalSearch does (tasks/forum/leave), so power users
  * never need the mouse to get around.
  */
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode, tasks = [], contributions = [], leaveRequests = [], allUsers = [] }) => {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [activeIndex, setActiveIndex] = useState(0);
     const inputRef = useRef(null);
+    const containerRef = useRef(null);
+    const triggerElementRef = useRef(null);
 
     const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || '';
 
@@ -91,8 +95,48 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
         if (isOpen) {
             setQuery('');
             setActiveIndex(0);
-            setTimeout(() => inputRef.current?.focus(), 0);
         }
+    }, [isOpen]);
+
+    // 🟩 ACCESSIBILITY: Modal.jsx already does focus-trap + restore-on-close
+    // for every other overlay in the app; this palette had neither. Escape
+    // only worked while the search input itself was focused (via its own
+    // onKeyDown below) — pressing Tab to reach a result button silently
+    // broke Escape, and Tab could cycle focus straight out into the page
+    // behind the dim overlay. This mirrors Modal's document-level handler so
+    // both work regardless of which element inside the palette has focus.
+    useEffect(() => {
+        if (!isOpen) return;
+
+        triggerElementRef.current = document.activeElement;
+        inputRef.current?.focus();
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                setIsOpen(false);
+                return;
+            }
+            if (e.key !== 'Tab' || !containerRef.current) return;
+
+            const focusableEls = containerRef.current.querySelectorAll(FOCUSABLE_SELECTOR);
+            if (focusableEls.length === 0) return;
+            const first = focusableEls[0];
+            const last = focusableEls[focusableEls.length - 1];
+
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            triggerElementRef.current?.focus?.();
+        };
     }, [isOpen]);
 
     useEffect(() => {
@@ -105,9 +149,7 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
     };
 
     const handleKeyDown = (e) => {
-        if (e.key === 'Escape') {
-            setIsOpen(false);
-        } else if (e.key === 'ArrowDown') {
+        if (e.key === 'ArrowDown') {
             e.preventDefault();
             setActiveIndex(prev => Math.min(prev + 1, allResults.length - 1));
         } else if (e.key === 'ArrowUp') {
@@ -127,9 +169,11 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
     return (
         <div className="fixed inset-0 bg-black/50 z-[70] flex justify-center items-start pt-24 px-4" onClick={() => setIsOpen(false)}>
             <div
+                ref={containerRef}
                 role="dialog"
                 aria-modal="true"
                 aria-label={t('palette.title')}
+                tabIndex={-1}
                 onClick={(e) => e.stopPropagation()}
                 className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 overflow-hidden"
             >
