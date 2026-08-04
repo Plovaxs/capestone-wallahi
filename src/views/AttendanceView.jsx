@@ -1232,34 +1232,33 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const statusBadge = (status, clockOut, date) => {
         if (!clockOut && date !== today) {
-            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-500/10 text-red-400 border border-red-500/20">{t('attendance.incomplete')}</span>;
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">{t('attendance.incomplete')}</span>;
         }
         if (!clockOut) {
-            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse">{t('attendance.inProgress')}</span>;
+            return <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 animate-pulse">{t('attendance.inProgress')}</span>;
         }
         const styles = status === 'Present' 
-            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' 
+            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20';
         return <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${styles}`}>{status}</span>;
     };
 
     return (
-        // 🟩 CONTRAST FIX: this whole view is styled as a dark "ops monitoring"
-        // panel (bg-slate-800/900, near-white text, neon accent borders) —
-        // it never had light-mode counterparts, so when the app's global
-        // theme toggle is on light mode (the default for a fresh user, since
-        // there's no saved preference yet), that near-white text landed on
-        // the light page background and became close to unreadable. Giving
-        // this page its own solid dark background makes it render
-        // consistently regardless of the global toggle, instead of
-        // half-heartedly reworking 60+ individual color classes.
-        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-slate-100 bg-slate-950 rounded-3xl">
-            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-slate-800 pb-5 gap-4">
+        // 🟩 CONTRAST FIX: this view is styled as a dark "ops monitoring"
+        // panel (bg-slate-800/900, near-white text, neon accent borders)
+        // with no light-mode counterparts — every slate/white color below
+        // now has a matching light-mode base class with the original as its
+        // dark: variant, matching the same bg-white dark:bg-gray-800 pattern
+        // already used throughout LeaveView/TasksView/PerformanceReviewView,
+        // so this renders correctly in both themes instead of only ever
+        // looking right in dark mode.
+        <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-gray-800 dark:text-slate-100">
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-gray-200 dark:border-slate-800 pb-5 gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-white">
+                    <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
                         {userProfile.role === 'supervisor' ? t('attendance.supervisorTitle') : t('attendance.employeeTitle')}
                     </h1>
-                    <p className="text-sm text-slate-400 mt-1">
+                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
                         {userProfile.role === 'supervisor' ? t('attendance.supervisorSubtitle') : t('attendance.employeeSubtitle')}
                     </p>
                 </div>
@@ -1268,7 +1267,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         <select
                             value={exportEmployeeId}
                             onChange={(e) => setExportEmployeeId(e.target.value)}
-                            className="text-xs font-bold bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-2 focus:outline-none focus:border-blue-500"
+                            className="text-xs font-bold bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-lg px-2 py-2 focus:outline-none focus:border-blue-500"
                         >
                             <option value="all">{t('attendance.allEmployees')}</option>
                             {processedInterns.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
@@ -1306,65 +1305,65 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             {userProfile.role === 'supervisor' ? (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('attendance.totalRegisteredStaff')}</div>
-                            <div className="text-4xl font-black text-white mt-2 flex items-baseline gap-2">
-                                {activeEmployees.length} <span className="text-xs font-bold text-slate-500 uppercase font-sans">{t('attendance.officers')}</span>
+                        <div className="bg-white dark:bg-slate-800/40 border border-gray-200 dark:border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">{t('attendance.totalRegisteredStaff')}</div>
+                            <div className="text-4xl font-black text-gray-900 dark:text-white mt-2 flex items-baseline gap-2">
+                                {activeEmployees.length} <span className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase font-sans">{t('attendance.officers')}</span>
                             </div>
                         </div>
                         <div className="bg-gradient-to-br from-blue-600/20 to-indigo-600/10 border border-blue-500/30 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <div className="text-xs font-bold text-blue-400 uppercase tracking-widest">{t('attendance.activeClockedInToday')}</div>
-                            <div className="text-4xl font-black text-blue-400 mt-2 flex items-baseline gap-2">
-                                {clockedInTodayCount} <span className="text-xs font-bold text-blue-500 uppercase font-sans animate-pulse">{t('attendance.liveNow')}</span>
+                            <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest">{t('attendance.activeClockedInToday')}</div>
+                            <div className="text-4xl font-black text-blue-600 dark:text-blue-400 mt-2 flex items-baseline gap-2">
+                                {clockedInTodayCount} <span className="text-xs font-bold text-blue-700 dark:text-blue-500 uppercase font-sans animate-pulse">{t('attendance.liveNow')}</span>
                             </div>
                         </div>
-                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col justify-center">
-                            <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{t('attendance.dutyModeDistribution')}</div>
+                        <div className="bg-white dark:bg-slate-800/40 border border-gray-200 dark:border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col justify-center">
+                            <div className="text-xs font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-2">{t('attendance.dutyModeDistribution')}</div>
                             <div className="flex gap-2">
-                                <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏢 {wfoAssignmentCount} WFO</span>
-                                <span className="bg-purple-500/10 text-purple-400 border border-purple-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏠 {wfhAssignmentCount} WFH</span>
+                                <span className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏢 {wfoAssignmentCount} WFO</span>
+                                <span className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 px-3 py-1 rounded-xl text-[10px] font-bold uppercase tracking-wider">🏠 {wfhAssignmentCount} WFH</span>
                             </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 shadow-inner">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-white dark:bg-slate-800/40 p-4 rounded-2xl border border-gray-200 dark:border-slate-700/50 shadow-inner">
                         <div>
-                            <label htmlFor="att-search" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.searchStaff')}</label>
+                            <label htmlFor="att-search" className="block text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.searchStaff')}</label>
                             <input
                                 id="att-search"
                                 type="text"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 placeholder={t('attendance.searchPlaceholder')}
-                                className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white placeholder-slate-500 font-medium"
+                                className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-slate-500 font-medium"
                             />
                         </div>
                         <div>
-                            <label htmlFor="att-source" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.originInstitution')}</label>
-                            <select id="att-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                            <label htmlFor="att-source" className="block text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.originInstitution')}</label>
+                            <select id="att-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
                                 <option value="all">{t('attendance.allInstitutions')}</option>
                                 {uniqueSources.map(src => <option key={src} value={src}>{src}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label htmlFor="att-mode" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.assignedMode')}</label>
-                            <select id="att-mode" value={filterMode} onChange={(e) => setFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                            <label htmlFor="att-mode" className="block text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.assignedMode')}</label>
+                            <select id="att-mode" value={filterMode} onChange={(e) => setFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
                                 <option value="all">{t('attendance.allModes')}</option>
                                 <option value="WFO">{t('attendance.officeWFO')}</option>
                                 <option value="WFH">{t('attendance.remoteWFH')}</option>
                             </select>
                         </div>
                         <div>
-                            <label htmlFor="att-status" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.rosterState')}</label>
-                            <select id="att-status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                            <label htmlFor="att-status" className="block text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.rosterState')}</label>
+                            <select id="att-status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
                                 <option value="all">{t('attendance.allStatuses')}</option>
                                 <option value="clocked_in">{t('attendance.activeClockedIn')}</option>
                                 <option value="not_clocked_in">{t('attendance.inactiveNotIn')}</option>
                             </select>
                         </div>
                         <div>
-                            <label htmlFor="att-sort" className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.sortConfiguration')}</label>
-                            <select id="att-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-700 bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-white font-bold">
+                            <label htmlFor="att-sort" className="block text-[10px] font-black text-gray-500 dark:text-slate-400 uppercase tracking-widest mb-1.5">{t('attendance.sortConfiguration')}</label>
+                            <select id="att-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/60 rounded-xl focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
                                 <option value="name-az">{t('attendance.nameAZ')}</option>
                                 <option value="name-za">{t('attendance.nameZA')}</option>
                                 <option value="status-active">{t('attendance.clockedInFirst')}</option>
@@ -1372,10 +1371,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         </div>
                     </div>
 
-                    <div className="bg-slate-800/20 rounded-2xl border border-slate-800 shadow-2xl overflow-hidden backdrop-blur-sm">
+                    <div className="bg-gray-50 dark:bg-slate-800/20 rounded-2xl border border-gray-200 dark:border-slate-800 shadow-2xl overflow-hidden backdrop-blur-sm">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
-                                <thead className="bg-slate-800/60 border-b border-slate-700/60 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                                <thead className="bg-gray-100 dark:bg-slate-800/60 border-b border-gray-200 dark:border-slate-700/60 text-[11px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest">
                                     <tr>
                                         <SortableTh label={t('attendance.colStaffName')} sortKey="name" sortConfig={columnSort} onSort={toggleColumnSort} />
                                         <SortableTh label={t('attendance.colInstitution')} sortKey="institution" sortConfig={columnSort} onSort={toggleColumnSort} />
@@ -1384,12 +1383,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         <th className="p-4 text-right">{t('attendance.colActions')}</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-800/60 text-xs font-semibold text-slate-200">
+                                <tbody className="divide-y divide-gray-100 dark:divide-slate-800/60 text-xs font-semibold text-gray-700 dark:text-slate-200">
                                     {processedInterns.map(emp => {
                                         const empToday = attendance.find(a => a.employee_id === emp.id && a.date === today);
                                         return (
-                                            <tr key={emp.id} className="hover:bg-slate-800/30 transition-all duration-150">
-                                                <td className="p-4 font-bold text-white">
+                                            <tr key={emp.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/30 transition-all duration-150">
+                                                <td className="p-4 font-bold text-gray-900 dark:text-white">
                                                     <div className="flex items-center gap-3">
                                                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center font-black text-white text-xs border border-blue-400/20">
                                                             {emp.name?.charAt(0).toUpperCase()}
@@ -1404,7 +1403,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                     </div>
                                                 </td>
                                                 <td className="p-4">
-                                                    <span className="bg-slate-900/80 text-slate-400 border border-slate-700/60 px-2.5 py-1 rounded-lg text-[10px] uppercase font-mono tracking-wide">
+                                                    <span className="bg-white dark:bg-slate-900/80 text-gray-500 dark:text-slate-400 border border-gray-200 dark:border-slate-700/60 px-2.5 py-1 rounded-lg text-[10px] uppercase font-mono tracking-wide">
                                                         {emp.source || emp.university || 'President University'}
                                                     </span>
                                                 </td>
@@ -1413,7 +1412,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                         type="button"
                                                         onClick={() => handleToggleWorkMode(emp.id, emp.work_mode || 'WFO')}
                                                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl font-bold border text-[10px] uppercase tracking-wider ${
-                                                            emp.work_mode === 'WFH' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                                            emp.work_mode === 'WFH' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
                                                         }`}
                                                     >
                                                         {emp.work_mode === 'WFH' ? t('attendance.wfhRemote') : t('attendance.wfoOnSite')}
@@ -1423,15 +1422,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                     {empToday ? (
                                                         <div className="flex flex-col items-start gap-1">
                                                             {statusBadge(empToday.status, empToday.clock_out, empToday.date)}
-                                                            <span className="text-[10px] font-bold text-slate-500 font-mono">IN: {getRecordClockInTime(empToday)}</span>
+                                                            <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 font-mono">IN: {getRecordClockInTime(empToday)}</span>
                                                         </div>
                                                     ) : (
-                                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-900 text-slate-600 border border-slate-800">{t('attendance.notClockedIn')}</span>
+                                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-600 border border-gray-200 dark:border-slate-800">{t('attendance.notClockedIn')}</span>
                                                     )}
                                                 </td>
                                                 <td className="p-4 text-right">
                                                     {empToday?.latitude && (
-                                                        <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-slate-700 rounded-xl bg-slate-900/60 text-slate-300 hover:text-white hover:bg-slate-800 shadow-md transition">
+                                                        <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
                                                             {t('attendance.viewMapLocation')}
                                                         </button>
                                                     )}
@@ -1446,29 +1445,29 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 </div>
             ) : (
                 <>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-bold text-slate-400 text-xs tracking-wider">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-bold text-gray-500 dark:text-slate-400 text-xs tracking-wider">
                         <div className="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-2xl p-5 text-white shadow-xl">
                             <p className="text-blue-200 text-xs font-black uppercase tracking-widest mb-1">{t('attendance.myPunctuality')}</p>
                             <h3 className="text-4xl font-black tracking-tight">{punctualityScore}%</h3>
                         </div>
-                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <p className="mb-1 text-slate-400">{t('attendance.totalPresentDays')}</p>
-                            <h3 className="text-4xl font-black text-white mt-1">{totalDays} <span className="text-xs font-bold text-slate-500 uppercase">{t('attendance.days')}</span></h3>
+                        <div className="bg-white dark:bg-slate-800/40 border border-gray-200 dark:border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <p className="mb-1 text-gray-500 dark:text-slate-400">{t('attendance.totalPresentDays')}</p>
+                            <h3 className="text-4xl font-black text-gray-900 dark:text-white mt-1">{totalDays} <span className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase">{t('attendance.days')}</span></h3>
                         </div>
-                        <div className="bg-slate-800/40 border border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-                            <p className="mb-1 text-slate-400">{t('attendance.lateArrivals')}</p>
-                            <h3 className={`text-4xl font-black ${lateDays > 0 ? 'text-amber-400' : 'text-white'} mt-1`}>{lateDays} <span className="text-xs font-bold text-slate-500 uppercase">{t('attendance.days')}</span></h3>
+                        <div className="bg-white dark:bg-slate-800/40 border border-gray-200 dark:border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
+                            <p className="mb-1 text-gray-500 dark:text-slate-400">{t('attendance.lateArrivals')}</p>
+                            <h3 className={`text-4xl font-black ${lateDays > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-white'} mt-1`}>{lateDays} <span className="text-xs font-bold text-gray-400 dark:text-slate-500 uppercase">{t('attendance.days')}</span></h3>
                         </div>
                     </div>
 
-                    <div className="bg-slate-800/40 p-5 rounded-2xl border border-slate-700/50 shadow-xl flex flex-col md:flex-row justify-between items-center gap-4 backdrop-blur-md">
+                    <div className="bg-white dark:bg-slate-800/40 p-5 rounded-2xl border border-gray-200 dark:border-slate-700/50 shadow-xl flex flex-col md:flex-row justify-between items-center gap-4 backdrop-blur-md">
                          <div className="flex items-center gap-4">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${isInRange ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse'}`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${isInRange ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 animate-pulse'}`}>
                                 {(userProfile.work_mode || 'WFO') === 'WFO' ? '🏢' : '🏠'}
                             </div>
                             <div>
-                                <h2 className="text-base font-bold text-white">{t('attendance.assignedDutyProfile', { mode: (userProfile.work_mode || 'WFO') === 'WFO' ? t('attendance.officeBoundary') : t('attendance.remoteHome') })}</h2>
-                                <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-400' : 'text-red-400'}`}>
+                                <h2 className="text-base font-bold text-gray-900 dark:text-white">{t('attendance.assignedDutyProfile', { mode: (userProfile.work_mode || 'WFO') === 'WFO' ? t('attendance.officeBoundary') : t('attendance.remoteHome') })}</h2>
+                                <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                                     {(userProfile.work_mode || 'WFO') === 'WFO'
                                         ? (liveDistance !== null ? t('attendance.coordinatesTracked', { distance: liveDistance.toFixed(0) }) : t('attendance.capturingGps'))
                                         : t('attendance.remoteGeofenceBypass')}
@@ -1482,7 +1481,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     type="button"
                                     onClick={() => handleClockIn('manual')}
                                     disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked}
-                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked ? 'bg-slate-700 text-slate-500 cursor-not-allowed border border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
+                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked ? 'bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-300 dark:border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
                                 >
                                     {isLoading
                                         ? t('attendance.processing')
@@ -1497,19 +1496,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 </button>
                             )}
                             {todayRecord && todayRecord.clock_out && (
-                                <div className="w-full md:w-auto px-8 py-3 bg-slate-900 border border-slate-800 text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">{t('attendance.shiftCompleted')}</div>
+                                <div className="w-full md:w-auto px-8 py-3 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-gray-400 dark:text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">{t('attendance.shiftCompleted')}</div>
                             )}
                          </div>
                     </div>
 
-                    <div className="bg-slate-800/40 rounded-2xl border border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
-                        <div className="px-5 py-4 border-b border-slate-700/60 bg-slate-800/20">
-                            <h3 className="text-sm font-bold text-white">{t('attendance.liveVerificationGate')}</h3>
-                            <p className="text-[11px] text-slate-400 mt-0.5">{t('attendance.liveVerificationDescription')}</p>
+                    <div className="bg-white dark:bg-slate-800/40 rounded-2xl border border-gray-200 dark:border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
+                        <div className="px-5 py-4 border-b border-gray-200 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/20">
+                            <h3 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.liveVerificationGate')}</h3>
+                            <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">{t('attendance.liveVerificationDescription')}</p>
                         </div>
                         <div className="p-5 flex flex-col items-center">
                             {/* LIVE VIDEO FRAME HOUSING WITH RESTORED OVERLAY MAPPERS */}
-                            <div className="relative w-full max-w-md aspect-video bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden group shadow-2xl">
+                            <div className="relative w-full max-w-md aspect-video bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden group shadow-2xl">
                                 <video
                                     ref={webcamVideoRef}
                                     autoPlay
@@ -1522,16 +1521,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 {/* 🟩 CAMERA FALLBACK: covers the (empty/black) video element with an
                                     actionable message instead of leaving the panel silently stuck. */}
                                 {cameraError && (
-                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-slate-950/95 text-center p-6">
+                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-white dark:bg-slate-950/95 text-center p-6">
                                         <span className="text-3xl" aria-hidden="true">📷🚫</span>
-                                        <h4 className="text-sm font-bold text-white">{t(CAMERA_ERROR_I18N_KEYS[cameraError].title)}</h4>
-                                        <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+                                        <h4 className="text-sm font-bold text-gray-900 dark:text-white">{t(CAMERA_ERROR_I18N_KEYS[cameraError].title)}</h4>
+                                        <p className="text-[11px] text-gray-500 dark:text-slate-400 max-w-xs leading-relaxed">
                                             {t(CAMERA_ERROR_I18N_KEYS[cameraError].body)}
                                         </p>
                                         <button
                                             type="button"
                                             onClick={() => window.location.reload()}
-                                            className="mt-1 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 uppercase tracking-wider transition-colors"
+                                            className="mt-1 px-4 py-2 rounded-lg bg-white dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-[11px] font-bold text-gray-700 dark:text-slate-200 uppercase tracking-wider transition-colors"
                                         >
                                             {t('attendance.cameraErrorReload')}
                                         </button>
@@ -1539,7 +1538,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 )}
 
                                 {torchActive && (
-                                    <div className="absolute top-2 right-2 z-30 flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold uppercase tracking-wider">
+                                    <div className="absolute top-2 right-2 z-30 flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-700 dark:text-amber-300 text-[10px] font-bold uppercase tracking-wider">
                                         <span aria-hidden="true">🔦</span> {t('attendance.torchActiveLabel')}
                                     </div>
                                 )}
@@ -1560,34 +1559,34 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     </div>
                                 )}
 
-                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-blue-500/30 backdrop-blur-md text-[10px] font-mono font-bold text-blue-400 px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap z-30 animate-pulse shadow-2xl">
+                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-900/95 border border-blue-500/30 backdrop-blur-md text-[10px] font-mono font-bold text-blue-600 dark:text-blue-400 px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap z-30 animate-pulse shadow-2xl">
                                     {biometricStatus}
                                 </div>
                             </div>
 
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
-                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling || enrollmentStepIndex >= 0} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
-                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling || enrollmentStepIndex >= 0} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
+                                <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling || enrollmentStepIndex >= 0} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-white dark:disabled:bg-slate-800 disabled:text-gray-500 dark:disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>
+                                <button type="button" onClick={handleResetEnrolledFace} disabled={isEnrolling || enrollmentStepIndex >= 0} className="px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-all disabled:opacity-50">{t('attendance.resetMatrix')}</button>
                             </div>
 
                             {/* 🟩 MULTI-ANGLE ENROLLMENT WIZARD */}
                             {enrollmentStepIndex >= 0 && (
-                                <div className="mt-3 w-full max-w-md bg-slate-900/80 border border-blue-500/30 rounded-2xl p-4 space-y-3">
+                                <div className="mt-3 w-full max-w-md bg-white dark:bg-slate-900/80 border border-blue-500/30 rounded-2xl p-4 space-y-3">
                                     <div className="flex items-center justify-between">
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 dark:text-blue-400">
                                             {t('attendance.enrollStepProgress', { step: enrollmentStepIndex + 1, total: ENROLLMENT_POSES.length })}
                                         </span>
-                                        <button type="button" onClick={cancelEnrollmentWizard} className="text-[10px] font-bold uppercase text-slate-500 hover:text-slate-300">
+                                        <button type="button" onClick={cancelEnrollmentWizard} className="text-[10px] font-bold uppercase text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300">
                                             {t('common.close')}
                                         </button>
                                     </div>
-                                    <p className="text-sm font-bold text-white">
+                                    <p className="text-sm font-bold text-gray-900 dark:text-white">
                                         {t(`attendance.enrollPoseInstruction_${ENROLLMENT_POSES[enrollmentStepIndex]}`)}
                                     </p>
-                                    <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400">
+                                    <div className="flex items-center gap-3 text-[10px] font-mono text-gray-500 dark:text-slate-400">
                                         <span>yaw: {enrollmentPoseReading.yaw.toFixed(2)}</span>
                                         <span>pitch: {enrollmentPoseReading.pitch.toFixed(2)}</span>
-                                        <span className={enrollmentPoseReading.achieved ? 'text-emerald-400 font-bold' : ''}>
+                                        <span className={enrollmentPoseReading.achieved ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}>
                                             {enrollmentPoseReading.achieved ? t('attendance.enrollPoseReady') : t('attendance.enrollPoseAdjust')}
                                         </span>
                                     </div>
@@ -1595,7 +1594,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         type="button"
                                         onClick={handleCaptureEnrollmentPose}
                                         disabled={!enrollmentPoseReading.achieved || isEnrolling}
-                                        className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] shadow-md disabled:bg-slate-800 disabled:text-slate-600 transition-all"
+                                        className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest text-[10px] shadow-md disabled:bg-white dark:disabled:bg-slate-800 disabled:text-gray-500 dark:disabled:text-slate-600 transition-all"
                                     >
                                         {isEnrolling ? t('attendance.enrolling') : t('attendance.enrollCapturePose')}
                                     </button>
@@ -1604,14 +1603,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-inner">
+                    <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/40 p-4 shadow-inner">
                         <div className="flex items-center justify-between mb-4">
-                            <span id="personal-clock-log-label" className="text-[11px] font-black uppercase tracking-widest text-slate-400">{t('attendance.personalClockLog')}</span>
+                            <span id="personal-clock-log-label" className="text-[11px] font-black uppercase tracking-widest text-gray-500 dark:text-slate-400">{t('attendance.personalClockLog')}</span>
                             <select
                                 aria-labelledby="personal-clock-log-label"
                                 value={historyStatusFilter}
                                 onChange={(e) => setHistoryStatusFilter(e.target.value)}
-                                className="text-[10px] font-bold uppercase tracking-wider bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
+                                className="text-[10px] font-bold uppercase tracking-wider bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500"
                             >
                                 <option value="all">{t('attendance.allRecords')}</option>
                                 <option value="Present">{t('attendance.onTimeOnly')}</option>
@@ -1620,25 +1619,25 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                             {filteredMyHistory.slice(0, 9).map(record => (
-                                <div key={record.id} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col justify-between shadow-sm">
-                                    <div className="flex items-center justify-between mb-1.5 border-b border-slate-800 pb-1.5">
-                                        <span className="text-[11px] font-bold text-white font-mono">{record.date}</span>
+                                <div key={record.id} className="rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60 p-3 flex flex-col justify-between shadow-sm">
+                                    <div className="flex items-center justify-between mb-1.5 border-b border-gray-200 dark:border-slate-800 pb-1.5">
+                                        <span className="text-[11px] font-bold text-gray-900 dark:text-white font-mono">{record.date}</span>
                                         <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${
                                             record.status === 'Late'
-                                                ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
-                                                : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                                                ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20'
+                                                : 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
                                         }`}>
                                             {record.status === 'Late' ? t('attendance.late') : t('attendance.onTime')}
                                         </span>
                                     </div>
-                                    <div className="space-y-0.5 text-[11px] text-slate-400 font-mono">
-                                        <div>{t('attendance.inTime')} : <span className="text-white font-bold">{getRecordClockInTime(record)}</span></div>
-                                        <div>{t('attendance.outTime')}: <span className="text-white font-bold">{record.clock_out || '--:--:--'}</span></div>
+                                    <div className="space-y-0.5 text-[11px] text-gray-500 dark:text-slate-400 font-mono">
+                                        <div>{t('attendance.inTime')} : <span className="text-gray-900 dark:text-white font-bold">{getRecordClockInTime(record)}</span></div>
+                                        <div>{t('attendance.outTime')}: <span className="text-gray-900 dark:text-white font-bold">{record.clock_out || '--:--:--'}</span></div>
                                     </div>
                                 </div>
                             ))}
                             {filteredMyHistory.length === 0 && (
-                                <p className="col-span-full text-center text-xs text-slate-500 italic py-6">{t('attendance.noMatchingRecords')}</p>
+                                <p className="col-span-full text-center text-xs text-gray-400 dark:text-slate-500 italic py-6">{t('attendance.noMatchingRecords')}</p>
                             )}
                         </div>
                     </div>
