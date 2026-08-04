@@ -109,11 +109,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // numeric readout shown to the user is the real feedback loop, the
     // instruction text is just a starting hint.
     const ENROLLMENT_POSES = ['center', 'left', 'right', 'up', 'down'];
-    const POSE_YAW_THRESHOLD = 0.10;
-    const POSE_PITCH_THRESHOLD = 0.10;
+    // 🟩 LOOSENED (repeated real-user feedback: "susah bener enroll wajah
+    // nya"): these required a bigger head turn/tilt than most people
+    // naturally make in front of a webcam to register as "achieved" at
+    // all, on top of the yaw/pitch estimate itself only being a rough 2D
+    // approximation. Matches the same "usability over strictness" call
+    // already made for the liveness thresholds earlier this session.
+    const POSE_YAW_THRESHOLD = 0.06;
+    const POSE_PITCH_THRESHOLD = 0.06;
     const isPoseAchieved = (pose, yaw, pitch) => {
         switch (pose) {
-            case 'center': return Math.abs(yaw) < 0.06 && Math.abs(pitch) < 0.08;
+            case 'center': return Math.abs(yaw) < 0.08 && Math.abs(pitch) < 0.10;
             case 'left': return yaw < -POSE_YAW_THRESHOLD;
             case 'right': return yaw > POSE_YAW_THRESHOLD;
             case 'up': return pitch < -POSE_PITCH_THRESHOLD;

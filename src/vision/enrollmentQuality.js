@@ -41,7 +41,11 @@ export function calculateSharpness(grayscale, width, height) {
     return sumSq / count - mean * mean;
 }
 
-const MIN_SHARPNESS = 30;
+// 🟩 LOOSENED: real users reported enrollment being frustratingly hard to
+// pass — a profile-ish angle (left/right/up/down poses) naturally has less
+// crisp edge detail than a straight-on shot even on decent hardware/
+// lighting, and this was rejecting good-enough captures as "too blurry".
+const MIN_SHARPNESS = 12;
 
 /**
  * Gate run once, at enrollment time — rejecting a blurry or badly-lit

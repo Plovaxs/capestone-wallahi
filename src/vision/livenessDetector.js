@@ -71,7 +71,10 @@ export function calculatePitchRatio(landmarks) {
 // hysteresis gap to the open threshold so noise can't double-count a blink.
 const EAR_CLOSED_THRESHOLD = 0.26;
 const EAR_OPEN_THRESHOLD = 0.28;
-const HEAD_TURN_THRESHOLD = 0.07;
+// 🟩 LOOSENED: real-user feedback ("lihat kiri kanan" struggle) — this
+// required a bigger, more deliberate head turn than felt natural in front
+// of a webcam to register the head-turn liveness challenge at all.
+const HEAD_TURN_THRESHOLD = 0.05;
 const DEFAULT_CHALLENGE_TIMEOUT_MS = 15000;
 
 export const CHALLENGE_TYPES = { BLINK: 'blink', HEAD_TURN: 'head_turn' };
