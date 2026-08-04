@@ -9,6 +9,17 @@ on:
 jobs:
   lint-test-build:
     runs-on: ubuntu-latest
+    # 🟩 BUG FIX: these were previously only set on the Build step. The Test
+    # step ran with no Supabase env vars at all -- unlike a local dev
+    # machine (which has a gitignored .env with real credentials), the CI
+    # runner has none, and supabaseClient.js calls createClient() at module
+    # load time with no guard, which throws synchronously on a missing URL.
+    # Every test file that imports supabaseClient (directly or transitively)
+    # crashed immediately, which is why "Test" was failing while everything
+    # passed locally. Moved to job level so every step gets them.
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +39,3 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
