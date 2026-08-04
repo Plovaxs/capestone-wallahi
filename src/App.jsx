@@ -374,15 +374,18 @@ export default function App() {
   // 🟩 NEW: Notifications only ever loaded once (on login/mount). If someone
   // else's action (e.g. a leave request or approval) creates a notification
   // for this user while their tab is already open, they'd never see it
-  // without reloading the page. Poll periodically instead. Deliberately
-  // scoped to userProfile?.id (a stable primitive), not the whole userProfile
-  // object, so this doesn't restart every time the profile object reference
-  // changes from an unrelated fetch.
+  // without reloading the page. The realtime subscription on 'notifications'
+  // above already covers this instantly — this interval is now just a rare
+  // fallback for the case that channel silently misses an event, so it runs
+  // every few minutes instead of every 20s (which was ~180 extra REST calls
+  // per hour, per open tab, for something realtime already handles).
+  // Deliberately scoped to userProfile?.id (a stable primitive), not the
+  // whole userProfile object, so this doesn't restart on unrelated fetches.
   useEffect(() => {
     if (!userProfile?.id) return;
     const intervalId = setInterval(() => {
       fetchNotifications(userProfile);
-    }, 20000);
+    }, 180000);
     return () => clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
