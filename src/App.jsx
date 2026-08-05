@@ -312,6 +312,22 @@ export default function App() {
       await leaveRepository.insert(payload);
       if (userProfile) fetchLeaveRequests(userProfile);
     });
+
+    // 🟩 A queued clock-in was captured while offline, so the "already
+    // clocked in today?" check AttendanceView normally does before its
+    // insert never ran. Re-check now that we can actually reach the DB —
+    // if some other path (another device, a since-restored connection on
+    // this same one) already created today's record, drop this queued one
+    // instead of violating uniqueness / double-counting attendance.
+    offlineMutationQueue.registerHandler('clockIn', async (payload) => {
+      const existing = await attendanceRepository.listAll();
+      const alreadyClockedIn = (existing || []).some(
+        (record) => record.employee_id === payload.employee_id && record.date === payload.date
+      );
+      if (alreadyClockedIn) return;
+      await attendanceRepository.insert(payload);
+      if (userProfile) fetchAttendance();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 
