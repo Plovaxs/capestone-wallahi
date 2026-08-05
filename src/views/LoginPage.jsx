@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import * as faceapi from 'face-api.js';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
 import { checkFraming, checkOcclusion, checkBrightness, checkSingleFace } from '../vision/faceQuality';
@@ -12,6 +11,23 @@ import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
+
+// 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
+// import, so just opening the login page downloaded it up front even
+// before the camera/scan started. Shared module-level cache (same pattern
+// as AttendanceView.jsx) means navigating between this page and Attendance
+// doesn't re-fetch it, and a failed load clears the cache so "Retry
+// loading scanner" actually retries instead of re-throwing forever.
+let faceApiModulePromise = null;
+const loadFaceApiModule = () => {
+    if (!faceApiModulePromise) {
+        faceApiModulePromise = import('face-api.js').catch((err) => {
+            faceApiModulePromise = null;
+            throw err;
+        });
+    }
+    return faceApiModulePromise;
+};
 
 // 🟩 Maps a failed quality/liveness gate to the specific hint shown to the
 // user, same pattern as AttendanceView's QUALITY_HINT_KEYS -- "no face" and
@@ -70,6 +86,7 @@ export default function LoginPage() {
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
+  const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false); // 🟩 NEW: drives a retry button -- a failed model load used to leave the user permanently stuck with only a status-pill message and no way forward but a full page reload
@@ -84,12 +101,15 @@ export default function LoginPage() {
       try {
         setModelsLoadFailed(false);
         setBiometricStatus(t('login.statusLoadingModels'));
+        const faceapi = await loadFaceApiModule();
+        if (!isCurrent) return;
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
           faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
           faceapi.nets.faceRecognitionNet.loadFromUri('/models')
         ]);
         if (!isCurrent) return;
+        faceapiRef.current = faceapi;
         setModelsLoaded(true);
         setBiometricStatus(t('login.statusPositionFace'));
       } catch (err) {
@@ -224,8 +244,8 @@ export default function LoginPage() {
         ctx.drawImage(videoEl, 0, 0, width, height);
         ctx.filter = 'none';
 
-        const allDetections = await faceapi
-          .detectAllFaces(sourceCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
+        const allDetections = await faceapiRef.current
+          .detectAllFaces(sourceCanvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
           .withFaceLandmarks()
           .withFaceDescriptors();
 
@@ -470,13 +490,13 @@ export default function LoginPage() {
         regCtx.drawImage(videoRef.current, 0, 0, regWidth, regHeight);
         regCtx.filter = 'none';
 
-        const regDetections = await faceapi
+        const regDetections = await faceapiRef.current
           .detectAllFaces(
             regCanvas,
             // 🟩 STRICT REGISTRATION SCORE: 0.6 prevents the camera from
             // saving a blurry or poorly-lit face scan as the permanent
             // reference descriptor.
-            new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.6 })
+            new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.6 })
           )
           .withFaceLandmarks()
           .withFaceDescriptors();

@@ -7,8 +7,6 @@ import EdgeDiagnosticsPanel from '../components/EdgeDiagnosticsPanel';
 import { generateTablePdf } from '../utils/generateTablePdf';
 import SortableTh from '../components/SortableTh';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
-import * as faceapi from 'face-api.js';
-import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
 import { getServerNow } from '../utils/serverTime';
 import { calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
@@ -33,6 +31,40 @@ import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
+
+// 🟩 LAZY-LOADED HEAVY VISION LIBS: face-api.js and @huggingface/transformers
+// are multi-MB and were previously static imports, so simply navigating to
+// this page downloaded both up front even before the user ever opens the
+// camera. Dynamic import() defers the fetch to the moment this view
+// actually needs them (inside loadModels/ensureYoloFaceDetector below), and
+// the module-level promise cache means a remount (or the other page that
+// also lazy-loads face-api.js, see LoginPage.jsx) reuses the same
+// in-flight/resolved fetch instead of re-requesting it.
+// 🟩 Clears its own cache on failure (flaky network, CDN hiccup) instead of
+// caching the rejection forever -- without this, the "Retry" button added
+// alongside this lazy-loading change would just immediately re-throw the
+// same failed promise on every attempt instead of actually retrying.
+let faceApiModulePromise = null;
+const loadFaceApiModule = () => {
+    if (!faceApiModulePromise) {
+        faceApiModulePromise = import('face-api.js').catch((err) => {
+            faceApiModulePromise = null;
+            throw err;
+        });
+    }
+    return faceApiModulePromise;
+};
+
+let transformersModulePromise = null;
+const loadTransformersModule = () => {
+    if (!transformersModulePromise) {
+        transformersModulePromise = import('@huggingface/transformers').catch((err) => {
+            transformersModulePromise = null;
+            throw err;
+        });
+    }
+    return transformersModulePromise;
+};
 
 const QUALITY_HINT_KEYS = {
     'no-face': 'attendance.statusScanning',
@@ -88,7 +120,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const YOLO_FACE_THRESHOLD = 0.35;
     const ATTENDANCE_TABLE = 'attendance';
     const FACE_SCAN_INTERVAL_MS = 1800;
-    const FACE_DETECT_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.15 });
+    // 🟩 Built once face-api.js finishes loading (see loadModels) instead of
+    // at module/component top-level, which previously required face-api.js
+    // to already be present just to construct this options object.
+    const faceapiRef = useRef(null);
+    const detectOptionsRef = useRef(null);
 
     // 🟩 MULTI-ANGLE ENROLLMENT: one template captured per pose instead of a
     // single frontal snapshot — matched against all of them at clock-in time
@@ -280,17 +316,24 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     };
 
     const detectWithFaceApi = async (canvasOrImage) => {
-        const detections = await faceapi.detectAllFaces(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptors();
+        const faceapi = faceapiRef.current;
+        const detections = await faceapi.detectAllFaces(canvasOrImage, detectOptionsRef.current).withFaceLandmarks().withFaceDescriptors();
         if (detections.length > 0) {
             const best = detections.sort((a, b) => (b.detection.score || 0) - (a.detection.score || 0))[0];
             return { ...best, faceCount: detections.length };
         }
-        const single = await faceapi.detectSingleFace(canvasOrImage, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+        const single = await faceapi.detectSingleFace(canvasOrImage, detectOptionsRef.current).withFaceLandmarks().withFaceDescriptor();
         return single ? { ...single, faceCount: 1 } : null;
     };
 
     const detectFaceFromImage = async (imageEl) => {
-        if (!imageEl) return null;
+        // 🟩 Defensive guard: the enrollment "Start Enrollment" button was
+        // only ever gated on the camera being ready, not on the (lazily
+        // loaded) face-api.js module having actually finished downloading —
+        // a narrow but real race on a slow connection. Bail out cleanly
+        // instead of throwing on `faceapiRef.current` being null.
+        if (!imageEl || !faceapiRef.current) return null;
+        const faceapi = faceapiRef.current;
         const isVideo = imageEl.tagName === 'VIDEO';
         const ready = isVideo ? imageEl.readyState >= 2 : imageEl.complete;
         const width = isVideo ? imageEl.videoWidth : imageEl.naturalWidth;
@@ -348,7 +391,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }
         }
 
-        const allFaceApiDetections = await faceapi.detectAllFaces(sourceCanvas, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptors();
+        const allFaceApiDetections = await faceapi.detectAllFaces(sourceCanvas, detectOptionsRef.current).withFaceLandmarks().withFaceDescriptors();
         if (allFaceApiDetections.length > 0) {
             const candidates = allFaceApiDetections
                 .map((d) => ({ box: normalizeBoundingBox(d.detection?.box), raw: d }))
@@ -361,7 +404,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         // Last-resort fallback for the rare case detectAllFaces finds nothing
         // but the single-face detector's slightly different algorithm does.
-        const single = await faceapi.detectSingleFace(sourceCanvas, FACE_DETECT_OPTIONS).withFaceLandmarks().withFaceDescriptor();
+        const single = await faceapi.detectSingleFace(sourceCanvas, detectOptionsRef.current).withFaceLandmarks().withFaceDescriptor();
         if (!single) return null;
         return {
             ...single,
@@ -399,13 +442,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             const selectedModelVersion = determineYoloVersion();
             const modelId = selectedModelVersion === 'nano' ? YOLO_MODEL_IDS.nano : YOLO_MODEL_IDS.medium;
 
-            yoloDetectorPromiseRef.current = pipeline('object-detection', modelId)
+            yoloDetectorPromiseRef.current = loadTransformersModule()
+                .then(({ pipeline }) => pipeline('object-detection', modelId))
                 .then(detector => {
                     yoloDetectorRef.current = detector;
                     setCurrentModelVersion(selectedModelVersion);
                     return detector;
                 })
                 .catch(async (_err) => {
+                    const { pipeline } = await loadTransformersModule();
                     const localDetector = await pipeline('object-detection', YOLO_LOCAL_PATH);
                     yoloDetectorRef.current = localDetector;
                     return localDetector;
@@ -701,11 +746,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             setFaceStatus('loading-models');
             setBiometricStatus(t('attendance.statusLoadingModels'));
             try {
+                const faceapi = await loadFaceApiModule();
+                faceapiRef.current = faceapi;
                 await Promise.all([
                     faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
                     faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
                     faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
                 ]);
+                detectOptionsRef.current = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.15 });
             } catch (err) {
                 console.error('[attendance] Failed to load face-recognition models:', err);
                 setFaceStatus('error');
@@ -875,7 +923,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         const { distance: dist } = matchAgainstTemplates(
                             liveDet.descriptor,
                             referenceDescriptorRef.current,
-                            faceapi.euclideanDistance
+                            faceapiRef.current.euclideanDistance
                         );
                         const matchTier = classifyMatch(dist, FACE_MATCH_THRESHOLD);
                         setFaceMatchDistance(dist);
