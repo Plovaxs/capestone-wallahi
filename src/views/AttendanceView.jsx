@@ -24,6 +24,7 @@ import { saveEnrollmentProgress, loadEnrollmentProgress, clearEnrollmentProgress
 import { isTorchSupported, setTorch } from '../utils/torchControl';
 import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
+import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
@@ -189,6 +190,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // accelerometer, so this just never becomes `ready` there, which is the
     // correct no-op). See sensors/motionStability.js.
     const motionTrackerRef = useRef(createMotionStabilityTracker());
+    const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: pixel-based liveness signal that works on desktop webcams too (motionTrackerRef above needs a phone/tablet accelerometer)
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -207,6 +209,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         lensClear: true,
         motionReady: false,
         motionStable: true,
+        microMotionReady: false,
+        microMotionStable: true,
     });
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -804,6 +808,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             const region = ctx.getImageData(liveDet.box.x, liveDet.box.y, liveDet.box.width, liveDet.box.height);
                             brightness = checkBrightness(region.data);
 
+                            // 🟩 MICRO-MOTION LIVENESS: feeds the already-fetched face
+                            // region into the pixel-variance tracker every tick a face is
+                            // visible, independent of whether it ends up matching -- by the
+                            // time a match is confirmed a few ticks later, the tracker's
+                            // rolling window is already warm instead of starting cold.
+                            microMotionTrackerRef.current.addFrame(region.data, liveDet.box.width, liveDet.box.height);
+                            const microMotionTickStats = microMotionTrackerRef.current.getStats();
+                            setSensorDiagnostics((prev) => (prev.microMotionReady === microMotionTickStats.ready && prev.microMotionStable === !microMotionTickStats.isSuspiciouslyFlat
+                                ? prev
+                                : { ...prev, microMotionReady: microMotionTickStats.ready, microMotionStable: !microMotionTickStats.isSuspiciouslyFlat }));
+
                             // 🟩 LOW-LIGHT MITIGATION: 3 consecutive dark reads (not just
                             // one noisy frame) before reacting — flips on the enhancement
                             // filter for the *next* capture and, where the device exposes
@@ -904,21 +919,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         if (isMatch) {
                             // 🟩 LIVENESS: attendance needs to be fast, so this no longer
                             // waits on an explicit blink/head-turn challenge (that's still
-                            // required at login, where a few extra seconds is fine). The
-                            // motion-sensor + border-uniformity anti-replay check below
-                            // already gives a "this is really moving in front of a camera,
-                            // not a static photo" signal — good enough for clock-in/out speed.
+                            // required at login, where a few extra seconds is fine). Instead
+                            // it leans on passive, no-action-required signals: border-texture
+                            // uniformity (checkReplaySuspicion), the device accelerometer
+                            // where available (motionTrackerRef -- phones/tablets only), and
+                            // pixel-level micro-motion in the face region itself
+                            // (microMotionTrackerRef -- works on any camera, desktop webcams
+                            // included). A genuine live person almost always clears at least
+                            // one of these; requiring TWO independent signals to agree before
+                            // calling it suspicious keeps common false positives (someone
+                            // standing very still against a plain wall) from blocking a real
+                            // clock-in, while a flat photo/screen replay — uniform border AND
+                            // zero pixel variance — still gets caught.
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!autoClockInGuardRef.current) {
-                                autoClockInGuardRef.current = true;
-                                setBiometricStatus(t('attendance.statusMatchVerified'));
-                                clearInterval(timer);
-
-                                // Best-effort, non-blocking anti-replay signal: warn if the
-                                // border around the face looks suspiciously uniform (a
-                                // possible phone/tablet bezel), but never hard-block on it —
-                                // a plain wall behind a real person can trigger the same signal.
+                                let livenessSuspicious = false;
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
                                     const marginX = Math.round(liveDet.box.width * 0.15);
@@ -929,25 +945,50 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         liveDet.box.width + marginX * 2,
                                         liveDet.box.height + marginY * 2
                                     );
-                                    const motionStats = motionTrackerRef.current.getStats();
-                                    setSensorDiagnostics((prev) => (prev.motionReady === motionStats.ready && prev.motionStable === !motionStats.isSuspiciouslyFlat
+                                    const borderSuspicious = checkReplaySuspicion(borderRegion.data).suspicious;
+                                    const deviceMotionStats = motionTrackerRef.current.getStats();
+                                    const microMotionStats = microMotionTrackerRef.current.getStats();
+                                    const deviceFlat = deviceMotionStats.ready && deviceMotionStats.isSuspiciouslyFlat;
+                                    const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
+
+                                    setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
+                                        && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
                                         ? prev
-                                        : { ...prev, motionReady: motionStats.ready, motionStable: !motionStats.isSuspiciouslyFlat }));
-                                    if (checkReplaySuspicion(borderRegion.data).suspicious || (motionStats.ready && motionStats.isSuspiciouslyFlat)) {
-                                        toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
-                                    }
+                                        : {
+                                            ...prev,
+                                            motionReady: deviceMotionStats.ready,
+                                            motionStable: !deviceMotionStats.isSuspiciouslyFlat,
+                                            microMotionReady: microMotionStats.ready,
+                                            microMotionStable: !microMotionStats.isSuspiciouslyFlat,
+                                        }));
+
+                                    livenessSuspicious = borderSuspicious && (deviceFlat || pixelFlat);
                                 } catch (_err) {
-                                    // Non-critical signal — ignore failures (tainted canvas, out-of-bounds region, etc.)
+                                    // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
                                 }
 
-                                // 🟩 STALENESS REMINDER: track whether recent matches keep
-                                // coming in close to the threshold rather than confidently.
-                                const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
-                                if (staleness.shouldSuggestReEnrollment) {
-                                    toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
-                                }
+                                if (livenessSuspicious) {
+                                    // Don't lock in or clock in this tick -- keep scanning. A
+                                    // live person's signals normally clear within a tick or
+                                    // two as the rolling window updates; a genuine static
+                                    // replay stays flagged indefinitely instead of ever
+                                    // sneaking through.
+                                    setBiometricStatus(t('attendance.statusLivenessSuspicious'));
+                                    toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
+                                } else {
+                                    autoClockInGuardRef.current = true;
+                                    setBiometricStatus(t('attendance.statusMatchVerified'));
+                                    clearInterval(timer);
 
-                                await handleClockIn('face-match');
+                                    // 🟩 STALENESS REMINDER: track whether recent matches keep
+                                    // coming in close to the threshold rather than confidently.
+                                    const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
+                                    if (staleness.shouldSuggestReEnrollment) {
+                                        toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
+                                    }
+
+                                    await handleClockIn('face-match');
+                                }
                             }
                         } else {
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
@@ -959,6 +1000,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setFaceMatchDistance(null);
                     setIsFaceVerified(false);
                     setScanReadiness(0);
+                    microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
@@ -1780,6 +1822,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 label={t('attendance.diagMotion')}
                                 value={!sensorDiagnostics.motionReady ? t('attendance.diagNoSensor') : sensorDiagnostics.motionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
                                 ok={!sensorDiagnostics.motionReady || sensorDiagnostics.motionStable}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagPixelLiveness')}
+                                value={!sensorDiagnostics.microMotionReady ? t('attendance.diagWarming') : sensorDiagnostics.microMotionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
+                                ok={!sensorDiagnostics.microMotionReady || sensorDiagnostics.microMotionStable}
                             />
                             <DiagnosticTile
                                 label={t('attendance.diagNetwork')}
