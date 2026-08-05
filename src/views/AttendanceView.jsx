@@ -10,7 +10,7 @@ import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
 import { getServerNow } from '../utils/serverTime';
-import { RandomLivenessChallenge, CHALLENGE_TYPES, calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
@@ -40,11 +40,6 @@ const QUALITY_HINT_KEYS = {
     'too-bright': 'attendance.statusTooBright',
     'low-confidence': 'attendance.statusLowConfidence',
     'lens-obstructed': 'attendance.statusLensObstructed',
-};
-
-const CHALLENGE_HINT_KEYS = {
-    [CHALLENGE_TYPES.BLINK]: 'attendance.statusAwaitingBlink',
-    [CHALLENGE_TYPES.HEAD_TURN]: 'attendance.statusAwaitingHeadTurn',
 };
 
 const ENROLL_QUALITY_HINT_KEYS = {
@@ -174,9 +169,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
     const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
     const [isFaceVerified, setIsFaceVerified] = useState(false);
-    const [hasBlinked, setHasBlinked] = useState(false); // 🟩 NEW: liveness gate — a matched face still can't clock in until the liveness challenge is confirmed
     const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar during the live clock-in scan
-    const [challengeType, setChallengeType] = useState(null); // 🟩 NEW: which liveness challenge is active this session (blink or head-turn)
     const [showConsentModal, setShowConsentModal] = useState(false); // 🟩 NEW: biometric-data consent gate before first enrollment
     // 🟩 LOW-LIGHT MITIGATION: don't just reject a dark scan — actively try to
     // fix it. `lowLightStreakRef` counts consecutive dark reads (debounces a
@@ -248,7 +241,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const yoloDetectorPromiseRef = useRef(null);
     const autoClockInGuardRef = useRef(false);
     const webcamStreamRef = useRef(null);
-    const livenessChallengeRef = useRef(new RandomLivenessChallenge());
     const borderlineStreakRef = useRef(0); // consecutive borderline-tier match reads, for confidence-tiered re-check
     // Client-side pre-throttle on repeated mismatches (NOT the security boundary —
     // trivially bypassable client-side — just avoids hammering the scan loop
@@ -776,12 +768,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     useEffect(() => {
         if (!isCameraReady || faceStatus !== 'scanning' || todayRecord || !isTabVisible) return;
 
-        // Fresh, randomly-typed liveness challenge every time a scan session
-        // (re)starts — a blink/head-turn observed in a previous, already-
-        // finished attempt shouldn't carry over and silently satisfy this one.
-        livenessChallengeRef.current.reset();
-        setChallengeType(livenessChallengeRef.current.challengeType);
-        setHasBlinked(false);
         borderlineStreakRef.current = 0;
 
         const timer = setInterval(async () => {
@@ -884,7 +870,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                     if (qualityIssue) {
                         setIsFaceVerified(false);
-                        setHasBlinked(false);
                         setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'attendance.statusScanning'));
                         faceScanBusyRef.current = false;
                         return;
@@ -917,22 +902,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         setIsFaceVerified(isMatch);
 
                         if (isMatch) {
-                            // 🟩 LIVENESS GATE: a matched descriptor alone doesn't prove a
-                            // live person is present — a printed photo or a video replay
-                            // would match too. Require a time-boxed blink before treating
-                            // the match as final (head-turn challenge removed — real users
-                            // found the random 50/50 chance of getting it slow/confusing).
-                            const challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
-                            setHasBlinked(challengeConfirmed);
-
+                            // 🟩 LIVENESS: attendance needs to be fast, so this no longer
+                            // waits on an explicit blink/head-turn challenge (that's still
+                            // required at login, where a few extra seconds is fine). The
+                            // motion-sensor + border-uniformity anti-replay check below
+                            // already gives a "this is really moving in front of a camera,
+                            // not a static photo" signal — good enough for clock-in/out speed.
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
-                            } else if (livenessChallengeRef.current.isExpired()) {
-                                setBiometricStatus(t('attendance.statusChallengeExpired'));
-                                livenessChallengeRef.current.reset();
-                                setChallengeType(livenessChallengeRef.current.challengeType);
-                            } else if (!challengeConfirmed) {
-                                setBiometricStatus(t(CHALLENGE_HINT_KEYS[livenessChallengeRef.current.challengeType]));
                             } else if (!autoClockInGuardRef.current) {
                                 autoClockInGuardRef.current = true;
                                 setBiometricStatus(t('attendance.statusMatchVerified'));
@@ -1590,14 +1567,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 <button
                                     type="button"
                                     onClick={() => handleClockIn('manual')}
-                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked}
-                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified || !hasBlinked ? 'bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-300 dark:border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
+                                    disabled={isLoading || !isInRange || !isCameraReady || !isFaceVerified}
+                                    className={`w-full md:w-auto px-8 py-3 rounded-xl font-bold text-slate-900 transition-all shadow-lg ${isLoading || !isInRange || !isCameraReady || !isFaceVerified ? 'bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-300 dark:border-slate-600' : 'bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 hover:-translate-y-0.5 font-black uppercase text-xs tracking-widest'}`}
                                 >
                                     {isLoading
                                         ? t('attendance.processing')
-                                        : (isFaceVerified && !hasBlinked
-                                            ? t(challengeType === CHALLENGE_TYPES.HEAD_TURN ? 'attendance.pleaseTurnHead' : 'attendance.pleaseBlink')
-                                            : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics')))}
+                                        : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics'))}
                                 </button>
                             )}
                             {todayRecord && !todayRecord.clock_out && (
