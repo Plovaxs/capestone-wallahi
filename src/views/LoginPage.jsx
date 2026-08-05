@@ -4,35 +4,27 @@ import toast from 'react-hot-toast';
 import * as faceapi from 'face-api.js';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
-import { checkFraming, checkOcclusion } from '../vision/faceQuality';
+import { checkFraming, checkOcclusion, checkBrightness, checkSingleFace } from '../vision/faceQuality';
 import { calculateFrameReadiness } from '../vision/scanReadiness';
 import ScanReadinessBar from '../components/ScanReadinessBar';
+import { selectPrimaryFace } from '../vision/primaryFaceSelector';
+import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
+import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
+import { createMicroMotionTracker } from '../vision/microMotionTracker';
 
-function calculateEAR(eyeLandmarks) {
-  if (!eyeLandmarks || eyeLandmarks.length < 6) return 1;
-
-  const p2 = eyeLandmarks[1];
-  const p3 = eyeLandmarks[2];
-  const p6 = eyeLandmarks[5];
-  const p5 = eyeLandmarks[4];
-  const p1 = eyeLandmarks[0];
-  const p4 = eyeLandmarks[3];
-
-  const point = (p) => ({ x: p.x ?? p._x, y: p.y ?? p._y });
-  const a = point(p1);
-  const b = point(p2);
-  const c = point(p3);
-  const d = point(p4);
-  const e = point(p5);
-  const f = point(p6);
-
-  const distVert1 = Math.hypot(b.x - f.x, b.y - f.y);
-  const distVert2 = Math.hypot(c.x - e.x, c.y - e.y);
-  const distHoriz = Math.hypot(a.x - d.x, a.y - d.y);
-
-  if (distHoriz === 0) return 1;
-  return (distVert1 + distVert2) / (2.0 * distHoriz);
-}
+// 🟩 Maps a failed quality/liveness gate to the specific hint shown to the
+// user, same pattern as AttendanceView's QUALITY_HINT_KEYS -- "no face" and
+// "face blocked by someone else" need different guidance than "too dark".
+const QUALITY_HINT_KEYS = {
+  'no-face': 'login.statusNoFace',
+  'multiple-faces': 'login.statusMultipleFaces',
+  'too-far': 'login.statusTooFar',
+  'too-close': 'login.statusTooClose',
+  'off-center': 'login.statusFaceLocked',
+  'too-dark': 'login.statusTooDark',
+  'too-bright': 'login.statusTooBright',
+  'low-confidence': 'login.statusLowConfidence',
+};
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -56,13 +48,15 @@ export default function LoginPage() {
   const suggestPasswordFallback = biometricFailCount >= MAX_BIOMETRIC_FAILURES;
 
   const videoRef = useRef(null);
-  const isEyeClosedRef = useRef(false);
   const isRedirectingRef = useRef(false);
   const lastAttemptRef = useRef(0);
   const ATTEMPT_COOLDOWN_MS = 4000;
+  const scanBusyRef = useRef(false); // 🟩 NEW: guards against an interval tick overlapping a still-running detection (throttled loop, see below)
+  const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
+  const lowLightStreakRef = useRef(0);
+  const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [blinkCount, setBlinkCount] = useState(0);
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
   const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
 
@@ -124,106 +118,178 @@ export default function LoginPage() {
   }, [modelsLoaded]);
 
   useEffect(() => {
-    let rafId = null;
+    let intervalId = null;
+    let cancelled = false;
 
-    const detectLoop = async () => {
-      if (isRedirectingRef.current || !modelsLoaded) return;
+    // 🟩 PERFORMANCE: this used to run full face detection + landmarks +
+    // descriptor inference on every requestAnimationFrame -- up to ~60
+    // times a second, each one a real CNN forward pass. Throttled to a
+    // fixed interval instead (like AttendanceView's scan loop already
+    // does): status feedback doesn't need to update faster than a human
+    // can perceive, and this alone cuts the CPU/battery cost by roughly
+    // an order of magnitude with no visible difference in responsiveness.
+    const DETECT_INTERVAL_MS = 350;
 
-      if (!videoRef.current || videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0) {
-        rafId = requestAnimationFrame(detectLoop);
-        return;
-      }
+    const detectTick = async () => {
+      if (cancelled || scanBusyRef.current || isRedirectingRef.current || !modelsLoaded) return;
+      const videoEl = videoRef.current;
+      if (!videoEl || videoEl.videoWidth === 0 || videoEl.videoHeight === 0) return;
+      scanBusyRef.current = true;
 
       try {
-        const detection = await faceapi
-          .detectSingleFace(
-            videoRef.current,
-            // Low threshold here is fine just for finding eyes/blinks quickly
-            new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.15 })
-          )
-          .withFaceLandmarks()
-          .withFaceDescriptor();
+        const width = videoEl.videoWidth;
+        const height = videoEl.videoHeight;
 
-        // 🟩 FIX: detectSingleFace's inference can take a while, and the
-        // video element can disappear mid-await (auth-mode switch tears
-        // down and restarts the stream, or the component unmounts on
-        // redirect) -- reading videoRef.current.videoWidth after that
-        // point threw "Cannot read properties of null (reading
-        // 'videoWidth')" and killed the detection loop entirely.
-        if (!videoRef.current) {
-          rafId = requestAnimationFrame(detectLoop);
+        // 🟩 LOW-LIGHT SUPPORT: draw through a canvas (instead of handing
+        // the raw <video> straight to face-api) so a sustained run of dark
+        // reads can boost brightness/contrast on the way in -- same
+        // technique AttendanceView uses. This is also what makes the pixel
+        // data available below for the framing/brightness/liveness checks
+        // without a second capture.
+        const sourceCanvas = document.createElement('canvas');
+        sourceCanvas.width = width;
+        sourceCanvas.height = height;
+        const ctx = sourceCanvas.getContext('2d');
+        if (!ctx) return;
+        ctx.filter = isLowLightRef.current ? 'brightness(1.6) contrast(1.15)' : 'none';
+        ctx.drawImage(videoEl, 0, 0, width, height);
+        ctx.filter = 'none';
+
+        const allDetections = await faceapi
+          .detectAllFaces(sourceCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+
+        if (cancelled || !videoRef.current) return;
+
+        // 🟩 CROWD ROBUSTNESS: in a busy room this picks the largest +
+        // most-centered face (the person actually in front of the camera)
+        // instead of whichever detection face-api happened to return
+        // first -- a bystander walking past shouldn't be able to hijack
+        // the scan. isAmbiguous only fires for the specific "second face
+        // is a similar size AND right next to the primary" shape (the
+        // real spoofing pattern), not just "someone else is in frame".
+        const candidates = allDetections.map((d) => ({ box: d.detection.box, raw: d })).filter((d) => d.box);
+        const { primary, isAmbiguous } = selectPrimaryFace(candidates, width, height);
+
+        if (!primary) {
+          setScanReadiness(0);
+          setFaceOverlayBox(null);
+          microMotionTrackerRef.current.reset();
+          setBiometricStatus(t('login.statusNoFace'));
           return;
         }
 
-        if (detection) {
-          // 🟩 READINESS BAR: reuses the same framing/occlusion gates the
-          // Attendance scan loop uses (vision/faceQuality.js) purely as a
-          // 0-100 UX signal here -- doesn't block login, just shows the user
-          // how well-positioned they are while they wait to blink.
-          const framing = checkFraming(detection.detection.box, videoRef.current.videoWidth, videoRef.current.videoHeight);
-          const occlusion = checkOcclusion(detection.detection.score);
-          setScanReadiness(calculateFrameReadiness({ framing: framing.ok, occlusion: occlusion.ok }));
-          setFaceOverlayBox({
-            x: detection.detection.box.x,
-            y: detection.detection.box.y,
-            width: detection.detection.box.width,
-            height: detection.detection.box.height,
-            imageWidth: videoRef.current.videoWidth,
-            imageHeight: videoRef.current.videoHeight
-          });
+        const detection = primary.raw;
+        const box = primary.box;
 
-          // 🟩 BLINK IS LOGIN-ONLY: registration just needs a clear, well-
-          // framed face so the user can hit "Save" -- no blink requirement.
-          // Blink/liveness only matters for the zero-touch login flow below,
-          // where it proves a live person (not a photo) is authenticating.
-          if (authMode !== 'login') {
-            setBiometricStatus(framing.ok && occlusion.ok ? t('login.statusMatrixVerified') : t('login.statusFaceLocked'));
-          } else {
-            const leftEAR = calculateEAR(detection.landmarks.getLeftEye());
-            const rightEAR = calculateEAR(detection.landmarks.getRightEye());
-            const avgEAR = (leftEAR + rightEAR) / 2;
+        const region = ctx.getImageData(
+          Math.max(0, Math.round(box.x)),
+          Math.max(0, Math.round(box.y)),
+          Math.max(1, Math.min(Math.round(box.width), width - Math.round(box.x))),
+          Math.max(1, Math.min(Math.round(box.height), height - Math.round(box.y)))
+        );
+        const brightness = checkBrightness(region.data);
 
-            if (avgEAR < 0.26) {
-              isEyeClosedRef.current = true;
-            } else if (isEyeClosedRef.current) {
-              isEyeClosedRef.current = false;
-              setBlinkCount(p => p + 1);
-
-              if (suggestPasswordFallback) {
-                setBiometricStatus(t('login.statusUsePasswordInstead'));
-              } else {
-                const now = Date.now();
-                if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
-                  // Ignore blinks/noise while still cooling down from the last attempt
-                  setBiometricStatus(t('login.statusPleaseWait'));
-                } else {
-                  lastAttemptRef.current = now;
-                  setBiometricStatus(t('login.statusLivenessVerified'));
-                  await executeBiometricLogin(detection.descriptor);
-                }
-              }
-            } else {
-              setBiometricStatus(t('login.statusBlinkToAuth'));
-            }
-          }
+        const LOW_LIGHT_STREAK_THRESHOLD = 3;
+        if (brightness.reason === 'too-dark') {
+          lowLightStreakRef.current += 1;
+          if (lowLightStreakRef.current >= LOW_LIGHT_STREAK_THRESHOLD) isLowLightRef.current = true;
         } else {
-          setScanReadiness(0);
-          setFaceOverlayBox(null);
-          setBiometricStatus(t('login.statusNoFace'));
+          lowLightStreakRef.current = 0;
+          isLowLightRef.current = false;
         }
+
+        const framing = checkFraming(box, width, height);
+        const singleFace = checkSingleFace(allDetections.length, isAmbiguous);
+        const occlusion = checkOcclusion(detection.detection.score);
+
+        setScanReadiness(calculateFrameReadiness({
+          singleFace: singleFace.ok,
+          framing: framing.ok,
+          brightness: brightness.ok,
+          occlusion: occlusion.ok,
+        }));
+        setFaceOverlayBox({ x: box.x, y: box.y, width: box.width, height: box.height, imageWidth: width, imageHeight: height });
+
+        const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
+        if (qualityIssue) {
+          microMotionTrackerRef.current.reset();
+          setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
+          return;
+        }
+
+        microMotionTrackerRef.current.addFrame(region.data, region.width, region.height);
+        const colorLiveness = checkColorLiveness(region.data, region.width, region.height);
+
+        // 🟩 REGISTRATION: just needs a clear, well-framed, single face so
+        // the user can hit "Save" -- the actual capture happens there, not
+        // here, so no auto-login/liveness gating applies in this mode.
+        if (authMode !== 'login') {
+          setBiometricStatus(t('login.statusMatrixVerified'));
+          return;
+        }
+
+        // 🟩 LOGIN: no blink wait anymore -- passive liveness only. Border-
+        // uniformity + (device-independent) pixel-variance + color/texture
+        // plausibility together catch a printed photo or a phone held up
+        // to the camera, including one that's being shaken to fake motion,
+        // without asking the user to do anything.
+        if (suggestPasswordFallback) {
+          setBiometricStatus(t('login.statusUsePasswordInstead'));
+          return;
+        }
+
+        const now = Date.now();
+        if (now - lastAttemptRef.current < ATTEMPT_COOLDOWN_MS) {
+          setBiometricStatus(t('login.statusPleaseWait'));
+          return;
+        }
+
+        const microMotionStats = microMotionTrackerRef.current.getStats();
+        if (!microMotionStats.ready) {
+          // Rolling window still warming up (a couple seconds at this
+          // interval) -- keep showing progress, don't fire early on an
+          // incomplete read.
+          setBiometricStatus(t('login.statusMatrixVerified'));
+          return;
+        }
+
+        const marginX = Math.round(box.width * 0.15);
+        const marginY = Math.round(box.height * 0.15);
+        const borderRegion = ctx.getImageData(
+          Math.max(0, Math.round(box.x - marginX)),
+          Math.max(0, Math.round(box.y - marginY)),
+          Math.min(Math.round(box.width + marginX * 2), width),
+          Math.min(Math.round(box.height + marginY * 2), height)
+        );
+        const borderSuspicious = checkReplaySuspicion(borderRegion.data).suspicious;
+        const pixelFlat = microMotionStats.isSuspiciouslyFlat;
+        const livenessSuspicious = borderSuspicious && (pixelFlat || colorLiveness.suspicious);
+
+        if (livenessSuspicious) {
+          setBiometricStatus(t('login.statusLivenessSuspicious'));
+          return;
+        }
+
+        lastAttemptRef.current = now;
+        setBiometricStatus(t('login.statusLivenessVerified'));
+        await executeBiometricLogin(detection.descriptor);
       } catch (err) {
         console.error('Face detection error:', err);
+      } finally {
+        scanBusyRef.current = false;
       }
-
-      rafId = requestAnimationFrame(detectLoop);
     };
 
     if (modelsLoaded) {
-      rafId = requestAnimationFrame(detectLoop);
+      intervalId = setInterval(detectTick, DETECT_INTERVAL_MS);
     }
 
     return () => {
-      if (rafId) cancelAnimationFrame(rafId);
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+      microMotionTrackerRef.current.reset();
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);
 
@@ -319,20 +385,41 @@ export default function LoginPage() {
         }
 
         setBiometricStatus(t('login.statusCapturing'));
-        const detection = await faceapi
-          .detectSingleFace(
-            videoRef.current,
-            // 🟩 FIX 2: STRICT REGISTRATION SCORE
-            // 0.6 prevents the camera from saving blurry or poorly lit face scans
+
+        // 🟩 CROWD + LOW-LIGHT ROBUSTNESS: same canvas-with-brightness-boost
+        // + detectAllFaces/selectPrimaryFace approach as the live scan loop,
+        // so registering in a busy room reliably captures the person
+        // actually sitting at the camera (not a bystander) even in a dim
+        // room, instead of silently grabbing whichever face came first.
+        const regWidth = videoRef.current.videoWidth;
+        const regHeight = videoRef.current.videoHeight;
+        const regCanvas = document.createElement('canvas');
+        regCanvas.width = regWidth;
+        regCanvas.height = regHeight;
+        const regCtx = regCanvas.getContext('2d');
+        regCtx.filter = isLowLightRef.current ? 'brightness(1.6) contrast(1.15)' : 'none';
+        regCtx.drawImage(videoRef.current, 0, 0, regWidth, regHeight);
+        regCtx.filter = 'none';
+
+        const regDetections = await faceapi
+          .detectAllFaces(
+            regCanvas,
+            // 🟩 STRICT REGISTRATION SCORE: 0.6 prevents the camera from
+            // saving a blurry or poorly-lit face scan as the permanent
+            // reference descriptor.
             new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.6 })
           )
           .withFaceLandmarks()
-          .withFaceDescriptor();
+          .withFaceDescriptors();
 
-        if (!detection) {
+        const regCandidates = regDetections.map((d) => ({ box: d.detection.box, raw: d })).filter((d) => d.box);
+        const { primary: regPrimary, isAmbiguous: regAmbiguous } = selectPrimaryFace(regCandidates, regWidth, regHeight);
+
+        if (!regPrimary || regAmbiguous) {
           throw new Error(t('login.errorFaceUnclear'));
         }
 
+        const detection = regPrimary.raw;
         const stringifiedDescriptor = JSON.stringify(Array.from(detection.descriptor));
 
         setBiometricStatus(t('login.statusCreatingAccount'));
@@ -509,7 +596,7 @@ export default function LoginPage() {
           {faceOverlayBox && (
             <div
               className={`absolute border-2 rounded-xl z-[15] pointer-events-none transition-all duration-75 ${
-                (authMode === 'login' ? blinkCount > 0 : scanReadiness >= 100) ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                scanReadiness >= 100 ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.3)]' : 'border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
               }`}
               style={getFaceOverlayStyle() || { display: 'none' }}
             />
@@ -525,9 +612,9 @@ export default function LoginPage() {
 
         <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">{t('login.zeroTouchGate')}</h3>
         <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono px-4">
-          {authMode === 'login'
-            ? (blinkCount > 0 ? t('login.liveVerified') : t('login.blinkToEnter'))
-            : (scanReadiness >= 100 ? t('login.statusMatrixVerified') : t('login.statusFaceLocked'))}
+          {scanReadiness >= 100
+            ? (authMode === 'login' ? t('login.liveVerified') : t('login.statusMatrixVerified'))
+            : (authMode === 'login' ? t('login.blinkToEnter') : t('login.statusFaceLocked'))}
         </p>
       </div>
     </div>
