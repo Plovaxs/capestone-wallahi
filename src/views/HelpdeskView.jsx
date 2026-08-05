@@ -99,15 +99,26 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
         }
     };
 
-    const handleChangeStatus = async (ticketId, newStatus) => {
+    // 🟩 A ticket's own submitter previously had no way to mark their own
+    // ticket In Progress/Resolved at all -- the "mark status" buttons were
+    // supervisor-only, which was confusing ("gatau cara nge determine
+    // tugas nya") for someone who, say, fixed their own blocker and wanted
+    // to close it out themselves. Supervisors can still manage any ticket;
+    // an employee can now also manage tickets they filed.
+    const canManageTicketStatus = (ticket) => userProfile.role === 'supervisor' || ticket?.employee_id === userProfile.id;
+
+    const handleChangeStatus = async (ticket, newStatus) => {
         // 🟩 Defense-in-depth: the "mark status" buttons are only rendered
-        // for supervisors in the JSX, but this handler itself had no guard —
-        // any employee could call it directly (devtools/console) with an
-        // arbitrary ticketId and close/reopen anyone's ticket. Also adds the
-        // in-flight guard + try/finally every other mutation in this file
-        // already had, so a thrown network error can't leave the status
-        // button stuck disabled forever.
-        if (userProfile.role !== 'supervisor' || changingStatusId === ticketId) return;
+        // for authorized users in the JSX, but this handler itself had no
+        // guard -- any employee could call it directly (devtools/console)
+        // with an arbitrary ticketId and close/reopen anyone's ticket. Real
+        // enforcement is the RLS/trigger on helpdesk_tickets server-side;
+        // this is just the client-side mirror of the same rule. Also adds
+        // the in-flight guard + try/finally every other mutation in this
+        // file already had, so a thrown network error can't leave the
+        // status button stuck disabled forever.
+        if (!canManageTicketStatus(ticket) || changingStatusId === ticket.id) return;
+        const ticketId = ticket.id;
         setChangingStatusId(ticketId);
         try {
             const { error } = await supabase
@@ -288,15 +299,15 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                                 {ticket.contribution}
                             </p>
 
-                            {/* Supervisor-only status control */}
-                            {userProfile?.role === 'supervisor' && (
+                            {/* Status control: available to supervisors (any ticket) and to the employee who filed this specific ticket */}
+                            {canManageTicketStatus(ticket) && (
                                 <div className="flex gap-2 mb-3">
                                     {STATUS_ORDER.map(s => (
                                         <button
                                             key={s}
                                             type="button"
                                             disabled={status === s || changingStatusId === ticket.id}
-                                            onClick={() => handleChangeStatus(ticket.id, s)}
+                                            onClick={() => handleChangeStatus(ticket, s)}
                                             className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors disabled:opacity-40 disabled:cursor-default ${
                                                 status === s
                                                     ? STATUS_STYLES[s]

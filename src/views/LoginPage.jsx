@@ -26,6 +26,19 @@ const QUALITY_HINT_KEYS = {
   'low-confidence': 'login.statusLowConfidence',
 };
 
+// 🟩 Same specific-cause-to-message mapping AttendanceView's camera fallback
+// uses -- "permission denied", "no camera found", and "camera already in
+// use by another app" all need different instructions, and lumping them
+// into one generic "webcam unreachable" message left the user with no idea
+// what to actually do about it.
+const CAMERA_ERROR_I18N_KEYS = {
+  denied: { title: 'login.cameraErrorDeniedTitle', body: 'login.cameraErrorDeniedBody' },
+  'not-found': { title: 'login.cameraErrorNotFoundTitle', body: 'login.cameraErrorNotFoundBody' },
+  busy: { title: 'login.cameraErrorBusyTitle', body: 'login.cameraErrorBusyBody' },
+  unsupported: { title: 'login.cameraErrorUnsupportedTitle', body: 'login.cameraErrorUnsupportedBody' },
+  unknown: { title: 'login.cameraErrorUnknownTitle', body: 'login.cameraErrorUnknownBody' },
+};
+
 export default function LoginPage() {
   const { t } = useTranslation();
   const [authMode, setAuthMode] = useState('login');
@@ -52,38 +65,68 @@ export default function LoginPage() {
   const lastAttemptRef = useRef(0);
   const ATTEMPT_COOLDOWN_MS = 4000;
   const scanBusyRef = useRef(false); // 🟩 NEW: guards against an interval tick overlapping a still-running detection (throttled loop, see below)
+  const detectionFailureStreakRef = useRef(0); // 🟩 NEW: consecutive detectTick exceptions (WebGL context lost, out-of-memory, etc.) -- previously only ever logged to console with zero user-facing feedback
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelsLoadFailed, setModelsLoadFailed] = useState(false); // 🟩 NEW: drives a retry button -- a failed model load used to leave the user permanently stuck with only a status-pill message and no way forward but a full page reload
+  const [modelLoadAttempt, setModelLoadAttempt] = useState(0); // 🟩 NEW: bumping this re-runs the model-load effect, giving the retry button something to trigger
+  const [cameraError, setCameraError] = useState(null); // 🟩 NEW: null | 'denied' | 'not-found' | 'busy' | 'unsupported' | 'unknown'
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
   const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
 
   useEffect(() => {
+    let isCurrent = true;
     async function loadNeuralModels() {
       try {
+        setModelsLoadFailed(false);
         setBiometricStatus(t('login.statusLoadingModels'));
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
           faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
           faceapi.nets.faceRecognitionNet.loadFromUri('/models')
         ]);
+        if (!isCurrent) return;
         setModelsLoaded(true);
         setBiometricStatus(t('login.statusPositionFace'));
       } catch (err) {
         console.error('Failed to load neural models:', err);
+        if (!isCurrent) return;
+        // 🟩 MITIGATION: previously a dead end -- this status text was the
+        // only feedback, with no button, no retry, nothing actionable. A
+        // flaky connection loading ~6MB of model weights is exactly the
+        // kind of transient failure a manual retry (network's back now)
+        // should be able to recover from without a full page reload.
+        setModelsLoadFailed(true);
         setBiometricStatus(t('login.statusModelsUnreachable'));
       }
     }
     loadNeuralModels();
-  }, []);
+    return () => { isCurrent = false; };
+    // Intentional: `t` isn't listed -- i18next's translate function isn't
+    // guaranteed stable across every parent re-render, and this effect
+    // must only actually restart the (slow, ~6MB) model download when the
+    // retry button bumps modelLoadAttempt, not on unrelated re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelLoadAttempt]);
 
   useEffect(() => {
     let localStream = null;
     let isCurrent = true;
 
     async function startVideo() {
+      setCameraError(null);
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        // Very old browser, or a non-secure (http, non-localhost) context —
+        // getUserMedia is unavailable entirely rather than throwing.
+        setCameraError('unsupported');
+        setBiometricStatus(t('login.statusWebcamUnreachable'));
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, facingMode: 'user' }
@@ -100,7 +143,22 @@ export default function LoginPage() {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(e => console.error(e));
         }
-      } catch (_err) {
+      } catch (error) {
+        if (!isCurrent) return;
+        // 🟩 MITIGATION: same specific-cause differentiation AttendanceView
+        // already has -- "permission denied" needs different instructions
+        // (check browser settings) than "camera in use by another app"
+        // (close Zoom/Teams/etc.) or "no camera found" (plug one in).
+        console.error('[login] getUserMedia failed:', error);
+        if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+          setCameraError('denied');
+        } else if (error?.name === 'NotFoundError' || error?.name === 'OverconstrainedError') {
+          setCameraError('not-found');
+        } else if (error?.name === 'NotReadableError') {
+          setCameraError('busy');
+        } else {
+          setCameraError('unknown');
+        }
         setBiometricStatus(t('login.statusWebcamUnreachable'));
       }
     }
@@ -115,6 +173,11 @@ export default function LoginPage() {
         localStream.getTracks().forEach(track => track.stop());
       }
     };
+    // Intentional: `t` isn't listed, same reasoning as the model-load effect
+    // above -- this must only re-request the camera when modelsLoaded flips,
+    // not on every unrelated re-render (which would tear down and re-open
+    // the webcam stream, flickering the camera indicator/permission state).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelsLoaded]);
 
   useEffect(() => {
@@ -137,6 +200,11 @@ export default function LoginPage() {
       scanBusyRef.current = true;
 
       try {
+        // Any tick that completes without throwing -- regardless of which
+        // branch it takes below (no face, bad quality, successful login
+        // trigger) -- means detection itself is healthy again.
+        detectionFailureStreakRef.current = 0;
+
         const width = videoEl.videoWidth;
         const height = videoEl.videoHeight;
 
@@ -277,6 +345,17 @@ export default function LoginPage() {
         await executeBiometricLogin(detection.descriptor);
       } catch (err) {
         console.error('Face detection error:', err);
+        // 🟩 MITIGATION: a repeatedly-throwing detection loop (WebGL context
+        // lost, browser tab backgrounded then restored in a bad state, an
+        // out-of-memory condition) previously failed completely silently --
+        // console-only, nothing shown to the user, who'd just see the scan
+        // circle sitting frozen with no explanation. After a sustained run
+        // of failures (not a single blip), surface it and point at the
+        // password fallback that's already on screen.
+        detectionFailureStreakRef.current += 1;
+        if (detectionFailureStreakRef.current >= 10) {
+          setBiometricStatus(t('login.statusScanRepeatedlyFailing'));
+        }
       } finally {
         scanBusyRef.current = false;
       }
@@ -344,7 +423,7 @@ export default function LoginPage() {
   };
 
   const executeBiometricLogin = async (liveDescriptor) => {
-       isRedirectingRef.current = true;
+   isRedirectingRef.current = true;
    setBiometricStatus(t('login.statusVerifyingServer'));
 
    const { data, error } = await supabase.functions.invoke('biometric-login', {
@@ -353,8 +432,41 @@ export default function LoginPage() {
 
    if (error || !data?.token_hash) {
      isRedirectingRef.current = false;
-     setError(t('login.errorFaceNotRecognized'));
-     setBiometricFailCount((prev) => prev + 1);
+
+     // 🟩 MITIGATION: previously every failure mode here -- an actual "no
+     // match found", a 429 rate-limit, and a network/server error where the
+     // request never even reached the matching logic -- all showed the
+     // exact same "face not recognized" message and counted the same
+     // toward the password-fallback threshold. That's actively misleading
+     // when the real cause is "your connection dropped" or "you've hit the
+     // server's rate limit", neither of which the user can fix by
+     // re-scanning their face. Reads the edge function's actual JSON error
+     // body (Supabase wraps a non-2xx response in a FunctionsHttpError
+     // whose .context is the raw Response) to tell them apart.
+     let reason = null;
+     if (error?.context?.json) {
+       try {
+         const body = await error.context.json();
+         reason = body?.error ?? null;
+       } catch (_parseErr) {
+         // Response wasn't JSON (or was already consumed) -- fall through to the generic network/server message below.
+       }
+     }
+
+     if (reason === 'no_match') {
+       setError(t('login.errorFaceNotRecognized'));
+       setBiometricFailCount((prev) => prev + 1);
+     } else if (reason === 'rate_limited') {
+       setError(t('login.errorRateLimited'));
+       // Doesn't count toward biometricFailCount -- being rate-limited says
+       // nothing about whether this user's face actually matches, so it
+       // shouldn't push them toward "give up and use a password" any faster.
+     } else {
+       // Network failure (offline, DNS, CORS) or an unexpected 5xx -- the
+       // request may not have reached the matching logic at all.
+       console.error('[login] biometric-login request failed:', error);
+       setError(t('login.errorNetworkOrServer'));
+     }
      return;
    }
 
@@ -366,6 +478,7 @@ export default function LoginPage() {
 
    if (verifyError) {
      isRedirectingRef.current = false;
+     console.error('[login] session verification failed:', verifyError);
      setError(t('login.errorSessionVerification'));
      setBiometricFailCount((prev) => prev + 1);
      return;
@@ -593,6 +706,27 @@ export default function LoginPage() {
             className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
+
+          {/* 🟩 CAMERA FALLBACK: covers the (black/empty) video circle with an
+              actionable, specific message instead of leaving it silently
+              stuck on a generic "webcam unreachable" status pill. */}
+          {cameraError && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+              <span className="text-2xl" aria-hidden="true">📷🚫</span>
+              <h4 className="text-[11px] font-bold text-white leading-tight">{t(CAMERA_ERROR_I18N_KEYS[cameraError].title)}</h4>
+              <p className="text-[9px] text-slate-400 leading-relaxed">
+                {t(CAMERA_ERROR_I18N_KEYS[cameraError].body)}
+              </p>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[9px] font-bold text-slate-200 uppercase tracking-wider transition-colors"
+              >
+                {t('login.cameraErrorReload')}
+              </button>
+            </div>
+          )}
+
           {faceOverlayBox && (
             <div
               className={`absolute border-2 rounded-xl z-[15] pointer-events-none transition-all duration-75 ${
@@ -605,6 +739,18 @@ export default function LoginPage() {
             {biometricStatus}
           </div>
         </div>
+
+        {/* 🟩 MITIGATION: model download failed (flaky network, CDN hiccup,
+            etc.) -- give the user a way to try again without a full reload. */}
+        {modelsLoadFailed && (
+          <button
+            type="button"
+            onClick={() => setModelLoadAttempt((n) => n + 1)}
+            className="mb-4 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-bold text-slate-200 uppercase tracking-wider transition-colors"
+          >
+            {t('login.retryLoadingModels')}
+          </button>
+        )}
 
         <div className="w-full max-w-[220px] sm:max-w-xs mb-4">
           <ScanReadinessBar readiness={scanReadiness} label={t('login.scanReadinessLabel')} />

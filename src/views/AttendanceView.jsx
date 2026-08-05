@@ -154,7 +154,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // UI can tell the employee what to actually do about it, instead of the
     // scan panel just silently sitting there forever.
     const [cameraError, setCameraError] = useState(null);
-    const [faceStatus, setFaceStatus] = useState('idle'); 
+    // 🟩 MITIGATION: the neural model loader below previously had no
+    // try/catch at all -- a failed model fetch (flaky network, CDN hiccup)
+    // threw an unhandled promise rejection with zero user-facing feedback;
+    // the scan panel just sat on "Loading network weights..." forever.
+    const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
+    const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
+    const [faceStatus, setFaceStatus] = useState('idle');
     const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
     const [, setClockInAt] = useState(''); // write-only, never displayed
     const [, setClockInSource] = useState('none'); // write-only, never displayed
@@ -244,6 +250,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const webcamVideoRef = useRef(null);
     const referenceDescriptorRef = useRef(null);
     const faceScanBusyRef = useRef(false);
+    const scanFailureStreakRef = useRef(0); // 🟩 NEW: consecutive scan-tick exceptions -- previously only ever logged to console with zero user-facing feedback
     const yoloDetectorRef = useRef(null);
     const yoloDetectorPromiseRef = useRef(null);
     const autoClockInGuardRef = useRef(false);
@@ -748,13 +755,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         if (!userProfile || userProfile.role === 'supervisor') return;
 
         async function loadModels() {
+            setModelsLoadFailed(false);
             setFaceStatus('loading-models');
             setBiometricStatus(t('attendance.statusLoadingModels'));
-            await Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
-                faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
-                faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
-            ]);
+            try {
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL)
+                ]);
+            } catch (err) {
+                console.error('[attendance] Failed to load face-recognition models:', err);
+                setFaceStatus('error');
+                setModelsLoadFailed(true);
+                setBiometricStatus(t('attendance.statusModelsUnreachable'));
+                return;
+            }
             const savedTemplates = parseStoredDescriptor(userProfile.face_descriptor);
             if (savedTemplates.length > 0) {
                 referenceDescriptorRef.current = savedTemplates;
@@ -767,7 +783,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }
         }
         loadModels();
-    }, [userProfile, disableYolo, FACE_MODEL_URL]);
+    }, [userProfile, disableYolo, FACE_MODEL_URL, modelLoadAttempt]);
 
     // ==========================================
     // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
@@ -782,6 +798,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             faceScanBusyRef.current = true;
 
             try {
+                // Any tick that completes without throwing means detection is healthy again.
+                scanFailureStreakRef.current = 0;
+
                 // 🟩 CORRECTED: Calls your deep yolo/faceapi abstraction layer wrapper directly
                 const liveDet = await detectFaceFromImage(webcamVideoRef.current);
 
@@ -1027,6 +1046,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 }
             } catch (err) {
                 console.error(err);
+                // 🟩 MITIGATION: a repeatedly-throwing scan loop (WebGL
+                // context lost, tab backgrounded/restored in a bad state,
+                // out-of-memory) previously failed completely silently --
+                // console-only, the scan panel just sitting frozen with no
+                // explanation. Surface it after a sustained run of failures
+                // (not a single blip) instead of staying quiet forever.
+                scanFailureStreakRef.current += 1;
+                if (scanFailureStreakRef.current >= 5) {
+                    setBiometricStatus(t('attendance.statusScanRepeatedlyFailing'));
+                }
             }
             faceScanBusyRef.current = false;
         }, 1200);
@@ -1726,6 +1755,27 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             className="mt-1 px-4 py-2 rounded-lg bg-white dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-[11px] font-bold text-gray-700 dark:text-slate-200 uppercase tracking-wider transition-colors"
                                         >
                                             {t('attendance.cameraErrorReload')}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* 🟩 MODEL LOAD FALLBACK: same idea as the camera fallback above, for
+                                    when the face-recognition model weights themselves fail to
+                                    download -- "Retry" re-runs the loader in place instead of
+                                    forcing a full page reload. */}
+                                {!cameraError && modelsLoadFailed && (
+                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-white dark:bg-slate-950/95 text-center p-6">
+                                        <span className="text-3xl" aria-hidden="true">🧠🚫</span>
+                                        <h4 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.modelsErrorTitle')}</h4>
+                                        <p className="text-[11px] text-gray-500 dark:text-slate-400 max-w-xs leading-relaxed">
+                                            {t('attendance.modelsErrorBody')}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setModelLoadAttempt((n) => n + 1)}
+                                            className="mt-1 px-4 py-2 rounded-lg bg-white dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-[11px] font-bold text-gray-700 dark:text-slate-200 uppercase tracking-wider transition-colors"
+                                        >
+                                            {t('attendance.retryLoadingModels')}
                                         </button>
                                     </div>
                                 )}
