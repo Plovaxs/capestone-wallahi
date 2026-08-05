@@ -8,6 +8,7 @@ import { idbSet, idbGet } from './offline/indexedDbCache';
 import { offlineMutationQueue } from './offline/OfflineMutationQueue';
 import { profilesRepository } from './data/repositories/profilesRepository';
 import { tasksRepository } from './data/repositories/tasksRepository';
+import { taskSubmissionsRepository } from './data/repositories/taskSubmissionsRepository';
 import { attendanceRepository } from './data/repositories/attendanceRepository';
 import { leaveRepository } from './data/repositories/leaveRepository';
 import { contributionsRepository } from './data/repositories/contributionsRepository';
@@ -67,7 +68,7 @@ export default function App() {
   // Destructured back to the same names below so every prop passed further
   // down the tree (MainContent, views) is completely unchanged.
   const [appData, dispatchAppData] = useReducer(appDataReducer, initialAppDataState);
-  const { allUsers, tasks, attendance, leaveRequests, contributions, helpdeskTickets, reviews, notifications } = appData;
+  const { allUsers, tasks, taskSubmissions, attendance, leaveRequests, contributions, helpdeskTickets, reviews, notifications } = appData;
 
   const [activeView, setActiveView] = useState('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
@@ -168,6 +169,21 @@ export default function App() {
       console.error('fetchTasks failed:', err.message);
       const cached = await idbGet('tasks');
       if (cached) { dispatchAppData({ type: 'SET_TASKS', payload: cached }); showOfflineCacheNotice(); }
+    }
+  };
+
+  // 🟩 Per-assignee task submissions -- RLS already scopes this to what the
+  // caller is actually allowed to see (supervisor: all; employee: their
+  // own + any task they're assigned to), so no client-side filtering needed.
+  const fetchTaskSubmissions = async () => {
+    try {
+      const data = await taskSubmissionsRepository.listAll();
+      dispatchAppData({ type: 'SET_TASK_SUBMISSIONS', payload: data || [] });
+      idbSet('taskSubmissions', data || []);
+    } catch (err) {
+      console.error('fetchTaskSubmissions failed:', err.message);
+      const cached = await idbGet('taskSubmissions');
+      if (cached) { dispatchAppData({ type: 'SET_TASK_SUBMISSIONS', payload: cached }); showOfflineCacheNotice(); }
     }
   };
 
@@ -295,6 +311,7 @@ export default function App() {
     await Promise.all([
       fetchAllUsers(),
       fetchTasks(profile),
+      fetchTaskSubmissions(),
       fetchAttendance(),
       fetchLeaveRequests(profile),
       fetchContributions(),
@@ -378,6 +395,7 @@ export default function App() {
 
     const unsubscribers = [
       subscribeToTable('tasks', () => fetchTasks(userProfile), { onHealthChange: handleHealthChange('tasks') }),
+      subscribeToTable('task_submissions', () => fetchTaskSubmissions(), { onHealthChange: handleHealthChange('task_submissions') }),
       subscribeToTable('attendance', () => fetchAttendance(), { onHealthChange: handleHealthChange('attendance') }),
       subscribeToTable('leave_requests', () => fetchLeaveRequests(userProfile), { onHealthChange: handleHealthChange('leave_requests') }),
       subscribeToTable('contributions', () => fetchContributions(), { onHealthChange: handleHealthChange('contributions') }),
@@ -529,6 +547,8 @@ export default function App() {
             fetchAllUsers={fetchAllUsers}
             tasks={tasks}
             fetchTasks={() => fetchTasks(userProfile)}
+            taskSubmissions={taskSubmissions}
+            fetchTaskSubmissions={fetchTaskSubmissions}
             attendance={attendance}
             fetchAttendance={() => fetchAttendance()}
             leaveRequests={leaveRequests}

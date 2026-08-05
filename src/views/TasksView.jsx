@@ -52,10 +52,13 @@ const UserAvatar = ({ user, size = "w-6 h-6", textSize = "text-[9px]" }) => {
  * PURPOSE: Manages the Kanban sprint boards, assignment creation workflows, and task deadline adjustments.
  * ACCESS ROLES: Employees view personal streams; Supervisors modify target parameters globally.
  */
-const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
+const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [], fetchTasks, fetchTaskSubmissions }) => {
     const { t } = useTranslation();
     const { runUndoable } = useUndoableAction();
     const bulkActionsEnabled = useFeatureFlag('bulkActions');
+    // 🟩 REVISION TARGET: which assignee a "Revision Needed" request is
+    // aimed at -- null/'' means general (applies to every assignee).
+    const [revisionTarget, setRevisionTarget] = useState('');
     // --- OPTIMISTIC UI: taskId -> status overlay applied on top of the
     // `tasks` prop while a status-change write is in flight (see
     // handleStatusChange below) ---
@@ -133,6 +136,16 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const tasksWithOptimisticUpdates = useMemo(() => (tasks || []).map(task =>
         optimisticStatusOverrides[task.id] ? { ...task, status: optimisticStatusOverrides[task.id] } : task
     ), [tasks, optimisticStatusOverrides]);
+
+    // 🟩 PER-ASSIGNEE SUBMISSIONS: task_id -> [{ employee_id, file_path, submitted_at }, ...]
+    const submissionsByTask = useMemo(() => {
+        const map = new Map();
+        for (const sub of (taskSubmissions || [])) {
+            if (!map.has(sub.task_id)) map.set(sub.task_id, []);
+            map.get(sub.task_id).push(sub);
+        }
+        return map;
+    }, [taskSubmissions]);
 
     const processedTasks = useMemo(() => tasksWithOptimisticUpdates.filter(t => {
         // 🟩 NULL-SAFETY: description is a nullable column — a task with no
@@ -396,6 +409,12 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
         if (extensionMode === 'reject') {
             updatePayload.status = 'Revision Needed';
+            // 🟩 TARGETED REVISION: empty/'' means general -- every assignee's
+            // submission gets cleared and everyone's notified (DB trigger,
+            // see migrations/20260805_add_task_submissions.sql). Picking one
+            // specific assignee only clears/notifies that person, so their
+            // teammates' already-good work isn't thrown out too.
+            updatePayload.revision_target_employee_id = revisionTarget || null;
         }
 
         // Notifying assignees is now handled server-side: a status change
@@ -406,7 +425,8 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
         if (!error) {
             setIsExtensionModalOpen(false);
             setExtensionTask(null);
-            fetchTasks();
+            setRevisionTarget('');
+            await Promise.all([fetchTasks(), fetchTaskSubmissions?.()]);
         } else {
             showUserError('errors.submitTask', error);
         }
@@ -490,17 +510,30 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             return;
         }
 
-        const { error: updateError } = await supabase
-            .from('tasks')
-            .update({ submitted_file_path: filePath, status: 'Completed', feedback: null })
-            .eq('id', taskId);
-        if (updateError) {
-            showUserError('errors.markTaskSubmitted', updateError);
+        // 🟩 PER-ASSIGNEE SUBMISSION: one row per (task, employee) instead of
+        // a single shared "the task is done" flag -- a DB trigger only flips
+        // the task itself to 'Completed' once every assignee has a row here
+        // (see migrations/20260805_add_task_submissions.sql), so a task
+        // assigned to several people isn't marked done the moment the FIRST
+        // one uploads something.
+        const { error: submitError } = await supabase
+            .from('task_submissions')
+            .upsert(
+                { task_id: taskId, employee_id: userProfile.id, file_path: filePath, submitted_at: new Date().toISOString() },
+                { onConflict: 'task_id,employee_id' }
+            );
+        if (submitError) {
+            showUserError('errors.markTaskSubmitted', submitError);
             setUploading(null);
             return;
         }
 
-        fetchTasks();
+        setSelectedFiles(prev => {
+            const next = { ...prev };
+            delete next[taskId];
+            return next;
+        });
+        await Promise.all([fetchTasks(), fetchTaskSubmissions?.()]);
         setUploading(null);
     };
 
@@ -559,6 +592,9 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const TaskCard = ({ task }) => {
         const deadlineStatus = getDeadlineStatus(task.due_date, task.status);
         const escalation = evaluateTaskEscalation(task, deadlineStatus);
+        const taskSubmissionsList = submissionsByTask.get(task.id) || [];
+        const mySubmission = taskSubmissionsList.find(s => s.employee_id === userProfile.id);
+        const assigneeCount = (task.assigned_to || []).length;
 
         return (
             <div className={`bg-white p-4 rounded-xl border shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3 h-fit dark:bg-gray-800 dark:border-gray-700 ${
@@ -622,7 +658,39 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                         </div>
                     )}
                 </div>
-                
+
+                {/* 🟩 GROUP SUBMISSION PROGRESS: only meaningful once more than
+                    one person is assigned -- shows who's submitted so far
+                    instead of the task just silently sitting there while
+                    teammates are still working. Supervisors get a link to
+                    each individual file as it comes in, not just once
+                    everyone's done. */}
+                {assigneeCount > 1 && task.status !== 'Approved' && (
+                    <div className="text-[10px] bg-gray-50 dark:bg-gray-900/40 border border-gray-100 dark:border-gray-700 rounded-lg p-2 space-y-1">
+                        <div className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                            {t('tasks.submissionProgress', { done: taskSubmissionsList.length, total: assigneeCount })}
+                        </div>
+                        {userProfile.role === 'supervisor' && (
+                            <ul className="space-y-0.5">
+                                {(task.assigned_to || []).map(uid => {
+                                    const u = usersById.get(String(uid));
+                                    const sub = taskSubmissionsList.find(s => s.employee_id === uid);
+                                    return (
+                                        <li key={uid} className="flex items-center justify-between gap-2">
+                                            <span className="text-gray-600 dark:text-gray-300 truncate">{sub ? '✅' : '⏳'} {u?.name || t('tasks.unknown')}</span>
+                                            {sub && (
+                                                <button onClick={() => handleViewSubmission(sub.file_path)} className="text-blue-600 dark:text-blue-400 font-bold underline shrink-0">
+                                                    {t('tasks.viewFile')}
+                                                </button>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </div>
+                )}
+
                 {/* Bottom Profile Mapping & Inline Action Triggers */}
                 <div className="mt-2 pt-3 border-t border-gray-100 flex justify-between items-center dark:border-gray-700">
                     <div className="flex -space-x-2">
@@ -637,16 +705,29 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                             <>
                                 {task.status === 'To Do' && <button onClick={() => handleStatusChange(task.id, 'In Progress')} className="text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">{t('tasks.start')}</button>}
                                 {(task.status === 'In Progress' || task.status === 'Revision Needed') && (
-                                    <label className="cursor-pointer text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">
-                                        {uploading === task.id ? '...' : (task.status === 'Revision Needed' ? t('tasks.reUpload') : t('tasks.upload'))}
-                                        <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" className="hidden" onChange={(e) => handleFileChange(e, task.id)} />
-                                        {selectedFiles[task.id] && <button onClick={() => handleFileUpload(task.id)} className="ml-1 underline font-bold text-indigo-600 dark:text-indigo-400">{t('tasks.send')}</button>}
-                                    </label>
+                                    mySubmission ? (
+                                        // 🟩 Already submitted their part -- a multi-assignee task
+                                        // only becomes 'Completed' once EVERY assignee has, so
+                                        // this person is just waiting on their teammates now.
+                                        <span className="text-gray-400 italic font-medium text-[11px]">{t('tasks.waitingForTeammates')}</span>
+                                    ) : (
+                                        <label className="cursor-pointer text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900/20 dark:text-blue-400">
+                                            {uploading === task.id ? '...' : (task.status === 'Revision Needed' ? t('tasks.reUpload') : t('tasks.upload'))}
+                                            <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" className="hidden" onChange={(e) => handleFileChange(e, task.id)} />
+                                            {selectedFiles[task.id] && <button onClick={() => handleFileUpload(task.id)} className="ml-1 underline font-bold text-indigo-600 dark:text-indigo-400">{t('tasks.send')}</button>}
+                                        </label>
+                                    )
                                 )}
                                 {task.status === 'Completed' && <span className="text-gray-400 italic font-medium">{t('tasks.waiting')}</span>}
                             </>
                         )}
-                        {task.submitted_file_path && <button onClick={() => handleViewSubmission(task.submitted_file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>}
+                        {mySubmission && (
+                            <button onClick={() => handleViewSubmission(mySubmission.file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>
+                        )}
+                        {/* Legacy single-file tasks from before per-assignee submissions existed */}
+                        {!mySubmission && task.submitted_file_path && (
+                            <button onClick={() => handleViewSubmission(task.submitted_file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>
+                        )}
 
                         {/* Master Supervisor Action Controls Matrix */}
                         {userProfile.role === 'supervisor' && task.status === 'Completed' && (
@@ -657,6 +738,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                                     setExtensionDate(tomorrowStr);
                                     setExtensionFeedback('');
                                     setExtensionMode('reject');
+                                    setRevisionTarget('');
                                     setIsExtensionModalOpen(true);
                                 }} className="text-red-600 hover:text-red-800 bg-red-50 px-2 py-1 rounded dark:bg-red-900/20 dark:text-red-400">{t('tasks.reject')}</button>
                             </>
@@ -892,7 +974,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             {/* --- TIMELINE ADJUSTMENT / REVISION CONTROL PANEL MODAL --- */}
             <Modal
                 isOpen={isExtensionModalOpen}
-                onClose={() => { setIsExtensionModalOpen(false); setExtensionTask(null); }}
+                onClose={() => { setIsExtensionModalOpen(false); setExtensionTask(null); setRevisionTarget(''); }}
                 title={extensionMode === 'reject' ? t('tasks.flagRevisionRequired') : t('tasks.grantBreathingRoom')}
             >
                 <div className="space-y-4 text-xs">
@@ -912,6 +994,29 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                             rows="3"
                         />
                     </div>
+
+                    {/* 🟩 TARGETED REVISION: only meaningful for a task with more
+                        than one assignee -- picking a specific person only clears
+                        and re-requests THEIR submission, leaving teammates who
+                        already did their part alone instead of throwing
+                        everyone's work out for one person's mistake. */}
+                    {extensionMode === 'reject' && (extensionTask?.assigned_to || []).length > 1 && (
+                        <div>
+                            <label htmlFor="revision-target" className="block font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.revisionTarget')}</label>
+                            <select
+                                id="revision-target"
+                                value={revisionTarget}
+                                onChange={(e) => setRevisionTarget(e.target.value)}
+                                className="w-full p-2.5 border rounded-xl dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none"
+                            >
+                                <option value="">{t('tasks.revisionTargetGeneral')}</option>
+                                {(extensionTask?.assigned_to || []).map(uid => {
+                                    const u = usersById.get(String(uid));
+                                    return <option key={uid} value={uid}>{u?.name || t('tasks.unknown')}</option>;
+                                })}
+                            </select>
+                        </div>
+                    )}
 
                     <div>
                         <label htmlFor="extension-date" className="block font-bold text-gray-400 uppercase tracking-wider mb-1">{t('tasks.selectExtendedDueDate')}</label>

@@ -4,7 +4,7 @@ import { appDataReducer, initialAppDataState } from './appDataReducer';
 describe('appDataReducer', () => {
     it('starts with empty arrays for every entity', () => {
         expect(initialAppDataState).toEqual({
-            allUsers: [], tasks: [], attendance: [], leaveRequests: [],
+            allUsers: [], tasks: [], taskSubmissions: [], attendance: [], leaveRequests: [],
             contributions: [], helpdeskTickets: [], reviews: [], notifications: [],
         });
     });
@@ -18,6 +18,7 @@ describe('appDataReducer', () => {
 
     it.each([
         ['SET_ALL_USERS', 'allUsers'],
+        ['SET_TASK_SUBMISSIONS', 'taskSubmissions'],
         ['SET_ATTENDANCE', 'attendance'],
         ['SET_LEAVE_REQUESTS', 'leaveRequests'],
         ['SET_CONTRIBUTIONS', 'contributions'],

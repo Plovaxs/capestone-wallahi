@@ -10,6 +10,7 @@
 export const initialAppDataState = {
     allUsers: [],
     tasks: [],
+    taskSubmissions: [],
     attendance: [],
     leaveRequests: [],
     contributions: [],
@@ -24,6 +25,8 @@ export function appDataReducer(state, action) {
             return { ...state, allUsers: action.payload };
         case 'SET_TASKS':
             return { ...state, tasks: action.payload };
+        case 'SET_TASK_SUBMISSIONS':
+            return { ...state, taskSubmissions: action.payload };
         case 'SET_ATTENDANCE':
             return { ...state, attendance: action.payload };
         case 'SET_LEAVE_REQUESTS':
