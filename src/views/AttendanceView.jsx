@@ -1238,9 +1238,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const handleClockOut = async () => {
         setIsLoading(true);
         const time = (await getServerNow()).toLocaleTimeString('en-GB', { hour12: false });
-        await supabase.from(ATTENDANCE_TABLE).update({ clock_out: time }).eq('id', todayRecord.id);
-        await fetchAttendance(); 
-        setIsLoading(false); 
+        // 🟩 FIX: clock-out previously recorded no location at all -- the
+        // supervisor's "View Map Location" button was silently reusing the
+        // clock-IN coordinates for clock-out too, which is simply wrong for
+        // anyone (WFH especially) who isn't in the same spot for both.
+        await supabase.from(ATTENDANCE_TABLE).update({
+            clock_out: time,
+            clock_out_latitude: currentCoords ? currentCoords.latitude : null,
+            clock_out_longitude: currentCoords ? currentCoords.longitude : null,
+        }).eq('id', todayRecord.id);
+        await fetchAttendance();
+        setIsLoading(false);
     };
 
     const handleToggleWorkMode = async (employeeId, currentMode) => {
@@ -1249,10 +1257,46 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         window.location.reload(); 
     };
 
-  const openMap = (lat, lng) => {
-        if (!lat || !lng) return;
-        // 🟩 FIX: Standardized the Google Maps coordinate query URL
-        window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+    // 🟩 FIX + HARDENED: "View Map Location" previously did nothing visible
+    // when the browser silently blocked the popup (no feedback at all --
+    // reported as "the button just doesn't work") and never validated its
+    // input. This is also the one place in the app that intentionally sends
+    // an intern's precise coordinates to a third party (Google), so it's
+    // treated carefully:
+    //  - Access is already supervisor-only (this button only renders inside
+    //    the supervisor's team table, gated at the JSX level above and
+    //    backed by the attendance RLS policy server-side either way).
+    //  - Coordinates are validated as real, in-range numbers before ever
+    //    being sent anywhere -- corrupted/placeholder DB values (e.g. a
+    //    stray "0,0") won't silently open a bogus, misleading map link.
+    //  - `noopener,noreferrer` on the new tab: `noopener` closes the
+    //    "tabnabbing" hole (the opened Google Maps tab can't reach back into
+    //    this app via `window.opener`), and `noreferrer` stops this app's
+    //    own URL from being sent to Google in the Referer header -- an
+    //    unrelated-looking but real leak, since that URL alone can reveal
+    //    which company/system is looking someone up.
+    //  - If the popup still gets blocked, the user now gets an explicit
+    //    error instead of a silently dead button.
+    const openMap = (lat, lng) => {
+        const latNum = Number(lat);
+        const lngNum = Number(lng);
+        const isValidCoord = Number.isFinite(latNum) && Number.isFinite(lngNum)
+            && Math.abs(latNum) <= 90 && Math.abs(lngNum) <= 180
+            && !(latNum === 0 && lngNum === 0); // (0,0) is "Null Island" -- always a bad/missing reading, never a real office or home
+
+        if (!isValidCoord) {
+            toast.error(t('attendance.mapLocationUnavailable'));
+            return;
+        }
+
+        const mapWindow = window.open(
+            `https://www.google.com/maps/search/?api=1&query=${latNum},${lngNum}`,
+            '_blank',
+            'noopener,noreferrer'
+        );
+        if (!mapWindow) {
+            toast.error(t('attendance.mapPopupBlocked'));
+        }
     };
 
     const FACE_CONSENT_KEY = `face_enrollment_consent_${userProfile.id}`;
@@ -1580,11 +1624,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                     )}
                                                 </td>
                                                 <td className="p-4 text-right">
-                                                    {empToday?.latitude && (
-                                                        <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
-                                                            {t('attendance.viewMapLocation')}
-                                                        </button>
-                                                    )}
+                                                    <div className="flex flex-col items-end gap-1.5">
+                                                        {empToday?.latitude && (
+                                                            <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
+                                                                {t('attendance.viewClockInLocation')}
+                                                            </button>
+                                                        )}
+                                                        {empToday?.clock_out_latitude && (
+                                                            <button type="button" onClick={() => openMap(empToday.clock_out_latitude, empToday.clock_out_longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
+                                                                {t('attendance.viewClockOutLocation')}
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
