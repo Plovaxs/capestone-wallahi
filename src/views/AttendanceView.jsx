@@ -25,6 +25,7 @@ import { isTorchSupported, setTorch } from '../utils/torchControl';
 import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
+import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
@@ -191,6 +192,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // correct no-op). See sensors/motionStability.js.
     const motionTrackerRef = useRef(createMotionStabilityTracker());
     const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: pixel-based liveness signal that works on desktop webcams too (motionTrackerRef above needs a phone/tablet accelerometer)
+    const latestColorLivenessRef = useRef({ suspicious: false }); // 🟩 NEW: latest per-tick skin-color/texture plausibility read — catches a shaken physical photo/phone that would otherwise pass the motion-only signals
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -211,6 +213,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         motionStable: true,
         microMotionReady: false,
         microMotionStable: true,
+        colorPlausible: true,
     });
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -819,6 +822,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 ? prev
                                 : { ...prev, microMotionReady: microMotionTickStats.ready, microMotionStable: !microMotionTickStats.isSuspiciouslyFlat }));
 
+                            // 🟩 COLOR LIVENESS: a shaken printed photo or a phone waved
+                            // around in front of the camera can pass the motion-based
+                            // checks above (it's genuinely moving) -- this is a single-
+                            // frame, motion-independent check of whether the sampled color
+                            // actually looks like real skin with real spatial texture, not
+                            // print ink or a screen's color reproduction. Runs every tick
+                            // it's cheap enough for (stride-sampled, no extra canvas read).
+                            const colorLiveness = checkColorLiveness(region.data, liveDet.box.width, liveDet.box.height);
+                            latestColorLivenessRef.current = colorLiveness;
+                            setSensorDiagnostics((prev) => (prev.colorPlausible === !colorLiveness.suspicious
+                                ? prev
+                                : { ...prev, colorPlausible: !colorLiveness.suspicious }));
+
                             // 🟩 LOW-LIGHT MITIGATION: 3 consecutive dark reads (not just
                             // one noisy frame) before reacting — flips on the enhancement
                             // filter for the *next* capture and, where the device exposes
@@ -922,15 +938,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             // required at login, where a few extra seconds is fine). Instead
                             // it leans on passive, no-action-required signals: border-texture
                             // uniformity (checkReplaySuspicion), the device accelerometer
-                            // where available (motionTrackerRef -- phones/tablets only), and
-                            // pixel-level micro-motion in the face region itself
-                            // (microMotionTrackerRef -- works on any camera, desktop webcams
-                            // included). A genuine live person almost always clears at least
-                            // one of these; requiring TWO independent signals to agree before
+                            // where available (motionTrackerRef -- phones/tablets only),
+                            // pixel-level micro-motion in the face region (microMotionTrackerRef
+                            // -- works on any camera, desktop webcams included), and a
+                            // motion-INDEPENDENT color/texture check (colorLivenessHeuristic --
+                            // catches the case someone physically shakes a printed photo or a
+                            // phone showing a photo/video, which would otherwise satisfy the
+                            // two motion signals above without being a real face). A genuine
+                            // live person almost always clears at least one signal; requiring
+                            // the border check PLUS at least one of the other three before
                             // calling it suspicious keeps common false positives (someone
                             // standing very still against a plain wall) from blocking a real
-                            // clock-in, while a flat photo/screen replay — uniform border AND
-                            // zero pixel variance — still gets caught.
+                            // clock-in, while a flat photo/screen replay — even a shaken one —
+                            // still gets caught by whichever signal it fails.
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!autoClockInGuardRef.current) {
@@ -950,6 +970,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     const microMotionStats = microMotionTrackerRef.current.getStats();
                                     const deviceFlat = deviceMotionStats.ready && deviceMotionStats.isSuspiciouslyFlat;
                                     const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
+                                    const colorSuspicious = latestColorLivenessRef.current.suspicious;
 
                                     setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                         && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -962,7 +983,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             microMotionStable: !microMotionStats.isSuspiciouslyFlat,
                                         }));
 
-                                    livenessSuspicious = borderSuspicious && (deviceFlat || pixelFlat);
+                                    livenessSuspicious = borderSuspicious && (deviceFlat || pixelFlat || colorSuspicious);
                                 } catch (_err) {
                                     // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
                                 }
@@ -1001,6 +1022,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setIsFaceVerified(false);
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
+                    latestColorLivenessRef.current = { suspicious: false };
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
@@ -1827,6 +1849,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 label={t('attendance.diagPixelLiveness')}
                                 value={!sensorDiagnostics.microMotionReady ? t('attendance.diagWarming') : sensorDiagnostics.microMotionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
                                 ok={!sensorDiagnostics.microMotionReady || sensorDiagnostics.microMotionStable}
+                            />
+                            <DiagnosticTile
+                                label={t('attendance.diagColorLiveness')}
+                                value={sensorDiagnostics.colorPlausible ? t('attendance.diagOk') : t('attendance.diagFlagged')}
+                                ok={sensorDiagnostics.colorPlausible}
                             />
                             <DiagnosticTile
                                 label={t('attendance.diagNetwork')}

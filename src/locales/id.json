@@ -487,6 +487,7 @@
     "diagNormal": "Normal",
     "diagMotion": "Sensor Gerak",
     "diagPixelLiveness": "Liveness Piksel",
+    "diagColorLiveness": "Liveness Warna",
     "diagWarming": "Memanaskan",
     "diagNoSensor": "Tidak tersedia",
     "diagStable": "Stabil",
