@@ -144,6 +144,17 @@ export default function LoginPage() {
           .withFaceLandmarks()
           .withFaceDescriptor();
 
+        // 🟩 FIX: detectSingleFace's inference can take a while, and the
+        // video element can disappear mid-await (auth-mode switch tears
+        // down and restarts the stream, or the component unmounts on
+        // redirect) -- reading videoRef.current.videoWidth after that
+        // point threw "Cannot read properties of null (reading
+        // 'videoWidth')" and killed the detection loop entirely.
+        if (!videoRef.current) {
+          rafId = requestAnimationFrame(detectLoop);
+          return;
+        }
+
         if (detection) {
           // 🟩 READINESS BAR: reuses the same framing/occlusion gates the
           // Attendance scan loop uses (vision/faceQuality.js) purely as a
