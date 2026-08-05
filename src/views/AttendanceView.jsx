@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
+import EdgeDiagnosticsPanel from '../components/EdgeDiagnosticsPanel';
 import { generateTablePdf } from '../utils/generateTablePdf';
 import SortableTh from '../components/SortableTh';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
@@ -28,7 +29,7 @@ import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
-import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
+import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
@@ -71,18 +72,6 @@ const YOLO_MODEL_IDS = {
   nano: 'Xenova/yolov8n-face',
   medium: 'Xenova/yolov8n-face'
 };
-
-/** Small presentational tile for the Edge Device Diagnostics panel — pure display, no logic. */
-const DiagnosticTile = ({ label, value, ok, detail }) => (
-    <div className={`rounded-xl border p-2.5 ${ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/10'}`}>
-        <div className="flex items-center gap-1.5 mb-1">
-            <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
-            <span className="text-[9px] font-black uppercase tracking-widest text-gray-400 dark:text-slate-500">{label}</span>
-        </div>
-        <div className={`text-xs font-bold ${ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>{value}</div>
-        {detail && <div className="text-[9px] text-gray-400 dark:text-slate-500 mt-0.5 font-mono">{detail}</div>}
-    </div>
-);
 
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
@@ -165,14 +154,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
     const [, setClockInAt] = useState(''); // write-only, never displayed
     const [, setClockInSource] = useState('none'); // write-only, never displayed
-    // 🟩 NETWORK & BATTERY ADAPTIVE: YOLO is a heavier model fetch + more
-    // CPU/battery per frame than face-api's tiny detector alone. Previously
-    // this was permanently false (setter was never called) regardless of
-    // device conditions — now it's re-evaluated on mount and whenever the
-    // network or battery status actually changes, both narrowly-supported
-    // APIs that degrade to "assume normal conditions" where unavailable.
-    const [disableYolo, setDisableYolo] = useState(false);
     const [, setCurrentModelVersion] = useState(null); // write-only, never displayed
+    // 🟩 NETWORK & BATTERY ADAPTIVE (hooks/useNetworkBatteryAdaptive.js):
+    // YOLO is a heavier model fetch + more CPU/battery per frame than
+    // face-api's tiny detector alone -- skipped on a slow/metered
+    // connection or draining battery. Employees only; supervisors never
+    // run the scan loop this feeds.
+    const { disableYolo, networkBatteryDiagnostics } = useNetworkBatteryAdaptive(!!userProfile && userProfile.role !== 'supervisor');
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
     const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
@@ -208,11 +196,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // rendering state that already exists locally, at zero extra network
     // cost, so the IoT/edge-computing work in this view is actually visible
     // instead of running silently in the background.
+    // Network/battery fields live in useNetworkBatteryAdaptive's own state
+    // (see networkBatteryDiagnostics above) and get merged in at render
+    // time for EdgeDiagnosticsPanel -- everything else here still comes
+    // from the scan loop/ambient-light watcher below.
     const [sensorDiagnostics, setSensorDiagnostics] = useState({
-        networkEffectiveType: null,
-        isSlowNetwork: false,
-        batteryLevel: null,
-        isCharging: null,
         ambientLux: null,
         isAmbientLowLight: false,
         lensClear: true,
@@ -647,53 +635,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         return () => watcher?.stop();
     }, [userProfile]);
 
-    // ==========================================
-    // NETWORK & BATTERY ADAPTIVE WORKLOAD
-    // ==========================================
-    useEffect(() => {
-        if (!userProfile || userProfile.role === 'supervisor') return;
-        let isCancelled = false;
-        let batteryRef = null;
-
-        const evaluate = async () => {
-            const network = getNetworkProfile();
-            const battery = await getBatteryProfile();
-            if (isCancelled) return;
-            setDisableYolo(shouldReduceWorkload(network, battery));
-            setSensorDiagnostics((prev) => ({
-                ...prev,
-                networkEffectiveType: network.effectiveType,
-                isSlowNetwork: network.isSlow,
-                batteryLevel: battery.supported ? battery.level : null,
-                isCharging: battery.supported ? battery.charging : null,
-            }));
-        };
-
-        evaluate();
-
-        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-        connection?.addEventListener?.('change', evaluate);
-
-        (async () => {
-            if (typeof navigator.getBattery !== 'function') return;
-            try {
-                const battery = await navigator.getBattery();
-                if (isCancelled) return;
-                batteryRef = battery;
-                battery.addEventListener('levelchange', evaluate);
-                battery.addEventListener('chargingchange', evaluate);
-            } catch {
-                // Battery API unavailable/denied — network signal alone still applies.
-            }
-        })();
-
-        return () => {
-            isCancelled = true;
-            connection?.removeEventListener?.('change', evaluate);
-            batteryRef?.removeEventListener('levelchange', evaluate);
-            batteryRef?.removeEventListener('chargingchange', evaluate);
-        };
-    }, [userProfile]);
 
     // ==========================================
     // VIDEO LIFE CYCLE CONTROLLER
@@ -1861,67 +1802,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     {/* 🟩 EDGE DEVICE DIAGNOSTICS: local-only readout of the IoT/edge
                         sensor signals this scan session is already using — nothing
                         here is sent anywhere, it's just surfacing state that already
-                        exists locally so the sensor-fusion work is actually visible. */}
-                    <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/40 p-4 shadow-inner">
-                        <div className="flex items-center justify-between mb-1">
-                            <span className="text-[11px] font-black uppercase tracking-widest text-gray-500 dark:text-slate-400">{t('attendance.edgeDiagnosticsTitle')}</span>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 dark:text-slate-500">{t('attendance.edgeDiagnosticsLocalOnly')}</span>
-                        </div>
-                        <p className="text-[10px] text-gray-400 dark:text-slate-500 mb-4">{t('attendance.edgeDiagnosticsDescription')}</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                            <DiagnosticTile
-                                label={t('attendance.diagCamera')}
-                                value={cameraError ? t('attendance.diagIssue') : isCameraReady ? t('attendance.diagOk') : t('attendance.diagStarting')}
-                                ok={!cameraError && isCameraReady}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagGeofence')}
-                                value={isInRange ? t('attendance.diagInRange') : t('attendance.diagOutOfRange')}
-                                ok={isInRange}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagLens')}
-                                value={sensorDiagnostics.lensClear ? t('attendance.diagClear') : t('attendance.diagObstructed')}
-                                ok={sensorDiagnostics.lensClear}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagLighting')}
-                                value={sensorDiagnostics.isAmbientLowLight || torchActive ? t('attendance.diagLowLight') : t('attendance.diagNormal')}
-                                ok={!sensorDiagnostics.isAmbientLowLight}
-                                detail={typeof sensorDiagnostics.ambientLux === 'number' ? `${Math.round(sensorDiagnostics.ambientLux)} lux` : (torchActive ? t('attendance.torchActiveLabel') : null)}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagMotion')}
-                                value={!sensorDiagnostics.motionReady ? t('attendance.diagNoSensor') : sensorDiagnostics.motionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
-                                ok={!sensorDiagnostics.motionReady || sensorDiagnostics.motionStable}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagPixelLiveness')}
-                                value={!sensorDiagnostics.microMotionReady ? t('attendance.diagWarming') : sensorDiagnostics.microMotionStable ? t('attendance.diagStable') : t('attendance.diagFlagged')}
-                                ok={!sensorDiagnostics.microMotionReady || sensorDiagnostics.microMotionStable}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagColorLiveness')}
-                                value={sensorDiagnostics.colorPlausible ? t('attendance.diagOk') : t('attendance.diagFlagged')}
-                                ok={sensorDiagnostics.colorPlausible}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagNetwork')}
-                                value={sensorDiagnostics.networkEffectiveType ? sensorDiagnostics.networkEffectiveType.toUpperCase() : t('attendance.diagUnknown')}
-                                ok={!sensorDiagnostics.isSlowNetwork}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagBattery')}
-                                value={typeof sensorDiagnostics.batteryLevel === 'number' ? `${Math.round(sensorDiagnostics.batteryLevel * 100)}%${sensorDiagnostics.isCharging ? ' ⚡' : ''}` : t('attendance.diagUnknown')}
-                                ok={sensorDiagnostics.batteryLevel === null || sensorDiagnostics.batteryLevel > 0.2 || sensorDiagnostics.isCharging}
-                            />
-                            <DiagnosticTile
-                                label={t('attendance.diagModel')}
-                                value={disableYolo ? t('attendance.diagModelReduced') : t('attendance.diagModelFull')}
-                                ok={true}
-                            />
-                        </div>
-                    </div>
+                        exists locally so the sensor-fusion work is actually visible.
+                        (Component extracted to components/EdgeDiagnosticsPanel.jsx --
+                        purely presentational, doesn't need to live in this file.) */}
+                    <EdgeDiagnosticsPanel
+                        t={t}
+                        cameraError={cameraError}
+                        isCameraReady={isCameraReady}
+                        isInRange={isInRange}
+                        sensorDiagnostics={{ ...sensorDiagnostics, ...networkBatteryDiagnostics }}
+                        torchActive={torchActive}
+                        disableYolo={disableYolo}
+                    />
                 </>
             )}
 
