@@ -104,7 +104,7 @@ const handleCreateThread = async () => {
             });
 
             if (error) {
-                showUserError('Failed to create post', error);
+                showUserError('errors.createPost', error);
                 return;
             }
 
@@ -113,7 +113,7 @@ const handleCreateThread = async () => {
             if (draftKey) clearDraft(draftKey);
             fetchContributions();
         } catch (error) {
-            showUserError('Failed to create post', error);
+            showUserError('errors.createPost', error);
         } finally {
             setIsSubmitting(false);
         }
@@ -133,7 +133,7 @@ const handleCreateThread = async () => {
             .eq('id', postId);
 
         if (error) {
-            showUserError('Failed to delete thread', error);
+            showUserError('errors.deleteThread', error);
         } else {
             fetchContributions(); // Refresh live view feeds state cache
         }
@@ -152,7 +152,7 @@ const handleCreateThread = async () => {
             .eq('id', postId);
 
         if (error) {
-            showUserError('Failed to update post', error);
+            showUserError('errors.updatePost', error);
         } else {
             setEditingPostId(null);
             setEditPostText('');
@@ -184,7 +184,7 @@ const handleCreateThread = async () => {
          .insert({ post_id: postId, author_id: userProfile.id, message: sanitizeUserInput(text, { maxLength: 1000 }) });
 
         if (error) {
-            showUserError('Failed to submit reply', error);
+            showUserError('errors.submitReply', error);
         } else {
             // Flushes the specific input buffer target field trace cleanly upon success
             setReplyInputs(prev => ({ ...prev, [postId]: '' })); 

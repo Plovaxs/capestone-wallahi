@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import Modal from './Modal';
 import { sanitizeCsvCell } from '../utils/csvSafety';
@@ -49,6 +50,7 @@ function buildCsvInline(columns, data) {
  * ones from the first row's keys.
  */
 const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', columns }) => {
+    const { t } = useTranslation();
     const [isPickerOpen, setIsPickerOpen] = useState(false);
     const [selectedKeys, setSelectedKeys] = useState(null);
     const [isDownloading, setIsDownloading] = useState(false);
@@ -61,7 +63,7 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
 
     const openPicker = () => {
         if (!data || data.length === 0) {
-            toast.error('No data available to export.');
+            toast.error(t('export.noData'));
             return;
         }
         setSelectedKeys(new Set(availableColumns.map((c) => c.key)));
@@ -87,7 +89,7 @@ const ExportButton = ({ data, filename = 'report', label = 'Export to CSV', colu
         // simultaneous file downloads.
         if (isDownloading) return;
         if (!selectedKeys || selectedKeys.size === 0) {
-            toast.error('Pick at least one column to export.');
+            toast.error(t('export.noColumnsSelected'));
             return;
         }
 

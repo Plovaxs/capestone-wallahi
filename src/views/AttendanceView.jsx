@@ -1218,7 +1218,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     .maybeSingle();
 
                 if (existingCheckError) {
-                    showUserError('Failed to record attendance', existingCheckError);
+                    showUserError('errors.recordAttendance', existingCheckError);
                     return false;
                 }
                 if (existing) {
@@ -1245,7 +1245,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 }]);
 
                 if (error) {
-                    showUserError('Failed to record attendance', error);
+                    showUserError('errors.recordAttendance', error);
                     return false;
                 }
 
@@ -1428,7 +1428,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 // Keep the saved progress on failure — the captures are still
                 // good, only the final profile write failed, so let them
                 // retry finalization without re-scanning every pose.
-                showUserError('Failed to enroll face', error);
+                showUserError('errors.enrollFace', error);
             } else {
                 clearStalenessCounter(userProfile.id);
                 clearEnrollmentProgress(userProfile.id);

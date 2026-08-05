@@ -292,7 +292,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                 status: 'To Do',
                 is_extended: false
             });
-            if (error) showUserError('Failed to create task', error);
+            if (error) showUserError('errors.createTask', error);
             else {
                 // Notifying assignees is now handled server-side by the
                 // notify_task_assigned trigger — the client can no longer
@@ -322,7 +322,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                 .eq('id', task.id);
 
             if (error) {
-                showUserError('Failed to update task status', error);
+                showUserError('errors.updateTaskStatus', error);
             } else {
                 // Notifying assignees is now handled server-side by the
                 // notify_task_status_change trigger — the client can no longer
@@ -358,7 +358,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             .in('id', Array.from(selectedTaskIds));
 
         if (error) {
-            showUserError('Failed to bulk approve tasks', error);
+            showUserError('errors.bulkApproveTasks', error);
         } else {
             setSelectedTaskIds(new Set());
             await fetchTasks();
@@ -408,7 +408,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             setExtensionTask(null);
             fetchTasks();
         } else {
-            showUserError('Failed to submit task', error);
+            showUserError('errors.submitTask', error);
         }
     };
 
@@ -447,7 +447,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
         // sit selected with zero feedback until the later Send-time check.
         const validation = validateTaskSubmissionFile(file);
         if (!validation.valid) {
-            showUserError('Wrong file type', { message: validation.error });
+            showUserError('errors.wrongFileType', { message: validation.error });
             e.target.value = null;
             setSelectedFiles(prev => {
                 const next = { ...prev };
@@ -469,7 +469,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
 
         const validation = validateTaskSubmissionFile(file);
         if (!validation.valid) {
-            showUserError('Failed to upload task submission', { message: validation.error });
+            showUserError('errors.uploadTaskSubmission', { message: validation.error });
             return;
         }
 
@@ -485,7 +485,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
         
         const { error: uploadError } = await supabase.storage.from('task_submission').upload(filePath, file);
         if (uploadError) {
-            showUserError('Failed to upload task submission', uploadError);
+            showUserError('errors.uploadTaskSubmission', uploadError);
             setUploading(null);
             return;
         }
@@ -495,7 +495,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
             .update({ submitted_file_path: filePath, status: 'Completed', feedback: null })
             .eq('id', taskId);
         if (updateError) {
-            showUserError('Failed to mark task as submitted', updateError);
+            showUserError('errors.markTaskSubmitted', updateError);
             setUploading(null);
             return;
         }
@@ -531,7 +531,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
                 },
             }, { undoLabel: t('tasks.undo') });
         } catch (err) {
-            showUserError('Failed to update task status', err);
+            showUserError('errors.updateTaskStatus', err);
         } finally {
             // Either fetchTasks() already brought the prop data in line, or the
             // write failed — either way the override has served its purpose.
@@ -546,7 +546,7 @@ const TasksView = ({ userProfile, tasks = [], allUsers = [], fetchTasks }) => {
     const handleViewSubmission = async (path) => {
         const { data, error } = await supabase.storage.from('task_submission').createSignedUrl(path, 60);
         if (error) {
-            showUserError('Failed to open submitted file', error);
+            showUserError('errors.openSubmittedFile', error);
             return;
         }
         if (data) window.open(data.signedUrl, '_blank');

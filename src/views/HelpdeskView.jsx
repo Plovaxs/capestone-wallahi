@@ -86,7 +86,7 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                 problem_types: selectedProblemTypes,
             });
             if (error) {
-                showUserError('Failed to file ticket', error);
+                showUserError('errors.fileTicket', error);
             } else {
                 setNewTitle('');
                 setNewContent('');
@@ -126,7 +126,7 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                 .update({ ticket_status: newStatus })
                 .eq('id', ticketId);
             if (error) {
-                showUserError('Failed to update ticket status', error);
+                showUserError('errors.updateTicketStatus', error);
             } else {
                 fetchHelpdeskTickets();
             }
@@ -144,7 +144,7 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                 .from('helpdesk_replies')
                 .insert({ ticket_id: ticketId, author_id: userProfile.id, message });
             if (error) {
-                showUserError('Failed to send reply', error);
+                showUserError('errors.sendReply', error);
             } else {
                 setReplyInputs(prev => ({ ...prev, [ticketId]: '' }));
                 fetchHelpdeskTickets();

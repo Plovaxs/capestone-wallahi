@@ -111,7 +111,7 @@ const SettingsView = ({
             toast.success(t('settings.avatarUpdated'));
             fetchProfile(); // Invalidates core app level layout caches to trigger live visual re-renders
         } catch (error) {
-            showUserError('Failed to upload profile image', error);
+            showUserError('errors.uploadProfileImage', error);
         } finally {
             setUploading(false);
         }
@@ -146,7 +146,7 @@ const SettingsView = ({
             const { error } = await supabase.auth.updateUser({ password: password });
 
             if (error) {
-                showUserError('Failed to update password', error);
+                showUserError('errors.updatePassword', error);
             } else {
                 toast.success(t('settings.passwordChanged'));
                 setPassword('');
@@ -156,7 +156,7 @@ const SettingsView = ({
             // supabase-js throws (rather than returning {error}) on genuine
             // network failures — without this, that case previously failed
             // completely silently with no feedback at all.
-            showUserError('Failed to update password', err);
+            showUserError('errors.updatePassword', err);
         } finally {
             setIsSavingPassword(false);
         }
@@ -182,7 +182,7 @@ const SettingsView = ({
                 .eq('id', targetId);
 
             if (error) {
-                showUserError('Failed to update assignment', error);
+                showUserError('errors.updateAssignment', error);
             } else {
                 setEditingStaffId(null);
                 fetchAllUsers && fetchAllUsers();
@@ -191,7 +191,7 @@ const SettingsView = ({
             // A thrown (not just {error}) network failure previously left
             // savingStaffId set forever — the Save button stuck disabled
             // with no explanation until a full page reload.
-            showUserError('Failed to update assignment', err);
+            showUserError('errors.updateAssignment', err);
         } finally {
             setSavingStaffId(null);
         }

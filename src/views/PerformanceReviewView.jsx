@@ -139,7 +139,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         if (requestId !== latestFetchIdRef.current) return; // a newer fetch has since started — discard this stale result
 
         if (error) {
-            showUserError('Failed to load performance reviews', error);
+            showUserError('errors.loadPerformanceReviews', error);
         }
 
         let filtered = data || [];
@@ -275,7 +275,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         setIsSubmitting(true);
        if (editingEvalId) {
             const { error } = await supabase.from('performance_evaluations').update({ scores, final_score: pointTotal, comments }).eq('id', editingEvalId);
-            if (error) showUserError('Failed to update review', error);
+            if (error) showUserError('errors.updateReview', error);
             else {
                 toast.success(t('reviews.appraisalUpdated'));
                 // Notifying the employee is now handled server-side by the
@@ -288,7 +288,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
             const { error } = await supabase.from('performance_evaluations').insert({
                 employee_id: selectedUserId, supervisor_id: userProfile.id, scores, final_score: pointTotal, comments
             });
-            if (error) showUserError('Failed to submit review', error);
+            if (error) showUserError('errors.submitReview', error);
             else {
                 toast.success(t('reviews.appraisalSubmitted'));
                 // Notifying the employee is now handled server-side by the
@@ -312,7 +312,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     const handleDeleteEvaluation = async (id) => {
         if (!(await confirmDialog(t('reviews.confirmDeleteRecord'), { variant: 'danger' }))) return;
         const { error } = await supabase.from('performance_evaluations').delete().eq('id', id);
-        if (error) showUserError('Failed to delete review', error);
+        if (error) showUserError('errors.deleteReview', error);
         else {
             toast.success(t('reviews.recordDeleted'));
             fetchEvaluations();

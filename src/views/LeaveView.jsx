@@ -242,7 +242,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         const { error } = await supabase.from('leave_requests').insert(payload);
 
         if (error) {
-            showUserError('Failed to submit leave request', error);
+            showUserError('errors.submitLeaveRequest', error);
         } else {
             // Notifying supervisors is now handled server-side by the
             // notify_leave_submitted trigger — the client can no longer
@@ -293,7 +293,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                     .eq('id', selectedTargetUser);
 
                 if (error) {
-                    showUserError('Failed to update leave allocation', error);
+                    showUserError('errors.updateLeaveAllocation', error);
                 } else {
                     toast.success(t('leave.allocationSuccess', { name: targetProfile.name }));
                     window.location.reload(); // Performs a clean context sync to flush visual tracking states
@@ -373,7 +373,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
             .eq('id', id);
 
         if (updateError) {
-            showUserError('Failed to update leave request', updateError);
+            showUserError('errors.updateLeaveRequest', updateError);
             return;
         }
 
@@ -468,7 +468,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
 
                 const { error: updateError } = await supabase.from('leave_requests').update({ status: 'Approved' }).eq('id', request.id);
                 if (updateError) {
-                    showUserError('Failed to update leave request', updateError);
+                    showUserError('errors.updateLeaveRequest', updateError);
                     continue;
                 }
 

@@ -29,7 +29,7 @@ export function useUndoableAction() {
                             // call failed (e.g. network drop), the toast just
                             // dismissed as if undo had succeeded, with the
                             // original mutation silently still in effect.
-                            showUserError('Failed to undo', err);
+                            showUserError('errors.undo', err);
                         }
                     }}
                     className="font-bold text-blue-600 dark:text-blue-400 hover:underline"
