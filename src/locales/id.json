@@ -42,7 +42,9 @@
   "offline": {
     "showingCachedData": "Kamu sedang offline — menampilkan data terakhir yang tersimpan.",
     "queuedForSync": "Kamu sedang offline — ini akan otomatis terkirim begitu koneksi kembali.",
-    "reconnectingLiveUpdates": "Menyambungkan kembali live update..."
+    "reconnectingLiveUpdates": "Menyambungkan kembali live update...",
+    "bannerOffline": "Kamu sedang offline — menampilkan data tersimpan. Perubahan akan terkirim otomatis begitu online lagi.",
+    "bannerSlow": "Koneksi terdeteksi lambat — beberapa hal mungkin butuh waktu lebih lama untuk dimuat."
   },
   "confirm": {
     "defaultTitle": "Mohon konfirmasi",

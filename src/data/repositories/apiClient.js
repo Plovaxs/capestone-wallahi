@@ -2,7 +2,22 @@ import { createPipeline } from '../pipeline/middlewarePipeline';
 import { loggingMiddleware, errorTransformMiddleware } from '../pipeline/middlewares';
 import { retryWithBackoff } from '../pipeline/retryWithBackoff';
 import { createCircuitBreaker } from '../pipeline/circuitBreaker';
+import { withTimeout } from '../pipeline/withTimeout';
 import { apiSchemas } from '../../validation/apiSchemas';
+
+// 🟩 WEAK-NETWORK MITIGATION: a fully-offline network fails fast (the
+// browser raises an error immediately) and is already handled everywhere
+// via the IndexedDB-cache fallback + OfflineMutationQueue. A weak-but-
+// connected one (packets crawling through, high loss) is the trickier
+// case -- the request just hangs with no error at all, so retryWithBackoff
+// and the circuit breaker (both purely reactive to a thrown error) never
+// even engage. These timeouts force the caller to stop waiting and show an
+// actionable error instead of a spinner stuck indefinitely. Reads get a
+// shorter budget since retryWithBackoff will retry a timed-out attempt
+// anyway; mutations get more slack since retrying a write blindly isn't
+// safe, so there's no second chance if this one's too aggressive.
+const QUERY_TIMEOUT_MS = 15000;
+const MUTATION_TIMEOUT_MS = 20000;
 
 // 🟩 RESPONSE SCHEMA VALIDATION: dev-only, warn-only. If the backend's
 // actual shape drifts from what the app expects (a column renamed, a
@@ -60,7 +75,7 @@ export function runQuery(label, supabaseCallFn) {
     const promise = pipeline({ label }, () =>
         getBreakerFor(label)(() =>
             retryWithBackoff(async () => {
-                const { data, error } = await supabaseCallFn();
+                const { data, error } = await withTimeout(supabaseCallFn(), QUERY_TIMEOUT_MS, label);
                 if (error) throw error;
                 warnOnSchemaDrift(label, data);
                 return data;
@@ -85,7 +100,7 @@ export function runQuery(label, supabaseCallFn) {
 export function runMutation(label, supabaseCallFn) {
     return pipeline({ label }, () =>
         getBreakerFor(label)(async () => {
-            const { data, error } = await supabaseCallFn();
+            const { data, error } = await withTimeout(supabaseCallFn(), MUTATION_TIMEOUT_MS, label);
             if (error) throw error;
             return data;
         })

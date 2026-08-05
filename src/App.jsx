@@ -26,6 +26,7 @@ import ConfirmDialogHost from './components/ConfirmDialogHost';
 import CommandPalette from './components/CommandPalette';
 import PageSkeleton from './components/PageSkeleton';
 import FeatureFlagPanel from './components/FeatureFlagPanel';
+import NetworkStatusBanner from './components/NetworkStatusBanner';
 
 // 🟩 CODE-SPLITTING: each view (and its dependencies — AttendanceView alone
 // pulls in face-api.js + @huggingface/transformers, multiple MB) is its own
@@ -516,6 +517,8 @@ export default function App() {
             setActiveView={setActiveView}
           />
         </div>
+
+        <NetworkStatusBanner />
 
         <main id="main-content" tabIndex={-1} className="flex-1 overflow-y-auto p-0 relative">
           {!initialDataLoaded ? <PageSkeleton /> : <React.Suspense fallback={<PageSkeleton />}><MainContent

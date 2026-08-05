@@ -42,7 +42,9 @@
   "offline": {
     "showingCachedData": "You're offline — showing the last saved data.",
     "queuedForSync": "You're offline — this will be sent automatically once you're back online.",
-    "reconnectingLiveUpdates": "Reconnecting live updates..."
+    "reconnectingLiveUpdates": "Reconnecting live updates...",
+    "bannerOffline": "You're offline — showing saved data. Changes will send once you're back online.",
+    "bannerSlow": "Slow connection detected — some things may take longer to load."
   },
   "confirm": {
     "defaultTitle": "Please confirm",

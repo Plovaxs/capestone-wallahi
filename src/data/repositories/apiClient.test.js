@@ -68,4 +68,17 @@ describe('runMutation', () => {
 
         expect(callFn).toHaveBeenCalledTimes(2);
     });
+
+    it('rejects instead of hanging forever when the Supabase call never settles (weak-network mitigation)', async () => {
+        vi.useFakeTimers();
+        try {
+            const neverSettles = () => new Promise(() => {});
+            const promise = runMutation('test.mutate-hang', neverSettles);
+            const assertion = expect(promise).rejects.toThrow(/timed out/);
+            await vi.advanceTimersByTimeAsync(20000);
+            await assertion;
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
