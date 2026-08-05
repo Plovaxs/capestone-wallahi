@@ -11,6 +11,7 @@ import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
+import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 Maps a failed quality/liveness gate to the specific hint shown to the
 // user, same pattern as AttendanceView's QUALITY_HINT_KEYS -- "no face" and
@@ -372,55 +373,10 @@ export default function LoginPage() {
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);
 
-  // 🟩 FACE BOX POSITIONING: same math as AttendanceView's getFaceOverlayStyle
-  // (video is `object-cover`-scaled into the circular viewport and mirrored
-  // via CSS, so the box has to be scaled/offset and horizontally flipped to
-  // land on the actual face instead of the un-mirrored raw coordinates).
-  const getFaceOverlayStyle = () => {
-    if (!faceOverlayBox || !videoRef.current) return null;
-
-    const videoEl = videoRef.current;
-    const naturalWidth = videoEl.videoWidth || faceOverlayBox.imageWidth;
-    const naturalHeight = videoEl.videoHeight || faceOverlayBox.imageHeight;
-    const viewportWidth = videoEl.clientWidth || 0;
-    const viewportHeight = videoEl.clientHeight || 0;
-
-    if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) return null;
-
-    const naturalRatio = naturalWidth / naturalHeight;
-    const viewportRatio = viewportWidth / viewportHeight;
-
-    let displayedWidth = viewportWidth;
-    let displayedHeight = viewportHeight;
-    let offsetX = 0;
-    let offsetY = 0;
-
-    if (viewportRatio > naturalRatio) {
-      displayedHeight = viewportHeight;
-      displayedWidth = viewportHeight * naturalRatio;
-      offsetX = (viewportWidth - displayedWidth) / 2;
-    } else {
-      displayedWidth = viewportWidth;
-      displayedHeight = viewportWidth / naturalRatio;
-      offsetY = (viewportHeight - displayedHeight) / 2;
-    }
-
-    const scaleX = displayedWidth / naturalWidth;
-    const scaleY = displayedHeight / naturalHeight;
-
-    const boxWidth = faceOverlayBox.width * scaleX;
-    const boxHeight = faceOverlayBox.height * scaleY;
-
-    const standardLeft = offsetX + (faceOverlayBox.x * scaleX);
-    const mirroredLeft = viewportWidth - standardLeft - boxWidth;
-
-    return {
-      left: `${mirroredLeft}px`,
-      top: `${offsetY + (faceOverlayBox.y * scaleY)}px`,
-      width: `${boxWidth}px`,
-      height: `${boxHeight}px`,
-    };
-  };
+  // Video is `object-cover`-scaled into the circular viewport and mirrored
+  // via CSS -- shared with AttendanceView (vision/faceOverlayGeometry.js)
+  // instead of each page keeping its own copy of the same math.
+  const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: videoRef.current });
 
   const executeBiometricLogin = async (liveDescriptor) => {
    isRedirectingRef.current = true;

@@ -26,6 +26,7 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
+import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { getNetworkProfile, getBatteryProfile, shouldReduceWorkload } from '../utils/deviceAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
@@ -1141,52 +1142,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // ==========================================
     // MATHEMATICAL MATRIX POSITION CALCULATOR
     // ==========================================
-    const getFaceOverlayStyle = () => {
-        if (!faceOverlayBox || !webcamVideoRef.current) return null;
-
-        const videoEl = webcamVideoRef.current;
-        const naturalWidth = videoEl.videoWidth || faceOverlayBox.imageWidth;
-        const naturalHeight = videoEl.videoHeight || faceOverlayBox.imageHeight;
-        const viewportWidth = videoEl.clientWidth || 0;
-        const viewportHeight = videoEl.clientHeight || 0;
-
-        if (!naturalWidth || !naturalHeight || !viewportWidth || !viewportHeight) return null;
-
-        const naturalRatio = naturalWidth / naturalHeight;
-        const viewportRatio = viewportWidth / viewportHeight;
-
-        let displayedWidth = viewportWidth;
-        let displayedHeight = viewportHeight;
-        let offsetX = 0;
-        let offsetY = 0;
-
-        if (viewportRatio > naturalRatio) {
-            displayedHeight = viewportHeight;
-            displayedWidth = viewportHeight * naturalRatio;
-            offsetX = (viewportWidth - displayedWidth) / 2;
-        } else {
-            displayedWidth = viewportWidth;
-            displayedHeight = viewportWidth / naturalRatio;
-            offsetY = (viewportHeight - displayedHeight) / 2;
-        }
-
-        const scaleX = displayedWidth / naturalWidth;
-        const scaleY = displayedHeight / naturalHeight;
-
-        const boxWidth = faceOverlayBox.width * scaleX;
-        const boxHeight = faceOverlayBox.height * scaleY;
-        
-        // 🟩 MIRROR STYLING CORRECTION: Computes position relative to flipped canvas limits
-        const standardLeft = offsetX + (faceOverlayBox.x * scaleX);
-        const mirroredLeft = viewportWidth - standardLeft - boxWidth;
-
-        return {
-            left: `${mirroredLeft}px`,
-            top: `${offsetY + (faceOverlayBox.y * scaleY)}px`,
-            width: `${boxWidth}px`,
-            height: `${boxHeight}px`,
-        };
-    };
+    const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: webcamVideoRef.current });
 
     const handleClockIn = async (source = 'manual') => {
         if (userProfile.role !== 'supervisor' && !currentCoords) {
