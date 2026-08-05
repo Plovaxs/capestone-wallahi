@@ -109,6 +109,18 @@ Deno.serve(async (req) => {
       });
     }
 
+    // 🟩 FIX: this check ran AFTER generateLink() already attempted to use
+    // bestMatch.email -- a matched profile missing an email (shouldn't
+    // normally happen, but nothing enforced it at the DB level) would hit
+    // generateLink with email: undefined first and fail there instead,
+    // surfacing as an opaque "Internal error" rather than this specific,
+    // easier-to-debug message. Validate before attempting the call.
+    if (!bestMatch.email) {
+      return new Response(JSON.stringify({ error: "Matched profile has no email on file" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Mint a real, verifiable session for the matched user without a
     // password. generateLink + client-side verifyOtp is the documented
     // pattern for custom (non-password) auth flows in Supabase.
@@ -117,11 +129,6 @@ Deno.serve(async (req) => {
       email: bestMatch.email,
     });
     if (linkError) throw linkError;
-    if (!bestMatch.email) {
-     return new Response(JSON.stringify({ error: "Matched profile has no email on file" }), {
-       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-     });
-   }
     return new Response(
       JSON.stringify({ token_hash: linkData.properties.hashed_token }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
