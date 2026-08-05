@@ -1238,15 +1238,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const handleClockOut = async () => {
         setIsLoading(true);
         const time = (await getServerNow()).toLocaleTimeString('en-GB', { hour12: false });
-        // 🟩 FIX: clock-out previously recorded no location at all -- the
-        // supervisor's "View Map Location" button was silently reusing the
-        // clock-IN coordinates for clock-out too, which is simply wrong for
-        // anyone (WFH especially) who isn't in the same spot for both.
-        await supabase.from(ATTENDANCE_TABLE).update({
-            clock_out: time,
-            clock_out_latitude: currentCoords ? currentCoords.latitude : null,
-            clock_out_longitude: currentCoords ? currentCoords.longitude : null,
-        }).eq('id', todayRecord.id);
+        // 🟩 PRIVACY: deliberately does NOT record location at clock-out.
+        // Clock-in location is tied to the geofence/attendance-legitimacy
+        // check itself, which is a defensible reason to capture it -- but
+        // tracking exactly where an intern was standing when they clocked
+        // OUT (e.g. their home address, end of day) has no equivalent
+        // business justification and is exactly the kind of function-creep
+        // that runs into data-protection/privacy-law trouble. Don't collect
+        // it just because it's technically easy to.
+        await supabase.from(ATTENDANCE_TABLE).update({ clock_out: time }).eq('id', todayRecord.id);
         await fetchAttendance();
         setIsLoading(false);
     };
@@ -1624,18 +1624,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                     )}
                                                 </td>
                                                 <td className="p-4 text-right">
-                                                    <div className="flex flex-col items-end gap-1.5">
-                                                        {empToday?.latitude && (
-                                                            <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
-                                                                {t('attendance.viewClockInLocation')}
-                                                            </button>
-                                                        )}
-                                                        {empToday?.clock_out_latitude && (
-                                                            <button type="button" onClick={() => openMap(empToday.clock_out_latitude, empToday.clock_out_longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
-                                                                {t('attendance.viewClockOutLocation')}
-                                                            </button>
-                                                        )}
-                                                    </div>
+                                                    {empToday?.latitude && (
+                                                        <button type="button" onClick={() => openMap(empToday.latitude, empToday.longitude)} className="text-xs font-bold px-3 py-1.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50 dark:bg-slate-900/60 text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-slate-800 shadow-md transition">
+                                                            {t('attendance.viewClockInLocation')}
+                                                        </button>
+                                                    )}
                                                 </td>
                                             </tr>
                                         );

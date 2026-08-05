@@ -382,7 +382,6 @@
     "notClockedIn": "Not Clocked In",
     "onlineNow": "Online now",
     "viewClockInLocation": "🗺️ View Clock-In Location",
-    "viewClockOutLocation": "🗺️ View Clock-Out Location",
     "mapLocationUnavailable": "No valid location was recorded for this clock-in.",
     "mapPopupBlocked": "Your browser blocked the map popup — allow popups for this site and try again.",
     "incomplete": "Incomplete",
