@@ -276,7 +276,12 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                             <div className="flex items-start justify-between gap-3 mb-1">
                                 <span className="text-xs font-bold text-gray-500 dark:text-gray-400">{ticket.employee_name}</span>
                                 <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                                    {new Date(ticket.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                    {/* 🟩 FIX: was reading `ticket.date`, a column that's never
+                                        actually set on insert (handleCreateTicket doesn't send
+                                        one) -- always rendered "Invalid Date". The sort logic
+                                        just above already correctly uses `created_at`; this now
+                                        matches it. */}
+                                    {new Date(ticket.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                 </span>
                             </div>
 
