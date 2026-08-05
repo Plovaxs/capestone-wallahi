@@ -49,14 +49,26 @@ describe('createGeofenceStateMachine', () => {
         expect(machine.getState()).toBe('INSIDE');
     });
 
-    it('correctly re-enters after leaving, requiring the enter threshold again', () => {
+    it('re-enters as soon as a reading is back within the full configured radius (no entry shrinkage)', () => {
         const machine = createGeofenceStateMachine({ radiusMeters: 100, hysteresisMeters: 15, requiredConsecutiveReads: 1 });
         machine.update(50); // INSIDE
         machine.update(200); // OUTSIDE
         expect(machine.getState()).toBe('OUTSIDE');
-        // 90 is within the hysteresis band (85-115) but state is OUTSIDE, so it should hold OUTSIDE.
-        expect(machine.update(90)).toEqual({ state: 'OUTSIDE', changed: false });
-        // Only a reading clearly inside the enter threshold (<=85) commits INSIDE.
-        expect(machine.update(80)).toEqual({ state: 'INSIDE', changed: true });
+        // 110 is within the exit hysteresis band (100-115) but still outside the
+        // radius itself, and state is OUTSIDE, so it should hold OUTSIDE.
+        expect(machine.update(110)).toEqual({ state: 'OUTSIDE', changed: false });
+        // Any reading at or inside the FULL configured radius (100m) commits
+        // INSIDE -- the entry side must never require less than the radius an
+        // admin actually configured.
+        expect(machine.update(95)).toEqual({ state: 'INSIDE', changed: true });
+    });
+
+    it('does not require re-crossing the radius twice: exiting only needs to clear radius + hysteresis', () => {
+        const machine = createGeofenceStateMachine({ radiusMeters: 100, hysteresisMeters: 15, requiredConsecutiveReads: 1 });
+        machine.update(50); // INSIDE
+        // 110 is past the radius but still inside the exit hysteresis band (<=115) -- holds INSIDE.
+        expect(machine.update(110)).toEqual({ state: 'INSIDE', changed: false });
+        // 116 clears the exit threshold (100 + 15) -- now it commits OUTSIDE.
+        expect(machine.update(116)).toEqual({ state: 'OUTSIDE', changed: true });
     });
 });

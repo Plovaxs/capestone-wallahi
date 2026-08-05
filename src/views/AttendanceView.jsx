@@ -239,7 +239,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const WORK_START_TIME = '08:00:00'; 
     const OFFICE_LOCATION = { lat: -6.20651363, lng: 106.87604852 };
-    const ALLOWED_RADIUS_METERS = 2000; 
+    const ALLOWED_RADIUS_METERS = 100; 
 
     const webcamVideoRef = useRef(null);
     const referenceDescriptorRef = useRef(null);

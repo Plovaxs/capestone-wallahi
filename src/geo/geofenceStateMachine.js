@@ -6,10 +6,16 @@
  * button rapidly enable/disable. This applies the same two mitigations
  * real GPS trackers use:
  *
- *  1. Hysteresis: entering requires being clearly inside
- *     (radius - hysteresisMeters), leaving requires being clearly outside
- *     (radius + hysteresisMeters) — the band in between just keeps
- *     whatever state was last confirmed instead of deciding anything.
+ *  1. Hysteresis, anchored so the FULL configured radius is always
+ *     enterable: entering requires being at or inside `radiusMeters`
+ *     itself (not `radiusMeters - hysteresisMeters` -- an earlier version
+ *     shrank the effective entry range below the radius an admin actually
+ *     configured, which meant e.g. a 100m-radius office silently required
+ *     ~75m to clock in, rejecting people who were genuinely inside the
+ *     stated 100m). Leaving requires drifting clearly past the boundary,
+ *     to `radiusMeters + hysteresisMeters` — that's the only side that
+ *     needs slack, to stop someone standing right at the edge from
+ *     flickering in and out.
  *  2. Debounce: a candidate state change only commits after it's been
  *     seen on `requiredConsecutiveReads` readings in a row, so a single
  *     noisy GPS sample can't flip the state on its own.
@@ -20,7 +26,7 @@ export function createGeofenceStateMachine({ radiusMeters, hysteresisMeters = 15
     let pendingCount = 0;
 
     function update(distanceMeters) {
-        const enterThreshold = radiusMeters - hysteresisMeters;
+        const enterThreshold = radiusMeters;
         const exitThreshold = radiusMeters + hysteresisMeters;
 
         let candidate;
