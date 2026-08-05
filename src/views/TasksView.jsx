@@ -76,12 +76,18 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
     const [extensionMode, setExtensionMode] = useState('extend'); // Directs modal layout logic ('extend' vs 'reject')
 
     // --- NEW TASK INITIALIZATION COMPOSER STATE ---
-    const [newTask, setNewTask] = useState({ 
-        title: '', 
-        description: '', 
-        assigned_to: [], 
+    const [newTask, setNewTask] = useState({
+        title: '',
+        description: '',
+        assigned_to: [],
         due_date: '',
-        priority: 'Normal' 
+        priority: 'Normal',
+        // 🟩 NEW: 'multiple' = every assignee must submit before the task is
+        // ready for review (real group work); 'singular' = any ONE of them
+        // submitting is enough (duplicate-effort/"whoever gets to it first"
+        // assignments). Only meaningfully different once >1 person is
+        // assigned -- see migrations/20260805_add_task_submission_mode.sql.
+        submission_mode: 'multiple'
     });
     
     // --- LOCAL FILE HANDLING BUFFER MATRICES ---
@@ -303,7 +309,8 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                 due_date: newTask.due_date,
                 priority: newTask.priority,
                 status: 'To Do',
-                is_extended: false
+                is_extended: false,
+                submission_mode: newTask.assigned_to.length > 1 ? newTask.submission_mode : 'multiple'
             });
             if (error) showUserError('errors.createTask', error);
             else {
@@ -311,7 +318,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                 // notify_task_assigned trigger — the client can no longer
                 // insert into notifications directly (RLS).
                 toast.success(t('tasks.taskAssignedSuccess'));
-                setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal' });
+                setNewTask({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal', submission_mode: 'multiple' });
                 setIsModalOpen(false);
                 fetchTasks();
             }
@@ -595,6 +602,8 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
         const taskSubmissionsList = submissionsByTask.get(task.id) || [];
         const mySubmission = taskSubmissionsList.find(s => s.employee_id === userProfile.id);
         const assigneeCount = (task.assigned_to || []).length;
+        const isSingularMode = task.submission_mode === 'singular';
+        const requiredSubmissionCount = isSingularMode ? Math.min(1, assigneeCount) : assigneeCount;
 
         return (
             <div className={`bg-white p-4 rounded-xl border shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3 h-fit dark:bg-gray-800 dark:border-gray-700 ${
@@ -667,14 +676,23 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                     everyone's done. */}
                 {assigneeCount > 1 && task.status !== 'Approved' && (
                     <div className="text-[10px] bg-gray-50 dark:bg-gray-900/40 border border-gray-100 dark:border-gray-700 rounded-lg p-2 space-y-1">
-                        <div className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                            {t('tasks.submissionProgress', { done: taskSubmissionsList.length, total: assigneeCount })}
+                        <div className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
+                            <span>{isSingularMode
+                                ? (taskSubmissionsList.length > 0 ? t('tasks.submissionProgressSingularDone') : t('tasks.submissionProgressSingularPending'))
+                                : t('tasks.submissionProgress', { done: taskSubmissionsList.length, total: requiredSubmissionCount })}
+                            </span>
+                            {isSingularMode && (
+                                <span className="normal-case font-semibold text-gray-400 dark:text-gray-500" title={t('tasks.submissionModeSingularHint')}>
+                                    ({t('tasks.submissionModeSingular')})
+                                </span>
+                            )}
                         </div>
                         {userProfile.role === 'supervisor' && (
                             <ul className="space-y-0.5">
                                 {(task.assigned_to || []).map(uid => {
                                     const u = usersById.get(String(uid));
                                     const sub = taskSubmissionsList.find(s => s.employee_id === uid);
+                                    if (isSingularMode && !sub) return null; // singular mode: no point showing everyone as "pending" when only one submission was ever needed
                                     return (
                                         <li key={uid} className="flex items-center justify-between gap-2">
                                             <span className="text-gray-600 dark:text-gray-300 truncate">{sub ? '✅' : '⏳'} {u?.name || t('tasks.unknown')}</span>
@@ -967,6 +985,31 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                             ))}
                         </div>
                     </div>
+
+                    {/* 🟩 NEW: only meaningful once more than one person is picked
+                        above -- a solo-assigned task behaves identically either way. */}
+                    {newTask.assigned_to.length > 1 && (
+                        <div>
+                            <span className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.submissionMode')}</span>
+                            <div className="mt-1 space-y-1.5">
+                                <label className="flex items-start gap-2 p-2 border border-gray-300 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <input type="radio" name="submission-mode" className="mt-0.5" checked={newTask.submission_mode === 'multiple'} onChange={() => setNewTask({ ...newTask, submission_mode: 'multiple' })} />
+                                    <span>
+                                        <span className="block text-sm font-bold dark:text-gray-200">{t('tasks.submissionModeMultiple')}</span>
+                                        <span className="block text-[11px] text-gray-500 dark:text-gray-400">{t('tasks.submissionModeMultipleHint')}</span>
+                                    </span>
+                                </label>
+                                <label className="flex items-start gap-2 p-2 border border-gray-300 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <input type="radio" name="submission-mode" className="mt-0.5" checked={newTask.submission_mode === 'singular'} onChange={() => setNewTask({ ...newTask, submission_mode: 'singular' })} />
+                                    <span>
+                                        <span className="block text-sm font-bold dark:text-gray-200">{t('tasks.submissionModeSingular')}</span>
+                                        <span className="block text-[11px] text-gray-500 dark:text-gray-400">{t('tasks.submissionModeSingularHint')}</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    )}
+
                     <button type="button" onClick={handleCreateTask} disabled={isCreatingTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed">{t('tasks.confirmAssignment')}</button>
                 </div>
             </Modal>
