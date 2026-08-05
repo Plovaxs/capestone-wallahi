@@ -296,10 +296,15 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     <input type="checkbox" checked={widgets.recentReviews} onChange={() => toggleWidget('recentReviews')} className="form-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
                                     <span>{t('dashboard.recentAppraisalsSheet')}</span>
                                 </label>
-                                <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
-                                    <input type="checkbox" checked={widgets.contractInfo} onChange={() => toggleWidget('contractInfo')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
-                                    <span>{t('dashboard.assignmentAndContract')}</span>
-                                </label>
+                                {/* 🟩 Supervisor-hidden: the widget this toggles never renders
+                                    for a supervisor now (it's the viewer's own assignment/
+                                    contract status), so the checkbox would just be dead. */}
+                                {userProfile.role !== 'supervisor' && (
+                                    <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                        <input type="checkbox" checked={widgets.contractInfo} onChange={() => toggleWidget('contractInfo')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                        <span>{t('dashboard.assignmentAndContract')}</span>
+                                    </label>
+                                )}
                                 {userProfile.role === 'supervisor' && (
                                     <>
                                         <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
@@ -400,7 +405,12 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
             )}
 
             {/* --- ASSIGNMENT & CONTRACT CARD --- */}
-            {widgets.contractInfo && (
+            {/* 🟩 Supervisor-hidden: this shows the *viewer's own*
+                department/contract assignment ("ask your supervisor to set
+                this") -- meaningless (and a little odd) from a supervisor's
+                own dashboard, since they're the one who'd be doing the
+                assigning, not waiting on it. */}
+            {widgets.contractInfo && userProfile.role !== 'supervisor' && (
                 <div style={{ order: orderOf('contractInfo') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
                     <h2 className="text-sm font-bold text-gray-700 mb-4 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.assignmentAndContract')}</h2>
                     {userProfile.department || contractStatus.hasContract ? (
