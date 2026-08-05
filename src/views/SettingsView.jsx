@@ -211,25 +211,31 @@ const SettingsView = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                {/* --- CONTAINER SECTION 0: MY ASSIGNMENT (READ-ONLY FOR EVERYONE) --- */}
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 md:col-span-2">
-                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.myAssignment')}</h3>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.myAssignmentDescription')}</p>
-                    <div className="flex flex-col sm:flex-row gap-6 text-xs">
-                        <div className="space-y-1">
-                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.department')}</span>
-                            <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || t('settings.notAssignedYet')}</span>
-                        </div>
-                        <div className="space-y-1">
-                            <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.contractPeriod')}</span>
-                            <span className="font-bold text-gray-800 dark:text-gray-100">
-                                {userProfile.contract_start_date && userProfile.contract_end_date
-                                    ? `${new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}`
-                                    : t('settings.notSetYet')}
-                            </span>
+                {/* --- CONTAINER SECTION 0: MY ASSIGNMENT (READ-ONLY, EMPLOYEES ONLY) --- */}
+                {/* 🟩 Supervisor-hidden: same reasoning as the Dashboard's
+                    "Assignment & Contract" widget -- "set by your supervisor"
+                    is meaningless (and looks like a bug) on a supervisor's
+                    own account, since they're the one doing the assigning. */}
+                {userProfile.role !== 'supervisor' && (
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 md:col-span-2">
+                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.myAssignment')}</h3>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.myAssignmentDescription')}</p>
+                        <div className="flex flex-col sm:flex-row gap-6 text-xs">
+                            <div className="space-y-1">
+                                <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.department')}</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || t('settings.notAssignedYet')}</span>
+                            </div>
+                            <div className="space-y-1">
+                                <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.contractPeriod')}</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">
+                                    {userProfile.contract_start_date && userProfile.contract_end_date
+                                        ? `${new Date(userProfile.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(userProfile.contract_end_date).toLocaleDateString('en-GB')}`
+                                        : t('settings.notSetYet')}
+                                </span>
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
 
                 {/* --- CONTAINER SECTION 1: PROFILE PICTURE ASSET ENGINE --- */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 flex flex-col justify-between">
