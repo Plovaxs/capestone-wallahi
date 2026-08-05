@@ -9,8 +9,7 @@ import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import * as faceapi from 'face-api.js';
 import { pipeline } from '@huggingface/transformers';
 import { showUserError } from '../utils/errorHandling';
-import { getServerNow, getTrustedNowOrEstimate } from '../utils/serverTime';
-import { offlineMutationQueue } from '../offline/OfflineMutationQueue';
+import { getServerNow } from '../utils/serverTime';
 import { calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
@@ -1211,41 +1210,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         const runClockIn = async () => {
             setIsLoading(true);
             try {
-                // 🟩 OFFLINE CLOCK-IN: no point even attempting the existence
-                // check or insert below without connectivity -- queue it
-                // instead of failing outright (same OfflineMutationQueue the
-                // leave-request flow already uses). The timestamp is captured
-                // NOW, using a monotonic-clock estimate anchored to the last
-                // known server time (see utils/trustedClock.js) rather than
-                // the device clock directly -- otherwise "clock in offline"
-                // would just become a new way to spoof punctuality by winding
-                // the system clock back before switching off the network. The
-                // Late/Present status is decided from that estimate right
-                // here too, so a genuinely on-time clock-in that couldn't
-                // reach the server stays on-time no matter how late the sync
-                // actually happens. The existing-record check is re-done
-                // server-side once the queued mutation actually flushes.
-                if (!navigator.onLine) {
-                    const { date: trustedDate, source: timeSource } = await getTrustedNowOrEstimate();
-                    const time = trustedDate.toLocaleTimeString('en-GB', { hour12: false });
-                    const status = time > WORK_START_TIME ? 'Late' : 'Present';
-
-                    await offlineMutationQueue.enqueue('clockIn', {
-                        employee_id: userProfile.id,
-                        date: today,
-                        status,
-                        clock_in: time,
-                        clock_in_time_source: timeSource,
-                        latitude: currentCoords ? currentCoords.latitude : null,
-                        longitude: currentCoords ? currentCoords.longitude : null,
-                    });
-
-                    setClockInAt(time);
-                    setClockInSource(source);
-                    toast(t('offline.queuedForSync'), { icon: '📴' });
-                    return true;
-                }
-
                 const { data: existing, error: existingCheckError } = await supabase
                     .from(ATTENDANCE_TABLE)
                     .select('id')
@@ -1276,7 +1240,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     date: today,
                     status,
                     clock_in: time,
-                    clock_in_time_source: 'server',
                     latitude: currentCoords ? currentCoords.latitude : null,
                     longitude: currentCoords ? currentCoords.longitude : null,
                 }]);
@@ -1683,18 +1646,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                                     {empToday ? (
                                                         <div className="flex flex-col items-start gap-1">
                                                             {statusBadge(empToday.status, empToday.clock_out, empToday.date)}
-                                                            <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 font-mono">
-                                                                IN: {getRecordClockInTime(empToday)}
-                                                                {/* 🟩 Surfaces how this timestamp was determined -- an
-                                                                    offline clock-in couldn't be confirmed against the
-                                                                    server clock at the moment it happened. */}
-                                                                {empToday.clock_in_time_source === 'estimated' && (
-                                                                    <span title={t('attendance.timeSourceEstimatedTooltip')} className="ml-1 text-amber-600 dark:text-amber-400">~{t('attendance.timeSourceEstimated')}</span>
-                                                                )}
-                                                                {empToday.clock_in_time_source === 'device_untrusted' && (
-                                                                    <span title={t('attendance.timeSourceUntrustedTooltip')} className="ml-1 text-red-600 dark:text-red-400">⚠ {t('attendance.timeSourceUntrusted')}</span>
-                                                                )}
-                                                            </span>
+                                                            <span className="text-[10px] font-bold text-gray-400 dark:text-slate-500 font-mono">IN: {getRecordClockInTime(empToday)}</span>
                                                         </div>
                                                     ) : (
                                                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white dark:bg-slate-900 text-gray-500 dark:text-slate-600 border border-gray-200 dark:border-slate-800">{t('attendance.notClockedIn')}</span>
