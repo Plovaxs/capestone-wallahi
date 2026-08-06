@@ -21,7 +21,7 @@ export default defineConfig({
       },
       manifest: {
         name: 'Employee Monitoring Portal',
-        short_name: 'CESD Portal',
+        short_name: 'OMS Portal',
         description: 'Internship attendance, tasks, leave, and performance monitoring.',
         theme_color: '#0f172a',
         background_color: '#0f172a',

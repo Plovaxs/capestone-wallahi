@@ -700,8 +700,8 @@
     "replayTour": "▶ Replay Tour"
   },
   "onboarding": {
-    "welcomeTitle": "Welcome to CESD Portal!",
-    "welcomeDesc": "Hi Oms, let's take a quick look at what you can do here.",
+    "welcomeTitle": "Welcome to OMS Portal!",
+    "welcomeDesc": "Hi OMS, let's take a quick look at what you can do here.",
     "dashboardTitle": "Dashboard",
     "dashboardDescSupervisor": "See team-wide metrics, attendance trends, task completion, and a leaderboard of top performers at a glance.",
     "dashboardDescEmployee": "Track your pending tasks, leave balance, and recent performance appraisals at a glance.",
