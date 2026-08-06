@@ -21,7 +21,7 @@ const OnboardingTour = ({ userProfile, onClose }) => {
     const isSupervisor = userProfile.role === 'supervisor';
 
     const steps = [
-        { icon: '👋', title: t('onboarding.welcomeTitle'), desc: t('onboarding.welcomeDesc', { name: userProfile.name?.split(' ')[0] }) },
+        { icon: '👋', title: t('onboarding.welcomeTitle'), desc: t('onboarding.welcomeDesc') },
         { icon: '📊', title: t('onboarding.dashboardTitle'), desc: isSupervisor ? t('onboarding.dashboardDescSupervisor') : t('onboarding.dashboardDescEmployee') },
         { icon: '🕒', title: t('onboarding.attendanceTitle'), desc: t('onboarding.attendanceDesc') },
         { icon: '📋', title: t('onboarding.tasksTitle'), desc: t('onboarding.tasksDesc') },

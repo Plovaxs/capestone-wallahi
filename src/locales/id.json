@@ -701,7 +701,7 @@
   },
   "onboarding": {
     "welcomeTitle": "Selamat Datang di CESD Portal!",
-    "welcomeDesc": "Hai {{name}}, yuk lihat sekilas apa saja yang bisa kamu lakukan di sini.",
+    "welcomeDesc": "Hai Oms, yuk lihat sekilas apa saja yang bisa kamu lakukan di sini.",
     "dashboardTitle": "Dasbor",
     "dashboardDescSupervisor": "Lihat metrik seluruh tim, tren kehadiran, penyelesaian tugas, dan peringkat kinerja terbaik sekilas pandang.",
     "dashboardDescEmployee": "Pantau tugas yang tertunda, sisa cuti, dan penilaian kinerja terbaru sekilas pandang.",
