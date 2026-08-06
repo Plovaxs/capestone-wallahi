@@ -115,7 +115,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // loops pause while hidden and pick back up the moment it's visible.
     const isTabVisible = usePageVisibility();
     const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
-    const YOLO_LOCAL_PATH = import.meta.env.VITE_YOLO_LOCAL_PATH || '/models/yolov8n-face';
     const FACE_MATCH_THRESHOLD = 0.5;
     const YOLO_FACE_THRESHOLD = 0.35;
     const ATTENDANCE_TABLE = 'attendance';
@@ -442,6 +441,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             const selectedModelVersion = determineYoloVersion();
             const modelId = selectedModelVersion === 'nano' ? YOLO_MODEL_IDS.nano : YOLO_MODEL_IDS.medium;
 
+            // 🟩 SIMPLIFIED: there's no local copy of the YOLO weights under
+            // public/models/ (only the face-api.js models live there), so a
+            // fallback fetch to a local YOLO path was guaranteed to 404/fail
+            // right after the remote Hugging Face fetch already failed --
+            // just extra latency and console noise before the caller's own
+            // try/catch (detectFaceFromImage) falls back to face-api.js.
+            // Clearing the cached promise on failure (rather than leaving a
+            // permanently-rejected promise here) lets a later scan tick
+            // retry YOLO if the network/HF rate-limit recovers mid-session.
             yoloDetectorPromiseRef.current = loadTransformersModule()
                 .then(({ pipeline }) => pipeline('object-detection', modelId))
                 .then(detector => {
@@ -449,11 +457,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setCurrentModelVersion(selectedModelVersion);
                     return detector;
                 })
-                .catch(async (_err) => {
-                    const { pipeline } = await loadTransformersModule();
-                    const localDetector = await pipeline('object-detection', YOLO_LOCAL_PATH);
-                    yoloDetectorRef.current = localDetector;
-                    return localDetector;
+                .catch((err) => {
+                    yoloDetectorPromiseRef.current = null;
+                    throw err;
                 });
         }
         return yoloDetectorPromiseRef.current;
