@@ -9,7 +9,7 @@ import SortableTh from '../components/SortableTh';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { showUserError } from '../utils/errorHandling';
 import { getServerNow } from '../utils/serverTime';
-import { calculateHeadTurnRatio, calculatePitchRatio } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
@@ -25,6 +25,8 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
+import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
+import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
@@ -223,6 +225,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const motionTrackerRef = useRef(createMotionStabilityTracker());
     const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: pixel-based liveness signal that works on desktop webcams too (motionTrackerRef above needs a phone/tablet accelerometer)
     const latestColorLivenessRef = useRef({ suspicious: false }); // 🟩 NEW: latest per-tick skin-color/texture plausibility read — catches a shaken physical photo/phone that would otherwise pass the motion-only signals
+    // 🟩 SECURITY: active blink challenge, reinstated as a mandatory gate on
+    // top of the passive signals above (see vision/livenessFusion.js) after
+    // a printed photo defeated the previous passive-only design for BOTH
+    // this page and Login during the capstone defense. Per the examiner's
+    // explicit request, a short blink pause on clock-in is an accepted
+    // trade-off for closing that gap — a static photo cannot blink.
+    const livenessChallengeRef = useRef(new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK }));
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -948,28 +957,35 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         setIsFaceVerified(isMatch);
 
                         if (isMatch) {
-                            // 🟩 LIVENESS: attendance needs to be fast, so this no longer
-                            // waits on an explicit blink/head-turn challenge (that's still
-                            // required at login, where a few extra seconds is fine). Instead
-                            // it leans on passive, no-action-required signals: border-texture
-                            // uniformity (checkReplaySuspicion), the device accelerometer
-                            // where available (motionTrackerRef -- phones/tablets only),
-                            // pixel-level micro-motion in the face region (microMotionTrackerRef
-                            // -- works on any camera, desktop webcams included), and a
-                            // motion-INDEPENDENT color/texture check (colorLivenessHeuristic --
-                            // catches the case someone physically shakes a printed photo or a
-                            // phone showing a photo/video, which would otherwise satisfy the
-                            // two motion signals above without being a real face). A genuine
-                            // live person almost always clears at least one signal; requiring
-                            // the border check PLUS at least one of the other three before
-                            // calling it suspicious keeps common false positives (someone
-                            // standing very still against a plain wall) from blocking a real
-                            // clock-in, while a flat photo/screen replay — even a shaken one —
-                            // still gets caught by whichever signal it fails.
+                            // 🟩 LIVENESS: two independent layers, not one.
+                            // 1) Passive, no-action-required signals --
+                            //    border-texture uniformity (checkReplaySuspicion),
+                            //    the device accelerometer where available
+                            //    (motionTrackerRef -- phones/tablets only),
+                            //    pixel-level micro-motion (microMotionTrackerRef
+                            //    -- any camera), motion-INDEPENDENT color/
+                            //    texture plausibility (colorLivenessHeuristic),
+                            //    and edge-sharpness (textureSharpnessHeuristic)
+                            //    -- combined by majority VOTE (vision/
+                            //    livenessFusion.js), not the old AND-gate that
+                            //    required border-uniformity specifically before
+                            //    anything else counted. That gate silently
+                            //    passed any photo/screen held up with a normal,
+                            //    textured room visible around it -- exactly how
+                            //    a plain photo defeated this check during the
+                            //    capstone defense.
+                            // 2) A mandatory blink challenge on top -- passive
+                            //    signals alone, however combined, can still be
+                            //    fooled by a good enough replay. Per the
+                            //    examiner's explicit request, a short blink
+                            //    pause is an accepted trade-off for real
+                            //    security here (previously removed for speed;
+                            //    reinstated after the defense incident).
                             if (userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!autoClockInGuardRef.current) {
                                 let livenessSuspicious = false;
+                                let blinkConfirmed = false;
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
                                     const marginX = Math.round(liveDet.box.width * 0.15);
@@ -986,6 +1002,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     const deviceFlat = deviceMotionStats.ready && deviceMotionStats.isSuspiciouslyFlat;
                                     const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
                                     const colorSuspicious = latestColorLivenessRef.current.suspicious;
+                                    const textureSuspicious = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious;
 
                                     setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                         && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -998,7 +1015,20 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             microMotionStable: !microMotionStats.isSuspiciouslyFlat,
                                         }));
 
-                                    livenessSuspicious = borderSuspicious && (deviceFlat || pixelFlat || colorSuspicious);
+                                    livenessSuspicious = evaluatePassiveLiveness({
+                                        borderUniform: borderSuspicious,
+                                        deviceFlat: deviceMotionStats.ready ? deviceFlat : null,
+                                        pixelFlat: microMotionStats.ready ? pixelFlat : null,
+                                        colorSuspicious,
+                                        textureFlat: textureSuspicious,
+                                    }).suspicious;
+
+                                    if (!livenessSuspicious) {
+                                        if (livenessChallengeRef.current.isExpired()) {
+                                            livenessChallengeRef.current.reset();
+                                        }
+                                        blinkConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
+                                    }
                                 } catch (_err) {
                                     // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
                                 }
@@ -1009,10 +1039,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // two as the rolling window updates; a genuine static
                                     // replay stays flagged indefinitely instead of ever
                                     // sneaking through.
+                                    livenessChallengeRef.current.reset();
                                     setBiometricStatus(t('attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
+                                } else if (!blinkConfirmed) {
+                                    setBiometricStatus(t('attendance.statusAwaitingBlink'));
                                 } else {
                                     autoClockInGuardRef.current = true;
+                                    livenessChallengeRef.current.reset();
                                     setBiometricStatus(t('attendance.statusMatchVerified'));
                                     clearInterval(timer);
 
@@ -1027,6 +1061,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 }
                             }
                         } else {
+                            livenessChallengeRef.current.reset(); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
                             setBiometricStatus(bucketExhausted ? t('attendance.statusTooManyAttempts') : t('attendance.statusNotRecognized'));
                         }
@@ -1038,6 +1073,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     latestColorLivenessRef.current = { suspicious: false };
+                    livenessChallengeRef.current.reset();
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {

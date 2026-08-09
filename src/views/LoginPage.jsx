@@ -9,7 +9,10 @@ import ScanReadinessBar from '../components/ScanReadinessBar';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
+import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
+import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
+import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
@@ -86,6 +89,13 @@ export default function LoginPage() {
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
+  // 🟩 SECURITY: active blink challenge, reinstated after a printed photo
+  // defeated the previous passive-only liveness check during the capstone
+  // defense — a static photo literally cannot blink on request, closing
+  // the gap that passive heuristics alone (even fixed/voted) can't fully
+  // close on their own. See vision/livenessFusion.js for why the old
+  // passive gate was insufficient by itself.
+  const livenessChallengeRef = useRef(new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK }));
   const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -265,6 +275,7 @@ export default function LoginPage() {
           setScanReadiness(0);
           setFaceOverlayBox(null);
           microMotionTrackerRef.current.reset();
+          livenessChallengeRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
           return;
         }
@@ -304,6 +315,7 @@ export default function LoginPage() {
         const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
         if (qualityIssue) {
           microMotionTrackerRef.current.reset();
+          livenessChallengeRef.current.reset();
           setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
           return;
         }
@@ -319,11 +331,20 @@ export default function LoginPage() {
           return;
         }
 
-        // 🟩 LOGIN: no blink wait anymore -- passive liveness only. Border-
-        // uniformity + (device-independent) pixel-variance + color/texture
-        // plausibility together catch a printed photo or a phone held up
-        // to the camera, including one that's being shaken to fake motion,
-        // without asking the user to do anything.
+        // 🟩 LOGIN LIVENESS -- two independent layers, not one:
+        // 1) Passive, no-action signals (border-uniformity, pixel-motion,
+        //    color/texture plausibility, edge-sharpness) combined by
+        //    majority VOTE (vision/livenessFusion.js) rather than the old
+        //    AND-gate that required border-uniformity specifically to fire
+        //    before anything else counted -- that gate silently passed any
+        //    photo/screen held up with a normal, textured room visible
+        //    around it.
+        // 2) A mandatory blink challenge on top. Passive signals alone,
+        //    however combined, can still be fooled by a good enough
+        //    replay -- a flat printed photo or a paused video frame
+        //    literally cannot blink on request, which is the actual
+        //    hard-to-fake signal. Reinstated after a real photo defeated
+        //    the previous passive-only design during the capstone defense.
         if (suggestPasswordFallback) {
           setBiometricStatus(t('login.statusUsePasswordInstead'));
           return;
@@ -352,18 +373,36 @@ export default function LoginPage() {
           Math.min(Math.round(box.width + marginX * 2), width),
           Math.min(Math.round(box.height + marginY * 2), height)
         );
-        const borderSuspicious = checkReplaySuspicion(borderRegion.data).suspicious;
-        const pixelFlat = microMotionStats.isSuspiciouslyFlat;
-        const livenessSuspicious = borderSuspicious && (pixelFlat || colorLiveness.suspicious);
+        const textureCheck = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height);
+        const passiveVote = evaluatePassiveLiveness({
+          borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
+          pixelFlat: microMotionStats.isSuspiciouslyFlat,
+          colorSuspicious: colorLiveness.suspicious,
+          textureFlat: textureCheck.suspicious,
+        });
 
-        if (livenessSuspicious) {
+        if (passiveVote.suspicious) {
+          livenessChallengeRef.current.reset();
           setBiometricStatus(t('login.statusLivenessSuspicious'));
+          return;
+        }
+
+        if (livenessChallengeRef.current.isExpired()) {
+          livenessChallengeRef.current.reset();
+          setBiometricStatus(t('login.statusChallengeExpired'));
+          return;
+        }
+
+        const blinkConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
+        if (!blinkConfirmed) {
+          setBiometricStatus(t('login.statusAwaitingBlink'));
           return;
         }
 
         lastAttemptRef.current = now;
         setBiometricStatus(t('login.statusLivenessVerified'));
         await executeBiometricLogin(detection.descriptor);
+        livenessChallengeRef.current.reset();
       } catch (err) {
         console.error('Face detection error:', err);
         // 🟩 MITIGATION: a repeatedly-throwing detection loop (WebGL context
@@ -390,6 +429,7 @@ export default function LoginPage() {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
       microMotionTrackerRef.current.reset();
+      livenessChallengeRef.current.reset();
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);
 
