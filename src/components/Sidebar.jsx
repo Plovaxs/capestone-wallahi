@@ -26,6 +26,7 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
     { id: 'contributions', label: t('nav.contributions'), icon: Icons.Trophy },
     { id: 'helpdesk', label: t('nav.helpdesk'), icon: Icons.LifeBuoy, badge: openTicketCount },
     { id: 'reviews', label: t('nav.performance'), icon: Icons.UserCircle, supervisorOnly: true },
+    { id: 'auditLog', label: t('nav.auditLog'), icon: Icons.ClipboardCheck, supervisorOnly: true },
     { id: 'errorMonitor', label: t('nav.errorMonitor'), icon: Icons.AlertTriangle, supervisorOnly: true },
   ];
 

@@ -29,6 +29,7 @@
     "createTask": "Gagal membuat tugas",
     "updateTask": "Gagal menyimpan perubahan tugas",
     "fetchErrorLogs": "Gagal memuat log error",
+    "fetchAuditLog": "Gagal memuat log audit",
     "deleteErrorLogs": "Gagal menghapus entri log error itu",
     "fetchProfile": "Gagal memuat profil kamu",
     "fetchAllUsers": "Gagal memuat direktori staf",
@@ -699,6 +700,7 @@
     "contributions": "Kontribusi",
     "helpdesk": "Helpdesk",
     "performance": "Kinerja",
+    "auditLog": "Log Audit",
     "errorMonitor": "Pemantau Error",
     "settings": "Pengaturan",
     "menu": "Menu"
@@ -920,5 +922,29 @@
     "url": "URL",
     "stackTrace": "Stack Trace",
     "userAgent": "User Agent"
+  },
+  "auditLog": {
+    "title": "Log Audit",
+    "subtitle": "Jejak akuntabilitas read-only untuk setiap persetujuan, penolakan, dan perubahan role — siapa melakukan apa, dan kapan.",
+    "supervisorOnly": "Halaman ini cuma tersedia untuk supervisor.",
+    "statTotal": "Total (terbaru)",
+    "statLast24h": "24 jam terakhir",
+    "statLast7d": "7 hari terakhir",
+    "searchPlaceholder": "Cari berdasarkan orang atau aksi...",
+    "allEntityTypes": "Semua jenis",
+    "entityType_task": "Tugas",
+    "entityType_leave_request": "Pengajuan Cuti",
+    "entityType_performance_evaluation": "Penilaian Kinerja",
+    "entityType_profile": "Role",
+    "loading": "Memuat log audit...",
+    "noEntries": "Belum ada entri audit.",
+    "unknownUser": "User tidak diketahui",
+    "byActor": "oleh {{actor}}",
+    "descTaskStatusChange": "Status tugas \"{{title}}\" berubah dari {{from}} ke {{to}}",
+    "descLeaveStatusChange": "Pengajuan cuti {{type}} berubah dari {{from}} ke {{to}}",
+    "descEvaluationCreated": "Membuat penilaian kinerja untuk {{employee}} (skor {{score}})",
+    "descEvaluationUpdated": "Memperbarui skor penilaian {{employee}} dari {{from}} ke {{to}}",
+    "descEvaluationDeleted": "Menghapus penilaian {{employee}} (sebelumnya {{score}})",
+    "descRoleChange": "Role {{name}} berubah dari {{from}} ke {{to}}"
   }
 }

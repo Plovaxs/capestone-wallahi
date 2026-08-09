@@ -47,6 +47,7 @@ const PerformanceReviewView = React.lazy(() => import('./views/PerformanceReview
 const SettingsView = React.lazy(() => import('./views/SettingsView'));
 const HelpdeskView = React.lazy(() => import('./views/HelpdeskView'));
 const ErrorMonitorView = React.lazy(() => import('./views/ErrorMonitorView'));
+const AuditLogView = React.lazy(() => import('./views/AuditLogView'));
 
 const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
@@ -59,6 +60,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} />;
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
     case 'errorMonitor': return <ErrorMonitorView userProfile={userProfile} />;
+    case 'auditLog': return <AuditLogView userProfile={userProfile} allUsers={props.allUsers} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }
 };

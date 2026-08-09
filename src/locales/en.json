@@ -29,6 +29,7 @@
     "createTask": "Couldn't create the task",
     "updateTask": "Couldn't save those task changes",
     "fetchErrorLogs": "Couldn't load the error log",
+    "fetchAuditLog": "Couldn't load the audit log",
     "deleteErrorLogs": "Couldn't delete that error log entry",
     "fetchProfile": "Couldn't load your profile",
     "fetchAllUsers": "Couldn't load the staff directory",
@@ -699,6 +700,7 @@
     "contributions": "Contributions",
     "helpdesk": "Helpdesk",
     "performance": "Performance",
+    "auditLog": "Audit Log",
     "errorMonitor": "Error Monitor",
     "settings": "Settings",
     "menu": "Menu"
@@ -920,5 +922,29 @@
     "url": "URL",
     "stackTrace": "Stack Trace",
     "userAgent": "User Agent"
+  },
+  "auditLog": {
+    "title": "Audit Log",
+    "subtitle": "A read-only accountability trail of every approval, rejection, and role change — who did what, and when.",
+    "supervisorOnly": "This page is only available to supervisors.",
+    "statTotal": "Total (recent)",
+    "statLast24h": "Last 24h",
+    "statLast7d": "Last 7 days",
+    "searchPlaceholder": "Search by person or action...",
+    "allEntityTypes": "All types",
+    "entityType_task": "Tasks",
+    "entityType_leave_request": "Leave Requests",
+    "entityType_performance_evaluation": "Performance Reviews",
+    "entityType_profile": "Roles",
+    "loading": "Loading audit log...",
+    "noEntries": "No audit entries yet.",
+    "unknownUser": "Unknown user",
+    "byActor": "by {{actor}}",
+    "descTaskStatusChange": "Task \"{{title}}\" status changed from {{from}} to {{to}}",
+    "descLeaveStatusChange": "{{type}} leave request changed from {{from}} to {{to}}",
+    "descEvaluationCreated": "Created a performance evaluation for {{employee}} (score {{score}})",
+    "descEvaluationUpdated": "Updated {{employee}}'s evaluation score from {{from}} to {{to}}",
+    "descEvaluationDeleted": "Deleted {{employee}}'s evaluation (was {{score}})",
+    "descRoleChange": "{{name}}'s role changed from {{from}} to {{to}}"
   }
 }
