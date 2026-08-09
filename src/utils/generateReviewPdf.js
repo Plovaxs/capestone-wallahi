@@ -1,11 +1,14 @@
-import { ReportBuilder } from '../patterns/ReportBuilder';
-
 /**
  * Builds and downloads a formal PDF report for a single performance
  * evaluation record. Pure client-side (jsPDF via ReportBuilder) — no
  * server round trip.
+ *
+ * 🟩 LAZY-LOADED: see generateTablePdf.js's identical note -- ReportBuilder
+ * pulls in jsPDF + jspdf-autotable (400KB+), only worth fetching once
+ * someone actually requests a PDF.
  */
-export function generateReviewPdf({ evaluation, sections, scoreOptions, employeeName, supervisorName, labels }) {
+export async function generateReviewPdf({ evaluation, sections, scoreOptions, employeeName, supervisorName, labels }) {
+    const { ReportBuilder } = await import('../patterns/ReportBuilder');
     const builder = new ReportBuilder({ orientation: 'portrait' });
 
     const issuedDate = evaluation.created_at ? new Date(evaluation.created_at).toLocaleString() : '-';
