@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { appDataReducer, initialAppDataState } from './state/appDataReducer';
 import { useTranslation } from 'react-i18next';
 import { supabase } from './supabaseClient';
-import { Toaster } from 'react-hot-toast';
 import toast from 'react-hot-toast';
+import AppToaster from './components/AppToaster';
 import { idbSet, idbGet } from './offline/indexedDbCache';
 import { offlineMutationQueue } from './offline/OfflineMutationQueue';
 import { profilesRepository } from './data/repositories/profilesRepository';
@@ -15,6 +15,7 @@ import { contributionsRepository } from './data/repositories/contributionsReposi
 import { helpdeskRepository } from './data/repositories/helpdeskRepository';
 import { reviewsRepository } from './data/repositories/reviewsRepository';
 import { notificationsRepository } from './data/repositories/notificationsRepository';
+import { showUserError } from './utils/errorHandling';
 import { performClockIn } from './domain/attendanceClockIn';
 import { consumeFaceVerifiedLoginFlag } from './domain/faceLoginClockInFlag';
 import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from './geo/officeGeofence';
@@ -122,6 +123,27 @@ export default function App() {
   const isTabVisible = usePageVisibility();
   const hasHandledInitialVisibilityRef = useRef(false);
 
+  // 🟩 SILENT-FAILURE FIX: every fetch below used to catch its own error
+  // with nothing but a console.error -- no toast, nothing reported to the
+  // Error Monitor. A genuinely broken fetch (a schema mismatch from a
+  // pending migration, an RLS misconfiguration, whatever) left its section
+  // of the app quietly empty forever with zero on-screen indication
+  // anything was wrong. This still falls back to the last cached
+  // IndexedDB snapshot first (the normal, benign offline case -- shown via
+  // the existing quiet "showing cached data" notice, unchanged), but now
+  // surfaces a real, visible error when there's truly nothing to fall
+  // back to, so a genuine bug can't hide behind silence again.
+  const recoverFromFetchFailure = async (contextKey, err, cacheKey, onCacheHit) => {
+    console.error(contextKey, err.message);
+    const cached = cacheKey ? await idbGet(cacheKey) : null;
+    if (cached) {
+      onCacheHit(cached);
+      showOfflineCacheNotice();
+    } else {
+      showUserError(contextKey, err);
+    }
+  };
+
   const fetchProfile = async (userId) => {
     if (!userId) return;
     try {
@@ -143,6 +165,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('fetchProfile failed:', err.message);
+      showUserError('errors.fetchProfile', err);
     }
   };
 
@@ -150,7 +173,7 @@ export default function App() {
     try {
       dispatchAppData({ type: 'SET_ALL_USERS', payload: await profilesRepository.listAll() });
     } catch (err) {
-      console.error('fetchAllUsers failed:', err.message);
+      showUserError('errors.fetchAllUsers', err);
     }
   };
 
@@ -171,9 +194,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_TASKS', payload: filteredTasks });
       idbSet('tasks', filteredTasks);
     } catch (err) {
-      console.error('fetchTasks failed:', err.message);
-      const cached = await idbGet('tasks');
-      if (cached) { dispatchAppData({ type: 'SET_TASKS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchTasks', err, 'tasks', (cached) => dispatchAppData({ type: 'SET_TASKS', payload: cached }));
     }
   };
 
@@ -186,9 +207,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_TASK_SUBMISSIONS', payload: data || [] });
       idbSet('taskSubmissions', data || []);
     } catch (err) {
-      console.error('fetchTaskSubmissions failed:', err.message);
-      const cached = await idbGet('taskSubmissions');
-      if (cached) { dispatchAppData({ type: 'SET_TASK_SUBMISSIONS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchTaskSubmissions', err, 'taskSubmissions', (cached) => dispatchAppData({ type: 'SET_TASK_SUBMISSIONS', payload: cached }));
     }
   };
 
@@ -198,9 +217,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_ATTENDANCE', payload: data });
       idbSet('attendance', data);
     } catch (err) {
-      console.error('fetchAttendance failed:', err.message);
-      const cached = await idbGet('attendance');
-      if (cached) { dispatchAppData({ type: 'SET_ATTENDANCE', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchAttendance', err, 'attendance', (cached) => dispatchAppData({ type: 'SET_ATTENDANCE', payload: cached }));
     }
   };
 
@@ -215,9 +232,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_LEAVE_REQUESTS', payload: filteredLeave });
       idbSet('leaveRequests', filteredLeave);
     } catch (err) {
-      console.error('fetchLeaveRequests failed:', err.message);
-      const cached = await idbGet('leaveRequests');
-      if (cached) { dispatchAppData({ type: 'SET_LEAVE_REQUESTS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchLeaveRequests', err, 'leaveRequests', (cached) => dispatchAppData({ type: 'SET_LEAVE_REQUESTS', payload: cached }));
     }
   };
 
@@ -234,9 +249,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_CONTRIBUTIONS', payload: merged });
       idbSet('contributions', merged);
     } catch (err) {
-      console.error('fetchContributions failed:', err.message);
-      const cached = await idbGet('contributions');
-      if (cached) { dispatchAppData({ type: 'SET_CONTRIBUTIONS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchContributions', err, 'contributions', (cached) => dispatchAppData({ type: 'SET_CONTRIBUTIONS', payload: cached }));
     }
   };
 
@@ -255,9 +268,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_HELPDESK_TICKETS', payload: merged });
       idbSet('helpdeskTickets', merged);
     } catch (err) {
-      console.error('fetchHelpdeskTickets failed:', err.message);
-      const cached = await idbGet('helpdeskTickets');
-      if (cached) { dispatchAppData({ type: 'SET_HELPDESK_TICKETS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchHelpdeskTickets', err, 'helpdeskTickets', (cached) => dispatchAppData({ type: 'SET_HELPDESK_TICKETS', payload: cached }));
     }
   };
 
@@ -273,9 +284,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_REVIEWS', payload: filteredReviews });
       idbSet('reviews', filteredReviews);
     } catch (err) {
-      console.error('fetchReviews failed:', err.message);
-      const cached = await idbGet('reviews');
-      if (cached) { dispatchAppData({ type: 'SET_REVIEWS', payload: cached }); showOfflineCacheNotice(); }
+      await recoverFromFetchFailure('errors.fetchReviews', err, 'reviews', (cached) => dispatchAppData({ type: 'SET_REVIEWS', payload: cached }));
     }
   };
 
@@ -299,6 +308,7 @@ export default function App() {
       dispatchAppData({ type: 'SET_NOTIFICATIONS', payload: data });
     } catch (err) {
       console.error('fetchNotifications failed:', err.message);
+      showUserError('errors.fetchNotifications', err);
     }
   };
 
@@ -544,7 +554,7 @@ export default function App() {
   if (!session) {
     return (
       <>
-        <Toaster position="top-right" />
+        <AppToaster />
         <React.Suspense fallback={<PageSkeleton />}>
           <LoginPage />
         </React.Suspense>
@@ -572,7 +582,7 @@ export default function App() {
         {t('common.skipToContent')}
       </a>
       <div className="no-print">
-        <Toaster position="top-right" toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
+        <AppToaster toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
         <ConfirmDialogHost />
         <FeatureFlagPanel />
         <CommandPalette
