@@ -89,13 +89,19 @@ export default function LoginPage() {
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
-  // 🟩 SECURITY: active blink challenge, reinstated after a printed photo
+  // 🟩 SECURITY: active liveness challenge, reinstated after a printed photo
   // defeated the previous passive-only liveness check during the capstone
-  // defense — a static photo literally cannot blink on request, closing
-  // the gap that passive heuristics alone (even fixed/voted) can't fully
-  // close on their own. See vision/livenessFusion.js for why the old
-  // passive gate was insufficient by itself.
-  const livenessChallengeRef = useRef(new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK }));
+  // defense — a static photo literally cannot blink or turn its head on
+  // request, closing the gap that passive heuristics alone (even
+  // fixed/voted) can't fully close on their own. Randomly alternates
+  // between blink and head-turn (no forced challengeType here -- see
+  // livenessDetector.js's pickRandomChallengeType) rather than always
+  // blink, since a video replay with real footage of the enrolled
+  // person blinking would otherwise satisfy a blink-only challenge every
+  // time; an attacker prepared for one challenge type still has to beat
+  // the other. See vision/livenessFusion.js for why the passive gate
+  // alone was insufficient.
+  const livenessChallengeRef = useRef(new RandomLivenessChallenge());
   const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -393,9 +399,11 @@ export default function LoginPage() {
           return;
         }
 
-        const blinkConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
-        if (!blinkConfirmed) {
-          setBiometricStatus(t('login.statusAwaitingBlink'));
+        const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
+        if (!challengeConfirmed) {
+          setBiometricStatus(t(livenessChallengeRef.current.challengeType === CHALLENGE_TYPES.HEAD_TURN
+            ? 'login.statusAwaitingHeadTurn'
+            : 'login.statusAwaitingBlink'));
           return;
         }
 

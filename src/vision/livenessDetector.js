@@ -79,18 +79,25 @@ const DEFAULT_CHALLENGE_TIMEOUT_MS = 15000;
 
 export const CHALLENGE_TYPES = { BLINK: 'blink', HEAD_TURN: 'head_turn' };
 
-// 🟩 BLINK-ONLY: the random head-turn challenge was reported as slow and
-// confusing in practice ("membuat lama") -- blink is faster, more natural,
-// and works reliably now that its threshold is tuned. HEAD_TURN_TYPE is
-// kept (unused) rather than deleting the whole code path, in case it's
-// ever wanted back as an opt-in rather than a random 50/50 surprise.
-const pickRandomChallengeType = () => CHALLENGE_TYPES.BLINK;
+// 🟩 SECURITY: randomized again after a printed photo defeated a
+// passive-only liveness check during the capstone defense (see
+// vision/livenessFusion.js). Blink-only was simpler to spoof-proof
+// against than it looks -- anything with real footage of the enrolled
+// person's face blinking (a video replay, not just a static photo)
+// would satisfy a blink-only challenge every time. Alternating
+// unpredictably between blink and head-turn means whatever an attacker
+// prepared in advance has to satisfy BOTH possible challenges, not just
+// the one they optimized for. Per explicit request, the occasional
+// extra couple of seconds for a head-turn is an accepted trade-off for
+// closing this gap.
+const pickRandomChallengeType = () => (Math.random() < 0.5 ? CHALLENGE_TYPES.BLINK : CHALLENGE_TYPES.HEAD_TURN);
 
 /**
  * Confirms the face in front of the camera is a live person, not a photo
- * or video replay, by requiring the user to blink within a time window.
- * The time box means a static photo or a looped clip can't just be held
- * up indefinitely waiting for a lucky frame.
+ * or video replay, by requiring the user to blink or turn their head
+ * (randomly chosen per challenge, see pickRandomChallengeType above)
+ * within a time window. The time box means a static photo or a looped
+ * clip can't just be held up indefinitely waiting for a lucky frame.
  */
 export class RandomLivenessChallenge {
     constructor({ challengeType = null, timeoutMs = DEFAULT_CHALLENGE_TIMEOUT_MS } = {}) {

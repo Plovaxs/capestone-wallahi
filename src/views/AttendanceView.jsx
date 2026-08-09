@@ -225,13 +225,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const motionTrackerRef = useRef(createMotionStabilityTracker());
     const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: pixel-based liveness signal that works on desktop webcams too (motionTrackerRef above needs a phone/tablet accelerometer)
     const latestColorLivenessRef = useRef({ suspicious: false }); // 🟩 NEW: latest per-tick skin-color/texture plausibility read — catches a shaken physical photo/phone that would otherwise pass the motion-only signals
-    // 🟩 SECURITY: active blink challenge, reinstated as a mandatory gate on
-    // top of the passive signals above (see vision/livenessFusion.js) after
-    // a printed photo defeated the previous passive-only design for BOTH
-    // this page and Login during the capstone defense. Per the examiner's
-    // explicit request, a short blink pause on clock-in is an accepted
-    // trade-off for closing that gap — a static photo cannot blink.
-    const livenessChallengeRef = useRef(new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK }));
+    // 🟩 SECURITY: active liveness challenge, reinstated as a mandatory gate
+    // on top of the passive signals above (see vision/livenessFusion.js)
+    // after a printed photo defeated the previous passive-only design for
+    // BOTH this page and Login during the capstone defense. Randomly
+    // alternates between blink and head-turn (no forced challengeType --
+    // see livenessDetector.js's pickRandomChallengeType) rather than
+    // always blink, since real footage of the enrolled person blinking
+    // (a video replay, not just a static photo) would otherwise satisfy a
+    // blink-only challenge every time. Per the examiner's explicit
+    // request, the occasional couple of extra seconds is an accepted
+    // trade-off for closing that gap.
+    const livenessChallengeRef = useRef(new RandomLivenessChallenge());
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -1000,7 +1005,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!guardRef.current) {
                                 let livenessSuspicious = false;
-                                let blinkConfirmed = false;
+                                let challengeConfirmed = false;
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
                                     const marginX = Math.round(liveDet.box.width * 0.15);
@@ -1042,7 +1047,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         if (livenessChallengeRef.current.isExpired()) {
                                             livenessChallengeRef.current.reset();
                                         }
-                                        blinkConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
+                                        challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
                                     }
                                 } catch (_err) {
                                     // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
@@ -1057,8 +1062,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     livenessChallengeRef.current.reset();
                                     setBiometricStatus(t('attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
-                                } else if (!blinkConfirmed) {
-                                    setBiometricStatus(t('attendance.statusAwaitingBlink'));
+                                } else if (!challengeConfirmed) {
+                                    setBiometricStatus(t(livenessChallengeRef.current.challengeType === CHALLENGE_TYPES.HEAD_TURN
+                                        ? 'attendance.statusAwaitingHeadTurn'
+                                        : 'attendance.statusAwaitingBlink'));
                                 } else {
                                     guardRef.current = true;
                                     livenessChallengeRef.current.reset();
