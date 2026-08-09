@@ -16,7 +16,7 @@ import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
 import { classifyMatch } from '../vision/matchConfidence';
 import { checkReplaySuspicion } from '../vision/antiReplayHeuristic';
-import { recordMatchDistance, clearStalenessCounter } from '../vision/descriptorStaleness';
+import { recordMatchDistance, clearStalenessCounter, getAdaptiveThreshold } from '../vision/descriptorStaleness';
 import { checkEnrollmentQuality } from '../vision/enrollmentQuality';
 import { calculatePoseReadiness, calculateFrameReadiness } from '../vision/scanReadiness';
 import ScanReadinessBar from '../components/ScanReadinessBar';
@@ -1010,7 +1010,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             referenceDescriptorRef.current,
                             faceapiRef.current.euclideanDistance
                         );
-                        const matchTier = classifyMatch(dist, FACE_MATCH_THRESHOLD);
+                        // 🟩 ADAPTIVE THRESHOLD: personalizes the match cutoff per
+                        // employee based on their own recent successful-match
+                        // distances (see vision/descriptorStaleness.js) --
+                        // strictly one-directional (can only loosen, capped at a
+                        // small margin), so this can reduce false-reject friction
+                        // for someone whose naturally higher variance keeps landing
+                        // them near the fixed threshold, but can never make matching
+                        // more permissive than that small cap or stricter than the
+                        // global default.
+                        const adaptiveThreshold = getAdaptiveThreshold(userProfile.id, FACE_MATCH_THRESHOLD);
+                        const matchTier = classifyMatch(dist, adaptiveThreshold);
                         setFaceMatchDistance(dist);
                         setFaceDetectionMode(liveDet.source || 'faceapi');
 
@@ -1140,7 +1150,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                                         // 🟩 STALENESS REMINDER: track whether recent matches keep
                                         // coming in close to the threshold rather than confidently.
-                                        const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
+                                        const staleness = recordMatchDistance(userProfile.id, dist, adaptiveThreshold);
                                         if (staleness.shouldSuggestReEnrollment) {
                                             toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
                                         }
