@@ -31,6 +31,7 @@ import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { detectAutomation } from '../vision/automationDetector';
+import { createLatencyMonitor } from '../vision/inferenceLatencyMonitor';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
@@ -259,6 +260,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const pulseDetectorRef = useRef(createPulseDetector());
     const latestFaceBoxRef = useRef(null);
     const pulseCanvasRef = useRef(null);
+    // 🟩 EDGE-INFERENCE LATENCY MONITOR: see vision/inferenceLatencyMonitor.js
+    // -- observed (not just predicted-at-mount-time) per-tick detection
+    // latency. dynamicYoloDisableRef is a one-way circuit breaker: once a
+    // device has proven it can't sustain YOLO's cost, stays downgraded to
+    // face-api-only for the rest of the session.
+    const latencyMonitorRef = useRef(createLatencyMonitor());
+    const dynamicYoloDisableRef = useRef(false);
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -282,6 +290,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         colorPlausible: true,
         pulseReady: false,
         pulsePlausible: true,
+        latencyReady: false,
+        latencyOverBudget: false,
+        avgLatencyMs: 0,
     });
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -395,7 +406,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         sourceContext.drawImage(imageEl, 0, 0, width, height);
         sourceContext.filter = 'none';
 
-        if (!disableYolo) {
+        if (!disableYolo && !dynamicYoloDisableRef.current) {
             try {
                 const detector = await ensureYoloFaceDetector();
                 const rawDetections = await detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD });
@@ -851,7 +862,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 scanFailureStreakRef.current = 0;
 
                 // 🟩 CORRECTED: Calls your deep yolo/faceapi abstraction layer wrapper directly
+                const inferenceStartedAt = performance.now();
                 const liveDet = await detectFaceFromImage(webcamVideoRef.current);
+                latencyMonitorRef.current.record(performance.now() - inferenceStartedAt);
+                const latencyStats = latencyMonitorRef.current.getStats();
+                if (latencyStats.ready) {
+                    // 🟩 DYNAMIC EDGE DOWNGRADE: a circuit breaker, not a
+                    // toggle -- once the device has sustainedly proven it
+                    // can't keep up, stays downgraded for the rest of the
+                    // session rather than flip-flopping back on the moment
+                    // one average dips back under budget (which would just
+                    // reproduce the same lag again next tick).
+                    if (latencyStats.isOverBudget) dynamicYoloDisableRef.current = true;
+                    setSensorDiagnostics((prev) => (prev.latencyReady === latencyStats.ready && prev.latencyOverBudget === latencyStats.isOverBudget && prev.avgLatencyMs === Math.round(latencyStats.avgMs)
+                        ? prev
+                        : { ...prev, latencyReady: latencyStats.ready, latencyOverBudget: latencyStats.isOverBudget, avgLatencyMs: Math.round(latencyStats.avgMs) }));
+                }
 
                 if (liveDet) {
                     const imageWidth = webcamVideoRef.current.videoWidth;

@@ -76,6 +76,12 @@ const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensor
                 value={disableYolo ? t('attendance.diagModelReduced') : t('attendance.diagModelFull')}
                 ok={true}
             />
+            <DiagnosticTile
+                label={t('attendance.diagLatency')}
+                value={!sensorDiagnostics.latencyReady ? t('attendance.diagWarming') : `${sensorDiagnostics.avgLatencyMs}ms`}
+                ok={!sensorDiagnostics.latencyReady || !sensorDiagnostics.latencyOverBudget}
+                detail={sensorDiagnostics.latencyOverBudget ? t('attendance.diagLatencyDowngraded') : null}
+            />
         </div>
     </div>
 );

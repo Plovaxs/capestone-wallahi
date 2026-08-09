@@ -582,6 +582,8 @@
     "diagModel": "Model Deteksi",
     "diagModelReduced": "Dikurangi (adaptif)",
     "diagModelFull": "Penuh (YOLO)",
+    "diagLatency": "Kecepatan Inferensi",
+    "diagLatencyDowngraded": "Diturunkan ke deteksi ringan — device ini kedetect nggak kekejar",
     "statusTooManyAttempts": "Terlalu banyak percobaan gagal — mohon tunggu sebentar sebelum mencoba lagi",
     "antiReplayWarning": "⚠️ Area di sekitar wajah kamu terlihat tidak wajar seragam — pastikan kamu memindai kamera langsung, bukan foto atau layar.",
     "reEnrollSuggestion": "🔄 Kecocokan wajah kamu belakangan ini semakin kurang meyakinkan — pertimbangkan untuk mendaftar ulang wajah demi akurasi yang lebih baik.",

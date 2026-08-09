@@ -582,6 +582,8 @@
     "diagModel": "Detection Model",
     "diagModelReduced": "Reduced (adaptive)",
     "diagModelFull": "Full (YOLO)",
+    "diagLatency": "Inference Speed",
+    "diagLatencyDowngraded": "Downgraded to lighter detection — this device is measurably falling behind",
     "statusTooManyAttempts": "Too many failed attempts — please wait a moment before trying again",
     "antiReplayWarning": "⚠️ The area around your face looks unusually uniform — make sure you're scanning a live camera feed, not a photo or screen.",
     "reEnrollSuggestion": "🔄 Your face match has been getting less confident lately — consider re-enrolling your face for better accuracy.",
