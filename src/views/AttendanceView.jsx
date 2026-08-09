@@ -287,6 +287,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const yoloDetectorRef = useRef(null);
     const yoloDetectorPromiseRef = useRef(null);
     const autoClockInGuardRef = useRef(false);
+    // 🟩 NEW: clock-out face verification. Previously "Clock Out" was a bare
+    // button with zero identity check -- anyone at a shared device could
+    // clock someone else out. Arming this reuses the exact same scan loop,
+    // matcher, and (now-hardened) liveness pipeline as clock-in, just
+    // routed to handleClockOut on a confirmed live match instead.
+    const [isClockingOut, setIsClockingOut] = useState(false);
+    const clockOutGuardRef = useRef(false);
     const webcamStreamRef = useRef(null);
     const borderlineStreakRef = useRef(0); // consecutive borderline-tier match reads, for confidence-tiered re-check
     // Client-side pre-throttle on repeated mismatches (NOT the security boundary —
@@ -794,7 +801,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
     // ==========================================
     useEffect(() => {
-        if (!isCameraReady || faceStatus !== 'scanning' || todayRecord || !isTabVisible) return;
+        // 🟩 CLOCK-OUT VERIFICATION: this loop normally only runs before
+        // clock-in (no todayRecord yet). It also runs once todayRecord
+        // exists IF the user has explicitly armed clock-out verification
+        // (isClockingOut) -- same scan/match/liveness pipeline, just
+        // routed to handleClockOut below instead of handleClockIn.
+        const clockingOutNow = isClockingOut && !!todayRecord && !todayRecord.clock_out;
+        if (!isCameraReady || faceStatus !== 'scanning' || !isTabVisible) return;
+        if (todayRecord && !clockingOutNow) return;
 
         borderlineStreakRef.current = 0;
 
@@ -981,9 +995,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             //    pause is an accepted trade-off for real
                             //    security here (previously removed for speed;
                             //    reinstated after the defense incident).
-                            if (userProfile.work_mode === 'WFO' && !isInRange) {
+                            const guardRef = clockingOutNow ? clockOutGuardRef : autoClockInGuardRef;
+                            if (!clockingOutNow && userProfile.work_mode === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
-                            } else if (!autoClockInGuardRef.current) {
+                            } else if (!guardRef.current) {
                                 let livenessSuspicious = false;
                                 let blinkConfirmed = false;
                                 try {
@@ -1045,19 +1060,26 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 } else if (!blinkConfirmed) {
                                     setBiometricStatus(t('attendance.statusAwaitingBlink'));
                                 } else {
-                                    autoClockInGuardRef.current = true;
+                                    guardRef.current = true;
                                     livenessChallengeRef.current.reset();
-                                    setBiometricStatus(t('attendance.statusMatchVerified'));
                                     clearInterval(timer);
 
-                                    // 🟩 STALENESS REMINDER: track whether recent matches keep
-                                    // coming in close to the threshold rather than confidently.
-                                    const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
-                                    if (staleness.shouldSuggestReEnrollment) {
-                                        toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
-                                    }
+                                    if (clockingOutNow) {
+                                        setBiometricStatus(t('attendance.statusClockOutVerified'));
+                                        await handleClockOut();
+                                        setIsClockingOut(false);
+                                    } else {
+                                        setBiometricStatus(t('attendance.statusMatchVerified'));
 
-                                    await handleClockIn('face-match');
+                                        // 🟩 STALENESS REMINDER: track whether recent matches keep
+                                        // coming in close to the threshold rather than confidently.
+                                        const staleness = recordMatchDistance(userProfile.id, dist, FACE_MATCH_THRESHOLD);
+                                        if (staleness.shouldSuggestReEnrollment) {
+                                            toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
+                                        }
+
+                                        await handleClockIn('face-match');
+                                    }
                                 }
                             }
                         } else {
@@ -1102,7 +1124,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // steadily. userProfile.work_mode is read fresh via closure each tick;
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible]);
+    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut]);
 
     // ==========================================
     // MULTI-ANGLE ENROLLMENT WIZARD SCAN LOOP
@@ -1699,10 +1721,38 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         : (isFaceVerified ? t('attendance.clockInShift') : t('attendance.verifyBiometrics'))}
                                 </button>
                             )}
-                            {todayRecord && !todayRecord.clock_out && (
-                                <button type="button" onClick={handleClockOut} disabled={isLoading} className="w-full md:w-auto px-8 py-3 rounded-xl font-black text-white bg-red-600 hover:bg-red-500 transition-all shadow-md hover:-translate-y-0.5 uppercase text-xs tracking-widest">
+                            {/* 🟩 SECURITY: clock-out now requires the same live face
+                                verification as clock-in -- the button just arms scanning
+                                (reusing the camera panel below) instead of clocking out
+                                on a bare click, closing a gap where anyone at a shared
+                                device could clock someone else out with no identity check. */}
+                            {todayRecord && !todayRecord.clock_out && !isClockingOut && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        clockOutGuardRef.current = false;
+                                        livenessChallengeRef.current.reset();
+                                        setIsClockingOut(true);
+                                    }}
+                                    disabled={isLoading || !isCameraReady}
+                                    className="w-full md:w-auto px-8 py-3 rounded-xl font-black text-white bg-red-600 hover:bg-red-500 transition-all shadow-md hover:-translate-y-0.5 uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                                >
                                     {t('attendance.clockOutShift')}
                                 </button>
+                            )}
+                            {todayRecord && !todayRecord.clock_out && isClockingOut && (
+                                <div className="flex items-center gap-2 w-full md:w-auto">
+                                    <div className="flex-1 px-6 py-3 rounded-xl font-black text-white bg-red-600/80 text-center text-[10px] uppercase tracking-widest animate-pulse">
+                                        {t('attendance.clockOutScanning')}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsClockingOut(false)}
+                                        className="px-4 py-3 rounded-xl border border-gray-300 dark:border-slate-700 text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-slate-800"
+                                    >
+                                        {t('attendance.cancel')}
+                                    </button>
+                                </div>
                             )}
                             {todayRecord && todayRecord.clock_out && (
                                 <div className="w-full md:w-auto px-8 py-3 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-gray-400 dark:text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">{t('attendance.shiftCompleted')}</div>
