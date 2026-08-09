@@ -90,6 +90,11 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
         submission_mode: 'multiple'
     });
     
+    // --- TASK EDIT COMPOSER STATE (supervisor-only, locked once 'Completed') ---
+    const [editingTask, setEditingTask] = useState(null); // task row currently being edited, or null
+    const [editDraft, setEditDraft] = useState({ title: '', description: '', assigned_to: [], due_date: '', priority: 'Normal', submission_mode: 'multiple' });
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+
     // --- LOCAL FILE HANDLING BUFFER MATRICES ---
     const [selectedFiles, setSelectedFiles] = useState({}); // Indexes files locally before upload validation
     const [uploading, setUploading] = useState(null); // Keeps track of active loading states per row ID
@@ -452,10 +457,68 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
     const toggleAssignee = (userId) => {
         setNewTask(prev => {
             const current = prev.assigned_to;
-            return current.includes(userId) 
+            return current.includes(userId)
                 ? { ...prev, assigned_to: current.filter(id => id !== userId) }
                 : { ...prev, assigned_to: [...current, userId] };
         });
+    };
+
+    const toggleEditAssignee = (userId) => {
+        setEditDraft(prev => {
+            const current = prev.assigned_to;
+            return current.includes(userId)
+                ? { ...prev, assigned_to: current.filter(id => id !== userId) }
+                : { ...prev, assigned_to: [...current, userId] };
+        });
+    };
+
+    const openEditTask = (task) => {
+        setEditingTask(task);
+        setEditDraft({
+            title: task.title || '',
+            description: task.description || '',
+            assigned_to: task.assigned_to || [],
+            due_date: task.due_date || '',
+            priority: task.priority || 'Normal',
+            submission_mode: task.submission_mode || 'multiple',
+        });
+    };
+
+    /**
+     * TRANSACTION: handleSaveTaskEdit
+     * PURPOSE: Supervisor-only update of an existing task's own fields
+     * (title/description/assignees/due date/priority/submission mode) --
+     * distinct from handleSaveDeadlineExtension (deadline-only nudge) and
+     * the status-transition handlers. Blocked client-side once a task is
+     * 'Completed' (see the Edit button's own guard) to preserve that
+     * record as-is; RLS already restricts this update to supervisors.
+     */
+    const handleSaveTaskEdit = async () => {
+        if (!editingTask || isSavingEdit) return;
+        if (firstError('taskAssignment', editDraft)) {
+            toast.error(t('tasks.fillRequiredFields'));
+            return;
+        }
+        setIsSavingEdit(true);
+        try {
+            const { error } = await supabase.from('tasks').update({
+                title: editDraft.title,
+                description: sanitizeUserInput(editDraft.description, { maxLength: 2000 }),
+                assigned_to: editDraft.assigned_to,
+                due_date: editDraft.due_date,
+                priority: editDraft.priority,
+                submission_mode: editDraft.assigned_to.length > 1 ? editDraft.submission_mode : 'multiple',
+            }).eq('id', editingTask.id);
+
+            if (error) showUserError('errors.updateTask', error);
+            else {
+                toast.success(t('tasks.taskUpdatedSuccess'));
+                setEditingTask(null);
+                fetchTasks();
+            }
+        } finally {
+            setIsSavingEdit(false);
+        }
     };
 
     const handleFileChange = (e, taskId) => { 
@@ -776,6 +839,21 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                                 {t('tasks.extend')}
                             </button>
                         )}
+
+                        {/* 🟩 NEW: full edit (title/description/assignees/due date/
+                            priority/submission mode), not just status transitions or a
+                            deadline nudge -- per revision feedback, supervisors need
+                            flexibility to correct task details after creation. Locked
+                            out once 'Completed' to preserve that record as-is. */}
+                        {userProfile.role === 'supervisor' && task.status !== 'Completed' && (
+                            <button
+                                type="button"
+                                onClick={() => openEditTask(task)}
+                                className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-300 px-2 py-1 rounded font-bold border border-indigo-200 dark:border-indigo-900/50 transition-all active:scale-95"
+                            >
+                                {t('tasks.editTask')}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -1011,6 +1089,71 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                     )}
 
                     <button type="button" onClick={handleCreateTask} disabled={isCreatingTask} className="w-full bg-blue-700 text-white font-bold py-2 rounded text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed">{t('tasks.confirmAssignment')}</button>
+                </div>
+            </Modal>
+
+            {/* --- EDIT TASK MODAL: same fields as creation, bound to editDraft
+                instead of newTask -- supervisor-only, not offered once a task
+                is 'Completed' (see the Edit button's own guard on TaskCard). --- */}
+            <Modal isOpen={!!editingTask} onClose={() => setEditingTask(null)} title={t('tasks.editTaskTitle')}>
+                <div className="space-y-4">
+                    <div>
+                        <label htmlFor="edit-task-title" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.taskTitle')}</label>
+                        <input id="edit-task-title" type="text" value={editDraft.title} onChange={e => setEditDraft({...editDraft, title: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                    </div>
+                    <div>
+                        <label htmlFor="edit-task-description" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.description')}</label>
+                        <textarea id="edit-task-description" value={editDraft.description} onChange={e => setEditDraft({...editDraft, description: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-none" rows="2"></textarea>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="edit-task-priority" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.priority')}</label>
+                            <select id="edit-task-priority" value={editDraft.priority} onChange={e => setEditDraft({...editDraft, priority: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                <option value="Low">{t('tasks.low')}</option>
+                                <option value="Normal">{t('tasks.normal')}</option>
+                                <option value="High">{t('tasks.high')}</option>
+                            </select>
+                        </div>
+                        <div>
+                             <label htmlFor="edit-task-due-date" className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.dueDate')}</label>
+                             <input id="edit-task-due-date" type="date" value={editDraft.due_date} onChange={e => setEditDraft({...editDraft, due_date: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                        </div>
+                    </div>
+                    <div>
+                        <span className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.assignees')}</span>
+                        <div className="mt-1 border border-gray-300 rounded max-h-32 overflow-y-auto p-2 bg-gray-50 dark:bg-gray-700 dark:border-gray-600">
+                            {employeeUsers.map(emp => (
+                                <label key={emp.id} className="flex items-center space-x-2 p-1 hover:bg-gray-200 rounded cursor-pointer dark:hover:bg-gray-600">
+                                    <input type="checkbox" checked={editDraft.assigned_to.includes(emp.id)} onChange={() => toggleEditAssignee(emp.id)} />
+                                    <span className="text-sm dark:text-gray-200">{emp.name}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {editDraft.assigned_to.length > 1 && (
+                        <div>
+                            <span className="text-xs font-bold text-gray-700 uppercase dark:text-gray-200">{t('tasks.submissionMode')}</span>
+                            <div className="mt-1 space-y-1.5">
+                                <label className="flex items-start gap-2 p-2 border border-gray-300 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <input type="radio" name="edit-submission-mode" className="mt-0.5" checked={editDraft.submission_mode === 'multiple'} onChange={() => setEditDraft({ ...editDraft, submission_mode: 'multiple' })} />
+                                    <span>
+                                        <span className="block text-sm font-bold dark:text-gray-200">{t('tasks.submissionModeMultiple')}</span>
+                                        <span className="block text-[11px] text-gray-500 dark:text-gray-400">{t('tasks.submissionModeMultipleHint')}</span>
+                                    </span>
+                                </label>
+                                <label className="flex items-start gap-2 p-2 border border-gray-300 dark:border-gray-600 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <input type="radio" name="edit-submission-mode" className="mt-0.5" checked={editDraft.submission_mode === 'singular'} onChange={() => setEditDraft({ ...editDraft, submission_mode: 'singular' })} />
+                                    <span>
+                                        <span className="block text-sm font-bold dark:text-gray-200">{t('tasks.submissionModeSingular')}</span>
+                                        <span className="block text-[11px] text-gray-500 dark:text-gray-400">{t('tasks.submissionModeSingularHint')}</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    )}
+
+                    <button type="button" onClick={handleSaveTaskEdit} disabled={isSavingEdit} className="w-full bg-indigo-700 text-white font-bold py-2 rounded text-sm hover:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed">{isSavingEdit ? t('tasks.saving') : t('tasks.saveChanges')}</button>
                 </div>
             </Modal>
 
