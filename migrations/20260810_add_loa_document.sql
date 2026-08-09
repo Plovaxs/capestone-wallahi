@@ -31,7 +31,13 @@ set
     ]
 where id = 'loa_documents';
 
-alter table storage.objects enable row level security;
+-- 🟩 storage.objects already has RLS enabled project-wide (from an
+-- earlier migration) -- omitting a redundant `alter table ... enable row
+-- level security` here deliberately: re-issuing it (even as a no-op)
+-- requires table ownership this project's connection role doesn't have
+-- ("must be owner of table objects"), which the initial enable apparently
+-- didn't require. Only CREATE POLICY statements follow, which don't need
+-- table ownership.
 
 drop policy if exists loa_documents_insert_own_folder on storage.objects;
 create policy loa_documents_insert_own_folder
