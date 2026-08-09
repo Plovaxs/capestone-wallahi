@@ -30,6 +30,15 @@ export const sanitizeUserInput = (value, { maxLength = 500 } = {}) => {
   return text.slice(0, maxLength);
 };
 
+export const sanitizeLoaExtension = (fileName) => {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const allowed = ['pdf', 'doc', 'docx'];
+  if (!allowed.includes(ext)) {
+    return 'bin'; // unrecognized extension — falls back to a generic, non-executable label
+  }
+  return ext;
+};
+
 export const sanitizeTaskSubmissionExtension = (fileName) => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   const allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'];

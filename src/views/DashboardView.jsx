@@ -575,6 +575,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <th className="px-4 py-2.5">{t('dashboard.colDepartment')}</th>
                                         <th className="px-4 py-2.5">{t('dashboard.colDutyMode')}</th>
                                         <th className="px-4 py-2.5">{t('dashboard.colContractPeriod')}</th>
+                                        <th className="px-4 py-2.5"></th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
@@ -589,6 +590,21 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                                 {emp.contract_start_date && emp.contract_end_date
                                                     ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
                                                     : t('dashboard.notSet')}
+                                            </td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">
+                                                {/* 🟩 NEW: jumps straight to Settings > Manage Staff
+                                                    Assignments, already extended with all of these
+                                                    fields (name/institution/position/department/duty
+                                                    mode/contract period) plus a "View LOA" link --
+                                                    reuses that existing editor instead of duplicating
+                                                    a second one here. */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setActiveView && setActiveView('settings')}
+                                                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                                                >
+                                                    {t('dashboard.editStaff')}
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}

@@ -46,7 +46,7 @@ const SettingsView = ({
 
     // --- SUPERVISOR-ONLY: STAFF DEPARTMENT / CONTRACT ASSIGNMENT ---
     const [editingStaffId, setEditingStaffId] = useState(null);
-    const [staffEditDraft, setStaffEditDraft] = useState({ department: '', position: '', job_desk: '', contract_start_date: '', contract_end_date: '' });
+    const [staffEditDraft, setStaffEditDraft] = useState({ name: '', source: '', department: '', position: '', job_desk: '', work_mode: 'WFO', contract_start_date: '', contract_end_date: '' });
     const [savingStaffId, setSavingStaffId] = useState(null);
     const [isSavingPassword, setIsSavingPassword] = useState(false);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
@@ -175,9 +175,12 @@ const SettingsView = ({
             const { error } = await supabase
                 .from('profiles')
                 .update({
+                    name: staffEditDraft.name || null,
+                    source: staffEditDraft.source || null,
                     department: staffEditDraft.department || null,
                     position: staffEditDraft.position || null,
                     job_desk: staffEditDraft.job_desk || null,
+                    work_mode: staffEditDraft.work_mode || 'WFO',
                     contract_start_date: staffEditDraft.contract_start_date || null,
                     contract_end_date: staffEditDraft.contract_end_date || null,
                 })
@@ -197,6 +200,21 @@ const SettingsView = ({
         } finally {
             setSavingStaffId(null);
         }
+    };
+
+    /**
+     * PIPELINE TRANSACTION: handleViewLoa
+     * PURPOSE: Opens an employee's uploaded LOA (Letter of Assignment) via
+     * a short-lived signed URL -- the loa_documents bucket is private
+     * (unlike avatars), so this is the only way to actually view it.
+     */
+    const handleViewLoa = async (path) => {
+        const { data, error } = await supabase.storage.from('loa_documents').createSignedUrl(path, 60);
+        if (error) {
+            showUserError('errors.openLoaDocument', error);
+            return;
+        }
+        if (data) window.open(data.signedUrl, '_blank');
     };
 
     const handleLanguageChange = (lang) => {
@@ -352,33 +370,77 @@ const SettingsView = ({
                                     <div>
                                         <p className="font-bold text-sm text-gray-800 dark:text-gray-100">{emp.name}</p>
                                         <p className="text-[11px] text-gray-400">
-                                            {emp.position || t('settings.noPosition')} &middot; {emp.department || t('settings.noDepartment')} &middot; {emp.contract_start_date && emp.contract_end_date
+                                            {emp.source || t('settings.noInstitution')} &middot; {emp.position || t('settings.noPosition')} &middot; {emp.department || t('settings.noDepartment')} &middot; {(emp.work_mode || 'WFO')} &middot; {emp.contract_start_date && emp.contract_end_date
                                                 ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
                                                 : t('settings.noContractDates')}
                                         </p>
                                     </div>
-                                    {editingStaffId !== emp.id && (
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setEditingStaffId(emp.id);
-                                                setStaffEditDraft({
-                                                    department: emp.department || '',
-                                                    position: emp.position || '',
-                                                    job_desk: emp.job_desk || '',
-                                                    contract_start_date: emp.contract_start_date || '',
-                                                    contract_end_date: emp.contract_end_date || '',
-                                                });
-                                            }}
-                                            className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                                        >
-                                            {t('settings.edit')}
-                                        </button>
-                                    )}
+                                    <div className="flex items-center gap-3 shrink-0">
+                                        {emp.loa_file_path && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleViewLoa(emp.loa_file_path)}
+                                                className="text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 underline"
+                                            >
+                                                {t('settings.viewLoa')}
+                                            </button>
+                                        )}
+                                        {editingStaffId !== emp.id && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setEditingStaffId(emp.id);
+                                                    setStaffEditDraft({
+                                                        name: emp.name || '',
+                                                        source: emp.source || '',
+                                                        department: emp.department || '',
+                                                        position: emp.position || '',
+                                                        job_desk: emp.job_desk || '',
+                                                        work_mode: emp.work_mode || 'WFO',
+                                                        contract_start_date: emp.contract_start_date || '',
+                                                        contract_end_date: emp.contract_end_date || '',
+                                                    });
+                                                }}
+                                                className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
+                                            >
+                                                {t('settings.edit')}
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {editingStaffId === emp.id && (
                                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.staffName')}</label>
+                                            <input
+                                                type="text"
+                                                value={staffEditDraft.name}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, name: e.target.value }))}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.institution')}</label>
+                                            <input
+                                                type="text"
+                                                value={staffEditDraft.source}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, source: e.target.value }))}
+                                                placeholder={t('settings.institutionPlaceholder')}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.dutyMode')}</label>
+                                            <select
+                                                value={staffEditDraft.work_mode}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, work_mode: e.target.value }))}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            >
+                                                <option value="WFO">{t('settings.dutyModeOffice')}</option>
+                                                <option value="WFH">{t('settings.dutyModeRemote')}</option>
+                                            </select>
+                                        </div>
                                         <div className="space-y-1">
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.department')}</label>
                                             <input

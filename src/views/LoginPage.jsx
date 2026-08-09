@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
 import { checkFraming, checkOcclusion, checkBrightness, checkSingleFace } from '../vision/faceQuality';
+import { validateLoaFile } from '../utils/validateMime';
+import { sanitizeLoaExtension } from '../utils/sanitize';
 import { calculateFrameReadiness } from '../vision/scanReadiness';
 import ScanReadinessBar from '../components/ScanReadinessBar';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
@@ -69,6 +71,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [initials, setInitials] = useState('');
+  // 🟩 NEW: onboarding fields collected at self-registration -- previously
+  // only a supervisor could set institution/position/department/contract
+  // dates after the fact (Settings > Manage Staff Assignments), leaving a
+  // brand-new account with none of it until someone remembered to fill it
+  // in. Self-reported here as a starting point; a supervisor can still
+  // correct any of it later (see Settings/Outsource Directory), matching
+  // how they'd cross-check it against the uploaded LOA anyway.
+  const [institution, setInstitution] = useState('');
+  const [position, setPosition] = useState('');
+  const [department, setDepartment] = useState('');
+  const [contractStartDate, setContractStartDate] = useState('');
+  const [contractEndDate, setContractEndDate] = useState('');
+  const [loaFile, setLoaFile] = useState(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -601,6 +616,23 @@ export default function LoginPage() {
 
     try {
       if (authMode === 'register') {
+        // 🟩 REQUIRED ONBOARDING FIELDS: checked before touching the camera/
+        // face capture at all -- no point running an expensive detection
+        // pass just to then reject the submission for a missing text field.
+        if (!institution.trim() || !position.trim() || !department.trim() || !contractStartDate || !contractEndDate) {
+          throw new Error(t('login.errorMissingOnboardingFields'));
+        }
+        if (contractEndDate < contractStartDate) {
+          throw new Error(t('login.errorContractDatesInvalid'));
+        }
+        if (!loaFile) {
+          throw new Error(t('login.errorLoaRequired'));
+        }
+        const loaValidation = validateLoaFile(loaFile);
+        if (!loaValidation.valid) {
+          throw new Error(t('login.errorLoaInvalid'));
+        }
+
         if (!videoRef.current || videoRef.current.readyState < 2) {
           throw new Error(t('login.errorCameraNotReady'));
         }
@@ -654,6 +686,18 @@ export default function LoginPage() {
         const newUser = signUpData?.user;
         if (!newUser) throw new Error(t('login.errorNoUuid'));
 
+        setBiometricStatus(t('login.statusUploadingLoa'));
+        // 🟩 LOA UPLOAD: signUp() above already establishes an authenticated
+        // session for the new user (no email-confirmation gate on this
+        // project), so auth.uid() resolves correctly for the storage RLS
+        // check (own-folder-only) by the time this runs. Uploaded before
+        // the profile upsert so a failure here doesn't leave a profile
+        // row claiming a document that was never actually saved.
+        const loaExt = sanitizeLoaExtension(loaFile.name);
+        const loaFilePath = `${newUser.id}/loa_${Date.now()}.${loaExt}`;
+        const { error: loaUploadError } = await supabase.storage.from('loa_documents').upload(loaFilePath, loaFile);
+        if (loaUploadError) throw loaUploadError;
+
         setBiometricStatus(t('login.statusSavingProfile'));
         // 🟩 RELIABILITY: this upsert is keyed by id (onConflict: 'id'), so
         // retrying it is always safe — re-applying it with the same id
@@ -673,7 +717,13 @@ export default function LoginPage() {
               email,
               role: 'employee',
               initials: initials.toUpperCase(),
-              face_descriptor: stringifiedDescriptor
+              face_descriptor: stringifiedDescriptor,
+              source: institution.trim(),
+              position: position.trim(),
+              department: department.trim(),
+              contract_start_date: contractStartDate,
+              contract_end_date: contractEndDate,
+              loa_file_path: loaFilePath,
             }], { onConflict: 'id' });
           profileError = result.error;
           if (!profileError) break;
@@ -750,6 +800,70 @@ export default function LoginPage() {
                   required
                   maxLength="2"
                 />
+                <input
+                  type="text"
+                  placeholder={t('login.institution')}
+                  aria-label={t('login.institution')}
+                  value={institution}
+                  onChange={e => setInstitution(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder={t('login.position')}
+                  aria-label={t('login.position')}
+                  value={position}
+                  onChange={e => setPosition(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder={t('login.department')}
+                  aria-label={t('login.department')}
+                  value={department}
+                  onChange={e => setDepartment(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  required
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="reg-contract-start" className="block text-[10px] font-bold text-blue-200 uppercase tracking-wider mb-1">{t('login.contractStart')}</label>
+                    <input
+                      id="reg-contract-start"
+                      type="date"
+                      value={contractStartDate}
+                      onChange={e => setContractStartDate(e.target.value)}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="reg-contract-end" className="block text-[10px] font-bold text-blue-200 uppercase tracking-wider mb-1">{t('login.contractEnd')}</label>
+                    <input
+                      id="reg-contract-end"
+                      type="date"
+                      value={contractEndDate}
+                      onChange={e => setContractEndDate(e.target.value)}
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="reg-loa-file" className="block text-[10px] font-bold text-blue-200 uppercase tracking-wider mb-1">{t('login.loaDocument')}</label>
+                  <input
+                    id="reg-loa-file"
+                    type="file"
+                    accept=".pdf,.doc,.docx"
+                    onChange={e => setLoaFile(e.target.files?.[0] || null)}
+                    aria-label={t('login.loaDocument')}
+                    className="w-full text-xs text-blue-200 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 file:cursor-pointer cursor-pointer"
+                    required
+                  />
+                  <p className="text-[9px] text-blue-200/70 mt-1">{t('login.loaDocumentHint')}</p>
+                </div>
               </>
             )}
 
