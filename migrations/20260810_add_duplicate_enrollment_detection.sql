@@ -57,7 +57,12 @@ begin
         profile_name text,
         template jsonb
     ) on commit drop;
-    delete from _tmp_enrollment_templates;
+    -- 🟩 FIX: this project's database rejects a bare DELETE with no WHERE
+    -- clause ("DELETE requires a WHERE clause") -- surfaced as a live 400
+    -- the first time a supervisor actually clicked "Check for Duplicates".
+    -- TRUNCATE is also the semantically correct statement for "empty this
+    -- temp table" (faster than DELETE too) and isn't subject to that guard.
+    truncate _tmp_enrollment_templates;
 
     -- One row per (employee, template) -- handles both legacy single-
     -- template enrollment (a flat 128-number array) and multi-angle
