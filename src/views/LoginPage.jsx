@@ -15,6 +15,7 @@ import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
+import { detectAutomation } from '../vision/automationDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
@@ -119,6 +120,13 @@ export default function LoginPage() {
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false); // 🟩 NEW: drives a retry button -- a failed model load used to leave the user permanently stuck with only a status-pill message and no way forward but a full page reload
   const [modelLoadAttempt, setModelLoadAttempt] = useState(0); // 🟩 NEW: bumping this re-runs the model-load effect, giving the retry button something to trigger
   const [cameraError, setCameraError] = useState(null); // 🟩 NEW: null | 'denied' | 'not-found' | 'busy' | 'unsupported' | 'unknown'
+  // 🟩 ANTI-AUTOMATION: computed once at mount (navigator.webdriver doesn't
+  // change mid-session) -- see vision/automationDetector.js. Blocks the
+  // face-scan gate entirely rather than folding into the liveness fusion,
+  // since this asks a different question (is the browser itself remote-
+  // controlled?) with a near-zero false-positive signal, unlike the noisier
+  // per-frame heuristics that fusion combines.
+  const [automationDetected] = useState(() => detectAutomation().suspicious);
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
   const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
 
@@ -166,6 +174,15 @@ export default function LoginPage() {
 
     async function startVideo() {
       setCameraError(null);
+
+      if (automationDetected) {
+        // Don't even request camera access for a WebDriver-controlled
+        // session -- there's no legitimate reason for an automated browser
+        // to need the live feed, and not asking avoids an unnecessary
+        // permission prompt on top of the block itself.
+        setBiometricStatus(t('login.statusAutomationBlocked'));
+        return;
+      }
 
       if (!navigator.mediaDevices?.getUserMedia) {
         // Very old browser, or a non-secure (http, non-localhost) context —
@@ -797,6 +814,18 @@ export default function LoginPage() {
             className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
+
+          {/* 🟩 ANTI-AUTOMATION: a WebDriver-controlled session gets a clear,
+              specific block instead of a stuck/confusing camera prompt --
+              the fix (use the password fields already on screen) is stated
+              directly since there's nothing to retry here. */}
+          {automationDetected && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+              <span className="text-2xl" aria-hidden="true">🤖🚫</span>
+              <h4 className="text-[11px] font-bold text-white leading-tight">{t('login.automationBlockedTitle')}</h4>
+              <p className="text-[9px] text-slate-400 leading-relaxed">{t('login.automationBlockedBody')}</p>
+            </div>
+          )}
 
           {/* 🟩 CAMERA FALLBACK: covers the (black/empty) video circle with an
               actionable, specific message instead of leaving it silently

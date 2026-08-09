@@ -30,6 +30,7 @@ import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
+import { detectAutomation } from '../vision/automationDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
@@ -184,6 +185,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // UI can tell the employee what to actually do about it, instead of the
     // scan panel just silently sitting there forever.
     const [cameraError, setCameraError] = useState(null);
+    // 🟩 ANTI-AUTOMATION: computed once at mount -- see vision/automationDetector.js
+    // and LoginPage.jsx's identical check for the full rationale (blocks a
+    // WebDriver-controlled session from the face-scan gate entirely, near-zero
+    // false-positive signal, doesn't affect the manual clock-in button).
+    const [automationDetected] = useState(() => detectAutomation().suspicious);
     // 🟩 MITIGATION: the neural model loader below previously had no
     // try/catch at all -- a failed model fetch (flaky network, CDN hiccup)
     // threw an unhandled promise rejection with zero user-facing feedback;
@@ -730,6 +736,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             setCameraStatus('loading');
             setCameraError(null);
 
+            if (automationDetected) {
+                // Don't request camera access at all for a WebDriver-
+                // controlled session -- the manual "Clock In Shift" button
+                // still works (it doesn't depend on the camera), only the
+                // face-scan gate is blocked.
+                setCameraStatus('error');
+                return;
+            }
+
             if (!navigator.mediaDevices?.getUserMedia) {
                 // Very old browser, or a non-secure (http, non-localhost) context —
                 // getUserMedia is unavailable entirely rather than throwing.
@@ -770,7 +785,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             isCancelled = true;
             if (stream) stream.getTracks().forEach(track => track.stop());
         };
-    }, [userProfile]);
+    }, [userProfile, automationDetected]);
 
     // ==========================================
     // NEURAL MODEL ENGINE WEIGHT LOADER
@@ -1829,6 +1844,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     className="absolute inset-0 w-full h-full object-cover"
                                     style={{ transform: 'scaleX(-1)' }}
                                 />
+
+                                {/* 🟩 ANTI-AUTOMATION: a WebDriver-controlled session gets a clear,
+                                    specific block instead of a stuck camera prompt -- manual clock-in
+                                    (doesn't need the camera) is still available. */}
+                                {automationDetected && (
+                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-white dark:bg-slate-950/95 text-center p-6">
+                                        <span className="text-3xl" aria-hidden="true">🤖🚫</span>
+                                        <h4 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.automationBlockedTitle')}</h4>
+                                        <p className="text-[11px] text-gray-500 dark:text-slate-400 max-w-xs leading-relaxed">{t('attendance.automationBlockedBody')}</p>
+                                    </div>
+                                )}
 
                                 {/* 🟩 CAMERA FALLBACK: covers the (empty/black) video element with an
                                     actionable message instead of leaving the panel silently stuck. */}
