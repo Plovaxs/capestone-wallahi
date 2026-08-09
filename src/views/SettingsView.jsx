@@ -46,7 +46,7 @@ const SettingsView = ({
 
     // --- SUPERVISOR-ONLY: STAFF DEPARTMENT / CONTRACT ASSIGNMENT ---
     const [editingStaffId, setEditingStaffId] = useState(null);
-    const [staffEditDraft, setStaffEditDraft] = useState({ department: '', contract_start_date: '', contract_end_date: '' });
+    const [staffEditDraft, setStaffEditDraft] = useState({ department: '', position: '', job_desk: '', contract_start_date: '', contract_end_date: '' });
     const [savingStaffId, setSavingStaffId] = useState(null);
     const [isSavingPassword, setIsSavingPassword] = useState(false);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
@@ -176,6 +176,8 @@ const SettingsView = ({
                 .from('profiles')
                 .update({
                     department: staffEditDraft.department || null,
+                    position: staffEditDraft.position || null,
+                    job_desk: staffEditDraft.job_desk || null,
                     contract_start_date: staffEditDraft.contract_start_date || null,
                     contract_end_date: staffEditDraft.contract_end_date || null,
                 })
@@ -222,6 +224,10 @@ const SettingsView = ({
                         <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.myAssignmentDescription')}</p>
                         <div className="flex flex-col sm:flex-row gap-6 text-xs">
                             <div className="space-y-1">
+                                <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.position')}</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.position || t('settings.notAssignedYet')}</span>
+                            </div>
+                            <div className="space-y-1">
                                 <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.department')}</span>
                                 <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.department || t('settings.notAssignedYet')}</span>
                             </div>
@@ -234,6 +240,12 @@ const SettingsView = ({
                                 </span>
                             </div>
                         </div>
+                        {userProfile.job_desk && (
+                            <div className="mt-4 space-y-1 text-xs">
+                                <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.jobDesk')}</span>
+                                <span className="font-medium text-gray-700 dark:text-gray-300 leading-relaxed">{userProfile.job_desk}</span>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -340,7 +352,7 @@ const SettingsView = ({
                                     <div>
                                         <p className="font-bold text-sm text-gray-800 dark:text-gray-100">{emp.name}</p>
                                         <p className="text-[11px] text-gray-400">
-                                            {emp.department || t('settings.noDepartment')} &middot; {emp.contract_start_date && emp.contract_end_date
+                                            {emp.position || t('settings.noPosition')} &middot; {emp.department || t('settings.noDepartment')} &middot; {emp.contract_start_date && emp.contract_end_date
                                                 ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
                                                 : t('settings.noContractDates')}
                                         </p>
@@ -352,6 +364,8 @@ const SettingsView = ({
                                                 setEditingStaffId(emp.id);
                                                 setStaffEditDraft({
                                                     department: emp.department || '',
+                                                    position: emp.position || '',
+                                                    job_desk: emp.job_desk || '',
                                                     contract_start_date: emp.contract_start_date || '',
                                                     contract_end_date: emp.contract_end_date || '',
                                                 });
@@ -376,6 +390,16 @@ const SettingsView = ({
                                             />
                                         </div>
                                         <div className="space-y-1">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.position')}</label>
+                                            <input
+                                                type="text"
+                                                value={staffEditDraft.position}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, position: e.target.value }))}
+                                                placeholder={t('settings.positionPlaceholder')}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.contractStart')}</label>
                                             <input
                                                 type="date"
@@ -391,6 +415,16 @@ const SettingsView = ({
                                                 value={staffEditDraft.contract_end_date}
                                                 onChange={(e) => setStaffEditDraft(d => ({ ...d, contract_end_date: e.target.value }))}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="space-y-1 sm:col-span-3">
+                                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.jobDesk')}</label>
+                                            <textarea
+                                                value={staffEditDraft.job_desk}
+                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, job_desk: e.target.value }))}
+                                                placeholder={t('settings.jobDeskPlaceholder')}
+                                                rows={2}
+                                                className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none resize-none"
                                             />
                                         </div>
                                         <div className="sm:col-span-3 flex gap-2 justify-end mt-1">

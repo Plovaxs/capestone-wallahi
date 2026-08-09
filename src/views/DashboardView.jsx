@@ -53,6 +53,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         contractInfo: true,
         leaderboard: true,
         individualTrend: true,
+        outsourceDirectory: true,
     };
     const [widgets, setWidgets] = useState(() => {
         const saved = localStorage.getItem('dashboard_widgets');
@@ -74,7 +75,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // slot that can be shown/hidden (widgets state above) AND reordered
     // (widgetOrder below) at runtime — a small plugin-registry flavor
     // instead of a fixed hardcoded layout. Order is persisted per-browser. ---
-    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'chartsGrid', 'recentReviews'];
+    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'outsourceDirectory', 'chartsGrid', 'recentReviews'];
     const [widgetOrder, setWidgetOrder] = useState(() => {
         const saved = localStorage.getItem('dashboard_widget_order');
         if (!saved) return DEFAULT_WIDGET_ORDER;
@@ -315,6 +316,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                             <input type="checkbox" checked={widgets.individualTrend} onChange={() => toggleWidget('individualTrend')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
                                             <span>{t('dashboard.individualTrend')}</span>
                                         </label>
+                                        <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                            <input type="checkbox" checked={widgets.outsourceDirectory} onChange={() => toggleWidget('outsourceDirectory')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                            <span>{t('dashboard.outsourceDirectory')}</span>
+                                        </label>
                                     </>
                                 )}
                             </div>
@@ -469,6 +474,54 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         </div>
                     ) : (
                         <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noLeaderboardData')}</p>
+                    )}
+                </div>
+            )}
+
+            {/* --- OUTSOURCE DIRECTORY: who's on assignment, from where, doing
+                what -- the actual purpose of an outsourcing management
+                dashboard is knowing this at a glance, not just attendance/task
+                metrics. Read-only here; editable via Settings > Manage Staff
+                Assignments (position/department/job desk/contract dates). --- */}
+            {widgets.outsourceDirectory && userProfile.role === 'supervisor' && (
+                <div style={{ order: orderOf('outsourceDirectory') }} className="bg-white rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60 overflow-hidden">
+                    <div className="p-5 pb-0">
+                        <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.outsourceDirectory')}</h2>
+                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.outsourceDirectoryDescription')}</p>
+                    </div>
+                    {employeeUsers.length > 0 ? (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                                <thead>
+                                    <tr className="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider border-y border-gray-100 dark:border-gray-700/60 bg-gray-50/60 dark:bg-gray-900/30">
+                                        <th className="px-4 py-2.5">{t('dashboard.colStaffName')}</th>
+                                        <th className="px-4 py-2.5">{t('dashboard.colInstitution')}</th>
+                                        <th className="px-4 py-2.5">{t('dashboard.colPosition')}</th>
+                                        <th className="px-4 py-2.5">{t('dashboard.colDepartment')}</th>
+                                        <th className="px-4 py-2.5">{t('dashboard.colDutyMode')}</th>
+                                        <th className="px-4 py-2.5">{t('dashboard.colContractPeriod')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                                    {[...employeeUsers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((emp) => (
+                                        <tr key={emp.id} className="text-gray-700 dark:text-gray-300 hover:bg-gray-50/60 dark:hover:bg-gray-900/20">
+                                            <td className="px-4 py-2.5 font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap">{emp.name}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">{emp.source || emp.university || t('dashboard.notSet')}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap" title={emp.job_desk || ''}>{emp.position || t('dashboard.notSet')}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">{emp.department || t('dashboard.notSet')}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">{(emp.work_mode || 'WFO') === 'WFO' ? t('dashboard.dutyModeOffice') : t('dashboard.dutyModeRemote')}</td>
+                                            <td className="px-4 py-2.5 whitespace-nowrap">
+                                                {emp.contract_start_date && emp.contract_end_date
+                                                    ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
+                                                    : t('dashboard.notSet')}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noEmployeesFound')}</p>
                     )}
                 </div>
             )}
