@@ -550,6 +550,8 @@
     "diagMotion": "Motion Sensor",
     "diagPixelLiveness": "Pixel Liveness",
     "diagColorLiveness": "Color Liveness",
+    "diagPulse": "Pulse Signal (rPPG)",
+    "diagDetected": "Detected",
     "diagWarming": "Warming up",
     "diagNoSensor": "Unavailable",
     "diagStable": "Stable",

@@ -13,6 +13,7 @@ import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
@@ -103,6 +104,15 @@ export default function LoginPage() {
   // the other. See vision/livenessFusion.js for why the passive gate
   // alone was insufficient.
   const livenessChallengeRef = useRef(new RandomLivenessChallenge());
+  // 🟩 rPPG PULSE LIVENESS: same additional biometric vote as Attendance --
+  // see vision/pulseDetector.js. Fed by a separate ~20Hz sampling loop
+  // (decoupled from this page's 350ms detectTick, too slow by Nyquist for
+  // a 42-210 BPM signal); latestFaceBoxRef mirrors faceOverlayBox state
+  // into a ref so that loop always reads the current box without
+  // restarting itself on every (much more frequent) state update.
+  const pulseDetectorRef = useRef(createPulseDetector());
+  const latestFaceBoxRef = useRef(null);
+  const pulseCanvasRef = useRef(null);
   const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -283,6 +293,7 @@ export default function LoginPage() {
           setFaceOverlayBox(null);
           microMotionTrackerRef.current.reset();
           livenessChallengeRef.current.reset();
+          pulseDetectorRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
           return;
         }
@@ -323,6 +334,7 @@ export default function LoginPage() {
         if (qualityIssue) {
           microMotionTrackerRef.current.reset();
           livenessChallengeRef.current.reset();
+          pulseDetectorRef.current.reset();
           setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
           return;
         }
@@ -381,11 +393,13 @@ export default function LoginPage() {
           Math.min(Math.round(box.height + marginY * 2), height)
         );
         const textureCheck = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height);
+        const pulseStats = pulseDetectorRef.current.getStats();
         const passiveVote = evaluatePassiveLiveness({
           borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
           pixelFlat: microMotionStats.isSuspiciouslyFlat,
           colorSuspicious: colorLiveness.suspicious,
           textureFlat: textureCheck.suspicious,
+          pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
         });
 
         if (passiveVote.suspicious) {
@@ -412,6 +426,7 @@ export default function LoginPage() {
         setBiometricStatus(t('login.statusLivenessVerified'));
         await executeBiometricLogin(detection.descriptor);
         livenessChallengeRef.current.reset();
+        pulseDetectorRef.current.reset();
       } catch (err) {
         console.error('Face detection error:', err);
         // 🟩 MITIGATION: a repeatedly-throwing detection loop (WebGL context
@@ -439,8 +454,52 @@ export default function LoginPage() {
       if (intervalId) clearInterval(intervalId);
       microMotionTrackerRef.current.reset();
       livenessChallengeRef.current.reset();
+      pulseDetectorRef.current.reset();
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);
+
+  // Keeps latestFaceBoxRef in sync with the box the detectTick loop above
+  // just computed, so the fast pulse sampling loop below always reads a
+  // current box without restarting itself every 350ms.
+  useEffect(() => {
+    latestFaceBoxRef.current = faceOverlayBox;
+  }, [faceOverlayBox]);
+
+  // rPPG PULSE SAMPLING LOOP (~20Hz) -- see AttendanceView.jsx's identical
+  // effect for the full rationale; only runs in login mode (register mode's
+  // capture-on-submit doesn't need continuous liveness).
+  useEffect(() => {
+    if (!modelsLoaded || authMode !== 'login') return;
+
+    const PULSE_SAMPLE_INTERVAL_MS = 50;
+    const timer = setInterval(() => {
+      const box = latestFaceBoxRef.current;
+      const video = videoRef.current;
+      if (!box || !video || video.readyState < 2) return;
+
+      try {
+        if (!pulseCanvasRef.current) {
+          pulseCanvasRef.current = document.createElement('canvas');
+          pulseCanvasRef.current.width = 24;
+          pulseCanvasRef.current.height = 24;
+        }
+        const canvas = pulseCanvasRef.current;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const sx = box.x + box.width * 0.25;
+        const sy = box.y + box.height * 0.15;
+        const sw = box.width * 0.5;
+        const sh = box.height * 0.3;
+        if (sw <= 0 || sh <= 0) return;
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 24, 24);
+        const region = ctx.getImageData(0, 0, 24, 24);
+        pulseDetectorRef.current.addSample(calculateAverageGreenChannel(region.data), Date.now());
+      } catch (_err) {
+        // getImageData can throw on a tainted canvas in some browsers -- non-critical signal, skip this tick.
+      }
+    }, PULSE_SAMPLE_INTERVAL_MS);
+
+    return () => clearInterval(timer);
+  }, [modelsLoaded, authMode]);
 
   // Video is `object-cover`-scaled into the circular viewport and mirrored
   // via CSS -- shared with AttendanceView (vision/faceOverlayGeometry.js)

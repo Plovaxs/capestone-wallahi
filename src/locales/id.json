@@ -550,6 +550,8 @@
     "diagMotion": "Sensor Gerak",
     "diagPixelLiveness": "Liveness Piksel",
     "diagColorLiveness": "Liveness Warna",
+    "diagPulse": "Sinyal Detak Jantung (rPPG)",
+    "diagDetected": "Terdeteksi",
     "diagWarming": "Memanaskan",
     "diagNoSensor": "Tidak tersedia",
     "diagStable": "Stabil",

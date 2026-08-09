@@ -57,6 +57,11 @@ const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensor
                 ok={sensorDiagnostics.colorPlausible}
             />
             <DiagnosticTile
+                label={t('attendance.diagPulse')}
+                value={!sensorDiagnostics.pulseReady ? t('attendance.diagWarming') : sensorDiagnostics.pulsePlausible ? t('attendance.diagDetected') : t('attendance.diagFlagged')}
+                ok={!sensorDiagnostics.pulseReady || sensorDiagnostics.pulsePlausible}
+            />
+            <DiagnosticTile
                 label={t('attendance.diagNetwork')}
                 value={sensorDiagnostics.networkEffectiveType ? sensorDiagnostics.networkEffectiveType.toUpperCase() : t('attendance.diagUnknown')}
                 ok={!sensorDiagnostics.isSlowNetwork}

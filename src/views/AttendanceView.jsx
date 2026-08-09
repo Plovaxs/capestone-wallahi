@@ -29,6 +29,7 @@ import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
+import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
 import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
@@ -239,6 +240,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // request, the occasional couple of extra seconds is an accepted
     // trade-off for closing that gap.
     const livenessChallengeRef = useRef(new RandomLivenessChallenge());
+    // 🟩 rPPG PULSE LIVENESS: an additional, independent biometric vote --
+    // see vision/pulseDetector.js for the full rationale. Deliberately
+    // decoupled from the main ~1.2s scan tick below (a pulse needs ~20Hz
+    // sampling); a separate fast interval (see the "PULSE SAMPLING LOOP"
+    // effect further down) feeds it instead. latestFaceBoxRef mirrors
+    // faceOverlayBox state into a ref so that fast loop always reads the
+    // current box without needing to tear down/recreate itself every time
+    // the (much slower) main tick updates it. pulseCanvasRef is a single
+    // reused small canvas (not reallocated 20x/sec) for the cheap
+    // crop+downscale read.
+    const pulseDetectorRef = useRef(createPulseDetector());
+    const latestFaceBoxRef = useRef(null);
+    const pulseCanvasRef = useRef(null);
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -260,6 +274,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         microMotionReady: false,
         microMotionStable: true,
         colorPlausible: true,
+        pulseReady: false,
+        pulsePlausible: true,
     });
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -1017,6 +1033,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
                                     const colorSuspicious = latestColorLivenessRef.current.suspicious;
                                     const textureSuspicious = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious;
+                                    // 🟩 rPPG: fed by the separate fast sampling loop above (see
+                                    // "PULSE SAMPLING LOOP") -- only counts as a vote once its
+                                    // buffer has actually accumulated enough of a window to make
+                                    // a call either way (~2s), same "don't vote on an incomplete
+                                    // read" treatment as the device/pixel-motion trackers.
+                                    const pulseStats = pulseDetectorRef.current.getStats();
+                                    const pulseSuspicious = pulseStats.ready && !pulseStats.hasPlausiblePulse;
 
                                     setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                         && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -1035,6 +1058,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         pixelFlat: microMotionStats.ready ? pixelFlat : null,
                                         colorSuspicious,
                                         textureFlat: textureSuspicious,
+                                        pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
                                     }).suspicious;
 
                                     if (!livenessSuspicious) {
@@ -1063,6 +1087,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 } else {
                                     guardRef.current = true;
                                     livenessChallengeRef.current.reset();
+                                    pulseDetectorRef.current.reset();
                                     clearInterval(timer);
 
                                     if (clockingOutNow) {
@@ -1085,6 +1110,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             }
                         } else {
                             livenessChallengeRef.current.reset(); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
+                            pulseDetectorRef.current.reset(); // don't mix pulse samples across different faces either
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
                             setBiometricStatus(bucketExhausted ? t('attendance.statusTooManyAttempts') : t('attendance.statusNotRecognized'));
                         }
@@ -1097,6 +1123,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     latestColorLivenessRef.current = { suspicious: false };
                     livenessChallengeRef.current.reset();
+                    pulseDetectorRef.current.reset();
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
@@ -1126,6 +1153,67 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut]);
+
+    // Keeps latestFaceBoxRef in sync with the box the main scan loop above
+    // (or the enrollment loop below) just computed, so the fast pulse
+    // sampling loop always reads a current box without restarting itself
+    // every time it changes (see pulseDetectorRef's declaration comment).
+    useEffect(() => {
+        latestFaceBoxRef.current = faceOverlayBox;
+    }, [faceOverlayBox]);
+
+    // ==========================================
+    // rPPG PULSE SAMPLING LOOP (~20Hz)
+    // Deliberately separate from the ~1.2s main scan tick above -- resolving
+    // a 42-210 BPM signal needs sampling well above that rate. Only reads a
+    // small, already-known face-box crop (no face detection, no matching)
+    // so it stays cheap enough to run continuously. Skipped on constrained
+    // devices (same disableYolo signal the main loop already uses to shed
+    // load) and for supervisors (who never run the scan loop at all).
+    // ==========================================
+    useEffect(() => {
+        if (!isCameraReady || !isTabVisible || disableYolo || userProfile.role === 'supervisor') return;
+
+        const PULSE_SAMPLE_INTERVAL_MS = 50; // ~20Hz -- well above the Nyquist rate for a <=3.5Hz (210 BPM) signal
+        const timer = setInterval(() => {
+            const box = latestFaceBoxRef.current;
+            const video = webcamVideoRef.current;
+            if (!box || !video || video.readyState < 2) return;
+
+            try {
+                if (!pulseCanvasRef.current) {
+                    pulseCanvasRef.current = document.createElement('canvas');
+                    pulseCanvasRef.current.width = 24;
+                    pulseCanvasRef.current.height = 24;
+                }
+                const canvas = pulseCanvasRef.current;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                // Center forehead/upper-cheek region of the box -- standard
+                // rPPG ROI choice (large, relatively motion-still, well-
+                // vascularized skin, avoids eyes/mouth movement artifacts).
+                // The source-rectangle drawImage overload crops AND
+                // downscales to the small canvas in one cheap GPU-backed call.
+                const sx = box.x + box.width * 0.25;
+                const sy = box.y + box.height * 0.15;
+                const sw = box.width * 0.5;
+                const sh = box.height * 0.3;
+                if (sw <= 0 || sh <= 0) return;
+                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 24, 24);
+                const region = ctx.getImageData(0, 0, 24, 24);
+                const avgGreen = calculateAverageGreenChannel(region.data);
+                pulseDetectorRef.current.addSample(avgGreen, Date.now());
+
+                const pulseStats = pulseDetectorRef.current.getStats();
+                setSensorDiagnostics((prev) => (prev.pulseReady === pulseStats.ready && prev.pulsePlausible === pulseStats.hasPlausiblePulse
+                    ? prev
+                    : { ...prev, pulseReady: pulseStats.ready, pulsePlausible: pulseStats.hasPlausiblePulse }));
+            } catch (_err) {
+                // getImageData can throw on a tainted canvas in some browsers -- non-critical signal, skip this tick.
+            }
+        }, PULSE_SAMPLE_INTERVAL_MS);
+
+        return () => clearInterval(timer);
+    }, [isCameraReady, isTabVisible, disableYolo, userProfile.role]);
 
     // ==========================================
     // MULTI-ANGLE ENROLLMENT WIZARD SCAN LOOP
