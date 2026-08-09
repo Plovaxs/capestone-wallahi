@@ -28,6 +28,8 @@
     "updateAssignment": "Gagal menyimpan penugasan itu",
     "createTask": "Gagal membuat tugas",
     "updateTask": "Gagal menyimpan perubahan tugas",
+    "fetchErrorLogs": "Gagal memuat log error",
+    "deleteErrorLogs": "Gagal menghapus entri log error itu",
     "updateTaskStatus": "Gagal memperbarui status tugas",
     "bulkApproveTasks": "Gagal menyetujui tugas-tugas itu",
     "submitTask": "Gagal mengirim tugas",
@@ -685,6 +687,7 @@
     "contributions": "Kontribusi",
     "helpdesk": "Helpdesk",
     "performance": "Kinerja",
+    "errorMonitor": "Pemantau Error",
     "settings": "Pengaturan",
     "menu": "Menu"
   },
@@ -879,5 +882,31 @@
     "desktopNotificationsEnabled": "Notifikasi desktop sudah aktif.",
     "desktopNotificationsDenied": "Notifikasi desktop diblokir — kamu bisa mengaktifkannya lagi di pengaturan situs browser.",
     "desktopNotificationsUnsupported": "Notifikasi desktop tidak didukung di browser ini."
+  },
+  "errorMonitor": {
+    "title": "Pemantau Error",
+    "subtitle": "Crash sisi klien dan request yang gagal di seluruh aplikasi — self-hosted, cuma bisa dilihat supervisor, tanpa perlu akun pihak ketiga.",
+    "supervisorOnly": "Halaman ini cuma tersedia untuk supervisor.",
+    "clearAll": "Hapus semua",
+    "clearing": "Menghapus...",
+    "confirmClearAll": "Hapus semua {{count}} error yang tercatat? Tindakan ini tidak bisa dibatalkan.",
+    "clearedSuccess": "Log error berhasil dibersihkan.",
+    "statTotal": "Total (terbaru)",
+    "statLast24h": "24 jam terakhir",
+    "statLast7d": "7 hari terakhir",
+    "statUnique": "Pesan unik",
+    "trendTitle": "Error per hari (14 hari terakhir)",
+    "searchPlaceholder": "Cari berdasarkan pesan, user, atau URL...",
+    "loading": "Memuat log error...",
+    "noErrors": "Tidak ada error tercatat. 🎉",
+    "unknownUser": "User tidak diketahui",
+    "dismiss": "Hapus",
+    "detailsTitle": "Detail error",
+    "message": "Pesan",
+    "timestamp": "Waktu",
+    "user": "User",
+    "url": "URL",
+    "stackTrace": "Stack Trace",
+    "userAgent": "User Agent"
   }
 }

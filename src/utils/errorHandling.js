@@ -1,5 +1,6 @@
 import toast from 'react-hot-toast';
 import i18n from '../i18n';
+import { reportClientError } from '../monitoring/errorReporter';
 
 /**
  * Logs the real error for debugging and shows the user a generic,
@@ -23,4 +24,9 @@ import i18n from '../i18n';
 export const showUserError = (contextKey, error) => {
   console.error(contextKey, error);
   toast.error(`${i18n.t(contextKey)}. ${i18n.t('common.tryAgainOrContactSupport')}`, { duration: 7000 });
+  reportClientError({
+    message: error?.message || String(error),
+    stack: error?.stack,
+    context: { source: 'showUserError', contextKey },
+  });
 };

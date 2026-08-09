@@ -28,6 +28,8 @@
     "updateAssignment": "Couldn't save that assignment",
     "createTask": "Couldn't create the task",
     "updateTask": "Couldn't save those task changes",
+    "fetchErrorLogs": "Couldn't load the error log",
+    "deleteErrorLogs": "Couldn't delete that error log entry",
     "updateTaskStatus": "Couldn't update the task status",
     "bulkApproveTasks": "Couldn't approve those tasks",
     "submitTask": "Couldn't submit the task",
@@ -685,6 +687,7 @@
     "contributions": "Contributions",
     "helpdesk": "Helpdesk",
     "performance": "Performance",
+    "errorMonitor": "Error Monitor",
     "settings": "Settings",
     "menu": "Menu"
   },
@@ -879,5 +882,31 @@
     "desktopNotificationsEnabled": "Desktop notifications are enabled.",
     "desktopNotificationsDenied": "Desktop notifications were blocked — you can re-enable them in your browser's site settings.",
     "desktopNotificationsUnsupported": "Desktop notifications aren't supported in this browser."
+  },
+  "errorMonitor": {
+    "title": "Error Monitor",
+    "subtitle": "Client-side crashes and failed requests across the app — self-hosted, supervisor-only visibility, no third-party account needed.",
+    "supervisorOnly": "This page is only available to supervisors.",
+    "clearAll": "Clear all",
+    "clearing": "Clearing...",
+    "confirmClearAll": "Delete all {{count}} logged error(s)? This can't be undone.",
+    "clearedSuccess": "Error log cleared.",
+    "statTotal": "Total (recent)",
+    "statLast24h": "Last 24h",
+    "statLast7d": "Last 7 days",
+    "statUnique": "Unique messages",
+    "trendTitle": "Errors per day (last 14 days)",
+    "searchPlaceholder": "Search by message, user, or URL...",
+    "loading": "Loading error log...",
+    "noErrors": "No errors logged. 🎉",
+    "unknownUser": "Unknown user",
+    "dismiss": "Dismiss",
+    "detailsTitle": "Error details",
+    "message": "Message",
+    "timestamp": "Timestamp",
+    "user": "User",
+    "url": "URL",
+    "stackTrace": "Stack Trace",
+    "userAgent": "User Agent"
   }
 }

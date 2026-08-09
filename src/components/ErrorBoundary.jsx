@@ -1,4 +1,5 @@
 import React from 'react';
+import { reportClientError } from '../monitoring/errorReporter';
 
 /**
  * Top-level crash guard. Without this, an uncaught render error anywhere in
@@ -18,6 +19,11 @@ class ErrorBoundary extends React.Component {
 
     componentDidCatch(error, info) {
         console.error('Uncaught render error:', error, info);
+        reportClientError({
+            message: error?.message || String(error),
+            stack: error?.stack,
+            context: { source: 'ErrorBoundary', componentStack: info?.componentStack?.slice(0, 2000) },
+        });
     }
 
     render() {
