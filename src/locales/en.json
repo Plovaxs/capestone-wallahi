@@ -514,6 +514,7 @@
     "statusMissingProfile": "Missing Face Profile Data",
     "statusAccessDenied": "ACCESS DENIED: Outside office range!",
     "statusMatchVerified": "Match verified! Logging attendance...",
+    "autoClockInSuccess": "✅ Clocked in automatically via face login",
     "statusLivenessSuspicious": "Face matched, but the feed looks suspiciously static — hold on a moment...",
     "statusAwaitingBlink": "Face matched — please blink to confirm you're not a photo",
     "statusAwaitingHeadTurn": "Face matched — please turn your head slightly to confirm you're not a photo",

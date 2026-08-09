@@ -9,6 +9,7 @@ import SortableTh from '../components/SortableTh';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { showUserError } from '../utils/errorHandling';
 import { getServerNow } from '../utils/serverTime';
+import { performClockIn } from '../domain/attendanceClockIn';
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
@@ -22,6 +23,7 @@ import ScanReadinessBar from '../components/ScanReadinessBar';
 import { saveEnrollmentProgress, loadEnrollmentProgress, clearEnrollmentProgress } from '../vision/enrollmentProgress';
 import { isTorchSupported, setTorch } from '../utils/torchControl';
 import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
+import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from '../geo/officeGeofence';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
@@ -281,9 +283,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const attendanceRows = Array.isArray(attendance) ? attendance : [];
     const todayRecord = attendanceRows.find(record => record.employee_id === userProfile.id && record.date === today);
 
-    const WORK_START_TIME = '08:00:00'; 
-    const OFFICE_LOCATION = { lat: -6.20651363, lng: 106.87604852 };
-    const ALLOWED_RADIUS_METERS = 100; 
 
     const webcamVideoRef = useRef(null);
     const referenceDescriptorRef = useRef(null);
@@ -590,12 +589,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const { latitude, longitude } = position.coords;
                     setCurrentCoords({ latitude, longitude });
 
-                    const earthRadius = 6371000;
-                    const dLat = (OFFICE_LOCATION.lat - latitude) * Math.PI / 180;
-                    const dLon = (OFFICE_LOCATION.lng - longitude) * Math.PI / 180;
-                    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(latitude * Math.PI / 180) * Math.cos(OFFICE_LOCATION.lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                    const dist = earthRadius * c;
+                    const dist = calculateDistanceMeters(latitude, longitude, OFFICE_LOCATION.lat, OFFICE_LOCATION.lng);
 
                     setLiveDistance(dist);
 
@@ -622,7 +616,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         );
 
         return () => navigator.geolocation.clearWatch(watchId);
-    }, [userProfile, OFFICE_LOCATION.lat, OFFICE_LOCATION.lng]);
+    }, [userProfile]);
 
     // ==========================================
     // SENSOR FUSION: DEVICE MOTION STABILITY
@@ -1204,80 +1198,44 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // ==========================================
     const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: webcamVideoRef.current });
 
+    // 🟩 Delegates to domain/attendanceClockIn.js -- the same shared
+    // transaction App.jsx's clock-in-on-login shortcut now also calls, so
+    // the geofence gate, already-clocked-in guard, and server-clock-sourced
+    // punctuality decision can never quietly drift between the two entry
+    // points. This wrapper just owns the loading state and toast/i18n UI.
     const handleClockIn = async (source = 'manual') => {
-        if (userProfile.role !== 'supervisor' && !currentCoords) {
-            toast.error(t('attendance.gpsWaiting'));
-            return false;
-        }
-        if (userProfile.role !== 'supervisor' && !isInRange) {
-            toast.error(t('attendance.geofenceRejection'));
-            return false;
-        }
+        setIsLoading(true);
+        try {
+            const result = await performClockIn({ userProfile, coords: currentCoords, isInRange, today, source });
 
-        // 🟩 DOUBLE CLOCK-IN GUARD: the UI already disables this button once
-        // `todayRecord` is loaded, but that state can be stale — the same
-        // employee open in two browser tabs, or clocking in from a phone a
-        // moment after a desktop tab, both pass that check before either
-        // insert lands. Web Locks (where supported) serializes concurrent
-        // attempts *within this browser* across tabs; a fresh existence
-        // check right before the insert then closes most of what's left of
-        // the cross-device race window (can't fully close it without a DB
-        // unique constraint, which is out of scope here).
-        const runClockIn = async () => {
-            setIsLoading(true);
-            try {
-                const { data: existing, error: existingCheckError } = await supabase
-                    .from(ATTENDANCE_TABLE)
-                    .select('id')
-                    .eq('employee_id', userProfile.id)
-                    .eq('date', today)
-                    .maybeSingle();
-
-                if (existingCheckError) {
-                    showUserError('errors.recordAttendance', existingCheckError);
-                    return false;
+            if (!result.success) {
+                switch (result.reason) {
+                    case 'gps-waiting':
+                        toast.error(t('attendance.gpsWaiting'));
+                        break;
+                    case 'out-of-range':
+                        toast.error(t('attendance.geofenceRejection'));
+                        break;
+                    case 'already-clocked-in':
+                        toast.error(t('attendance.alreadyClockedInToday'));
+                        await fetchAttendance();
+                        break;
+                    case 'db-error':
+                        showUserError('errors.recordAttendance', result.error);
+                        break;
+                    default:
+                        break;
                 }
-                if (existing) {
-                    toast.error(t('attendance.alreadyClockedInToday'));
-                    await fetchAttendance();
-                    return false;
-                }
-
-                // 🟩 Uses the Supabase server's clock (via its response `Date`
-                // header), not the device's — otherwise punctuality is decided
-                // by a value the user's own OS clock controls, trivially
-                // spoofable by winding the system time back before clocking in.
-                const now = await getServerNow();
-                const time = now.toLocaleTimeString('en-GB', { hour12: false });
-                const status = time > WORK_START_TIME ? 'Late' : 'Present';
-
-                const { error } = await supabase.from(ATTENDANCE_TABLE).insert([{
-                    employee_id: userProfile.id,
-                    date: today,
-                    status,
-                    clock_in: time,
-                    latitude: currentCoords ? currentCoords.latitude : null,
-                    longitude: currentCoords ? currentCoords.longitude : null,
-                }]);
-
-                if (error) {
-                    showUserError('errors.recordAttendance', error);
-                    return false;
-                }
-
-                setClockInAt(time);
-                setClockInSource(source);
-                await fetchAttendance();
-                return true;
-            } finally {
-                setIsLoading(false);
+                return false;
             }
-        };
 
-        if (navigator.locks?.request) {
-            return navigator.locks.request(`attendance-clock-in-${userProfile.id}`, runClockIn);
+            setClockInAt(result.time);
+            setClockInSource(result.source);
+            await fetchAttendance();
+            return true;
+        } finally {
+            setIsLoading(false);
         }
-        return runClockIn();
     };
 
     const handleClockOut = async () => {

@@ -514,6 +514,7 @@
     "statusMissingProfile": "Data Profil Wajah Tidak Ada",
     "statusAccessDenied": "AKSES DITOLAK: Di luar area kantor!",
     "statusMatchVerified": "Wajah terverifikasi! Mencatat kehadiran...",
+    "autoClockInSuccess": "✅ Absen masuk otomatis lewat login wajah",
     "statusLivenessSuspicious": "Wajah cocok, tapi tampilannya terlalu statis — tunggu sebentar...",
     "statusAwaitingBlink": "Wajah cocok — mohon berkedip untuk konfirmasi bukan foto",
     "statusAwaitingHeadTurn": "Wajah cocok — mohon gelengkan kepala sedikit untuk konfirmasi bukan foto",

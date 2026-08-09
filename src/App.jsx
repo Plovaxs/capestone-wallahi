@@ -15,6 +15,9 @@ import { contributionsRepository } from './data/repositories/contributionsReposi
 import { helpdeskRepository } from './data/repositories/helpdeskRepository';
 import { reviewsRepository } from './data/repositories/reviewsRepository';
 import { notificationsRepository } from './data/repositories/notificationsRepository';
+import { performClockIn } from './domain/attendanceClockIn';
+import { consumeFaceVerifiedLoginFlag } from './domain/faceLoginClockInFlag';
+import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from './geo/officeGeofence';
 import { notificationDispatcher } from './patterns/notificationChannels/NotificationDispatcher';
 import { subscribeToTable } from './realtime/subscribeToTable';
 import { usePresence } from './realtime/usePresence';
@@ -322,6 +325,72 @@ export default function App() {
     setInitialDataLoaded(true);
   };
 
+  /**
+   * TRANSACTION: attemptAutoClockInAfterLogin
+   * PURPOSE: if this session was just established via a live, just-verified
+   * face scan (markFaceVerifiedLogin/consumeFaceVerifiedLoginFlag -- see
+   * domain/faceLoginClockInFlag.js) and the employee hasn't clocked in yet
+   * today, clock them in immediately instead of making them visit
+   * Attendance separately just to press essentially the same "verify my
+   * face" button again. Deliberately silent on every failure path
+   * (already clocked in, out of range, no GPS permission, db error) --
+   * this is a convenience shortcut layered on top of the real flow, not a
+   * replacement for it. Attendance's manual "Clock In Shift" button is
+   * kept exactly as-is for anyone who logs in with a password, whose
+   * auto clock-in didn't fire for some reason, or who just prefers it.
+   */
+  const attemptAutoClockInAfterLogin = async (profile) => {
+    if (!profile || profile.role !== 'employee') return;
+    if (!consumeFaceVerifiedLoginFlag()) return;
+
+    const today = new Date().toISOString().split('T')[0];
+
+    try {
+      // Cheap pre-check before touching geolocation at all -- avoids an
+      // unnecessary GPS permission prompt on a login where the employee
+      // already clocked in earlier today through some other route.
+      // performClockIn below still re-checks this itself right before its
+      // own insert (the actual race-safe guard); this is purely a
+      // fast-exit to skip the location step, not a correctness dependency.
+      const { data: existing } = await supabase
+        .from('attendance')
+        .select('id')
+        .eq('employee_id', profile.id)
+        .eq('date', today)
+        .maybeSingle();
+      if (existing) return;
+    } catch {
+      return;
+    }
+
+    const workMode = profile.work_mode || 'WFO';
+    let coords = null;
+    let isInRange = true;
+
+    if (workMode !== 'WFH') {
+      if (!navigator.geolocation) return;
+      try {
+        const position = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 8000 })
+        );
+        coords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+        const distance = calculateDistanceMeters(coords.latitude, coords.longitude, OFFICE_LOCATION.lat, OFFICE_LOCATION.lng);
+        isInRange = distance <= ALLOWED_RADIUS_METERS;
+      } catch {
+        // No location fix/permission -- silently skip. The employee can
+        // still clock in manually from Attendance, which will surface the
+        // same GPS/geofence states clearly if that's what's blocking them.
+        return;
+      }
+    }
+
+    const result = await performClockIn({ userProfile: profile, coords, isInRange, today, source: 'face-login' });
+    if (result.success) {
+      toast.success(t('attendance.autoClockInSuccess'));
+      fetchAttendance();
+    }
+  };
+
   // 🟩 OFFLINE QUEUE: registers how a queued "submitLeaveRequest" mutation
   // gets replayed once connectivity returns (see OfflineMutationQueue).
   useEffect(() => {
@@ -361,10 +430,12 @@ export default function App() {
   // stable primitive) instead means it only fires on an actual login or
   // user switch.
   useEffect(() => {
-    if (userProfile) loadAllAppData(userProfile);
+    if (userProfile) {
+      loadAllAppData(userProfile).then(() => attemptAutoClockInAfterLogin(userProfile));
+    }
     // Intentional: only re-run when the logged-in user actually changes.
-    // loadAllAppData isn't memoized, so including it would refetch
-    // everything on every render.
+    // loadAllAppData/attemptAutoClockInAfterLogin aren't memoized, so
+    // listing them would refetch everything on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 

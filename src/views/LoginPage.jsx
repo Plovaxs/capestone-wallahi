@@ -13,6 +13,7 @@ import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
@@ -508,6 +509,13 @@ export default function LoginPage() {
      return;
    }
    // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
+
+   // 🟩 CLOCK-IN-ON-LOGIN: signals to App.jsx that this session came from a
+   // live, just-verified face scan (not a restored session or a password
+   // login), so it can auto clock the employee in for today without a
+   // separate trip to Attendance -- see domain/faceLoginClockInFlag.js and
+   // App.jsx's attemptAutoClockInAfterLogin.
+   markFaceVerifiedLogin();
   };
 
   const handleSubmit = async (e) => {
