@@ -10,6 +10,7 @@ import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { showUserError } from '../utils/errorHandling';
 import { getServerNow } from '../utils/serverTime';
 import { performClockIn } from '../domain/attendanceClockIn';
+import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
@@ -1155,6 +1156,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             toast(t('attendance.reEnrollSuggestion'), { icon: '🔄', duration: 6000 });
                                         }
 
+                                        reportDeviceHealthSnapshot();
                                         await handleClockIn('face-match');
                                     }
                                 }
@@ -1336,6 +1338,29 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // MATHEMATICAL MATRIX POSITION CALCULATOR
     // ==========================================
     const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: webcamVideoRef.current });
+
+    // 🟩 FLEET HEALTH: reports one snapshot of this session's already-
+    // computed local diagnostics (see EdgeDiagnosticsPanel.jsx -- nothing
+    // new is measured here, this just persists a summary of state that
+    // already existed purely client-side) right at the moment a real
+    // clock-in succeeds -- a natural "session summary" point, and avoids
+    // spamming an insert every scan tick. Fire-and-forget: a reporting
+    // failure must never block or surface as an error on top of a real
+    // clock-in succeeding.
+    const reportDeviceHealthSnapshot = () => {
+        deviceHealthRepository.insert({
+            employee_id: userProfile.id,
+            avg_latency_ms: sensorDiagnostics.latencyReady ? sensorDiagnostics.avgLatencyMs : null,
+            model_tier: (disableYolo || dynamicYoloDisableRef.current) ? 'reduced' : 'full',
+            network_effective_type: networkBatteryDiagnostics.networkEffectiveType ?? null,
+            is_slow_network: networkBatteryDiagnostics.isSlowNetwork ?? null,
+            battery_level: networkBatteryDiagnostics.batteryLevel ?? null,
+            is_charging: networkBatteryDiagnostics.isCharging ?? null,
+            lens_clear: sensorDiagnostics.lensClear,
+            motion_stable: sensorDiagnostics.microMotionReady ? sensorDiagnostics.microMotionStable : null,
+            ambient_lux: sensorDiagnostics.ambientLux ?? null,
+        }).catch((err) => console.error('reportDeviceHealthSnapshot failed:', err.message));
+    };
 
     // 🟩 Delegates to domain/attendanceClockIn.js -- the same shared
     // transaction App.jsx's clock-in-on-login shortcut now also calls, so

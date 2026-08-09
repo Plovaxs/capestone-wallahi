@@ -31,6 +31,7 @@
     "fetchErrorLogs": "Gagal memuat log error",
     "fetchAuditLog": "Gagal memuat log audit",
     "checkDuplicateEnrollments": "Gagal menjalankan pengecekan duplikat pendaftaran",
+    "fetchFleetHealth": "Gagal memuat data kesehatan perangkat",
     "deleteErrorLogs": "Gagal menghapus entri log error itu",
     "fetchProfile": "Gagal memuat profil kamu",
     "fetchAllUsers": "Gagal memuat direktori staf",
@@ -718,6 +719,7 @@
     "helpdesk": "Helpdesk",
     "performance": "Kinerja",
     "auditLog": "Log Audit",
+    "fleetHealth": "Kesehatan Perangkat",
     "errorMonitor": "Pemantau Error",
     "settings": "Pengaturan",
     "menu": "Menu"
@@ -966,5 +968,27 @@
     "descEvaluationUpdated": "Memperbarui skor penilaian {{employee}} dari {{from}} ke {{to}}",
     "descEvaluationDeleted": "Menghapus penilaian {{employee}} (sebelumnya {{score}})",
     "descRoleChange": "Role {{name}} berubah dari {{from}} ke {{to}}"
+  },
+  "fleetHealth": {
+    "title": "Kesehatan Perangkat",
+    "subtitle": "Agregat diagnostik edge-device dari semua sesi absen scan wajah -- kecepatan inferensi, kondisi jaringan/baterai, kejernihan kamera.",
+    "supervisorOnly": "Halaman ini cuma tersedia untuk supervisor.",
+    "statTotal": "Sesi dilaporkan",
+    "statAvgLatency": "Rata-rata kecepatan inferensi",
+    "statReducedTier": "Pakai model ringan",
+    "statSlowNetwork": "Jaringan lambat",
+    "statLensIssue": "Masalah lensa",
+    "statAvgBattery": "Rata-rata baterai",
+    "recentTitle": "Sesi terbaru",
+    "loading": "Memuat data kesehatan perangkat...",
+    "noSnapshots": "Belum ada data kesehatan perangkat yang dilaporkan.",
+    "unknownUser": "User tidak diketahui",
+    "colEmployee": "Karyawan",
+    "colTimestamp": "Waktu",
+    "colLatency": "Latensi",
+    "colTier": "Model",
+    "colNetwork": "Jaringan",
+    "colBattery": "Baterai",
+    "colLens": "Lensa"
   }
 }

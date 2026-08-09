@@ -31,6 +31,7 @@
     "fetchErrorLogs": "Couldn't load the error log",
     "fetchAuditLog": "Couldn't load the audit log",
     "checkDuplicateEnrollments": "Couldn't run the duplicate-enrollment check",
+    "fetchFleetHealth": "Couldn't load fleet health data",
     "deleteErrorLogs": "Couldn't delete that error log entry",
     "fetchProfile": "Couldn't load your profile",
     "fetchAllUsers": "Couldn't load the staff directory",
@@ -718,6 +719,7 @@
     "helpdesk": "Helpdesk",
     "performance": "Performance",
     "auditLog": "Audit Log",
+    "fleetHealth": "Fleet Health",
     "errorMonitor": "Error Monitor",
     "settings": "Settings",
     "menu": "Menu"
@@ -966,5 +968,27 @@
     "descEvaluationUpdated": "Updated {{employee}}'s evaluation score from {{from}} to {{to}}",
     "descEvaluationDeleted": "Deleted {{employee}}'s evaluation (was {{score}})",
     "descRoleChange": "{{name}}'s role changed from {{from}} to {{to}}"
+  },
+  "fleetHealth": {
+    "title": "Fleet Health",
+    "subtitle": "Aggregated edge-device diagnostics across everyone's attendance scans — inference speed, network/battery conditions, camera clarity.",
+    "supervisorOnly": "This page is only available to supervisors.",
+    "statTotal": "Sessions reported",
+    "statAvgLatency": "Avg. inference speed",
+    "statReducedTier": "Running reduced model",
+    "statSlowNetwork": "On a slow network",
+    "statLensIssue": "Lens issues",
+    "statAvgBattery": "Avg. battery level",
+    "recentTitle": "Recent sessions",
+    "loading": "Loading fleet health data...",
+    "noSnapshots": "No device health data reported yet.",
+    "unknownUser": "Unknown user",
+    "colEmployee": "Employee",
+    "colTimestamp": "Timestamp",
+    "colLatency": "Latency",
+    "colTier": "Model",
+    "colNetwork": "Network",
+    "colBattery": "Battery",
+    "colLens": "Lens"
   }
 }
