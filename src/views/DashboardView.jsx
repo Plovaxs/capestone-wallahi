@@ -7,6 +7,7 @@ import {
 import { memoizeWithLru } from '../patterns/LRUCache';
 import { profilesRepository } from '../data/repositories/profilesRepository';
 import { showUserError } from '../utils/errorHandling';
+import { detectAttendanceAnomalies } from '../domain/attendanceAnomalyDetector';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -75,6 +76,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         leaderboard: true,
         individualTrend: true,
         outsourceDirectory: true,
+        attendanceAnomalies: true,
     };
     const [widgets, setWidgets] = useState(() => {
         const saved = localStorage.getItem('dashboard_widgets');
@@ -96,7 +98,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // slot that can be shown/hidden (widgets state above) AND reordered
     // (widgetOrder below) at runtime — a small plugin-registry flavor
     // instead of a fixed hardcoded layout. Order is persisted per-browser. ---
-    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'outsourceDirectory', 'chartsGrid', 'recentReviews'];
+    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'outsourceDirectory', 'attendanceAnomalies', 'chartsGrid', 'recentReviews'];
     const [widgetOrder, setWidgetOrder] = useState(() => {
         const saved = localStorage.getItem('dashboard_widget_order');
         if (!saved) return DEFAULT_WIDGET_ORDER;
@@ -267,6 +269,17 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // on every notification poll even when tasks/attendance haven't changed. ---
     const leaderboard = computeLeaderboard(employeeUsers, tasks, attendance);
 
+    // --- ATTENDANCE ANOMALIES: per-employee statistical outliers (median +
+    // MAD, robust against masking) against each person's OWN clock-in
+    // history -- see domain/attendanceAnomalyDetector.js. Recomputed only
+    // when the underlying data actually changes, same LRU-memoized pattern
+    // as the leaderboard above (this view re-renders on every notification
+    // poll regardless of whether attendance changed).
+    const attendanceAnomalies = useMemo(
+        () => detectAttendanceAnomalies(attendance),
+        [attendance]
+    );
+
     // --- INDIVIDUAL PERFORMANCE TREND: only meaningful once a single
     // employee is picked in the selector above (not the "all" aggregate). ---
     const individualTrendData = selectedEmployee !== 'all'
@@ -340,6 +353,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                             <input type="checkbox" checked={widgets.outsourceDirectory} onChange={() => toggleWidget('outsourceDirectory')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
                                             <span>{t('dashboard.outsourceDirectory')}</span>
+                                        </label>
+                                        <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                            <input type="checkbox" checked={widgets.attendanceAnomalies} onChange={() => toggleWidget('attendanceAnomalies')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                            <span>{t('dashboard.attendanceAnomalies')}</span>
                                         </label>
                                     </>
                                 )}
@@ -580,6 +597,38 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         </div>
                     ) : (
                         <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noEmployeesFound')}</p>
+                    )}
+                </div>
+            )}
+
+            {/* --- ATTENDANCE ANOMALIES: statistical outliers (median + MAD)
+                against each employee's OWN clock-in history -- flags what a
+                manual scan of the table wouldn't catch. Advisory-only for
+                human review, explicitly not an accusation (see the widget's
+                own description text). --- */}
+            {widgets.attendanceAnomalies && userProfile.role === 'supervisor' && (
+                <div style={{ order: orderOf('attendanceAnomalies') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                    <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.attendanceAnomalies')}</h2>
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.attendanceAnomaliesDescription')}</p>
+                    {attendanceAnomalies.length === 0 ? (
+                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noAnomalies')}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {attendanceAnomalies.slice(0, 10).map((a, idx) => (
+                                <div key={idx} className="flex items-center gap-3 p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/30">
+                                    <span className="text-lg shrink-0" aria-hidden="true">⚠️</span>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-bold text-gray-800 dark:text-gray-100">{getUserName(a.employee_id)}</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                            {t('dashboard.anomalyLine', { date: a.date, time: a.clock_in.slice(0, 5) })}
+                                        </p>
+                                    </div>
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 shrink-0">
+                                        {t('dashboard.anomalyScore', { score: Math.abs(a.zScore).toFixed(1) })}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </div>
             )}
