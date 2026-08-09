@@ -24,4 +24,14 @@ export const profilesRepository = {
     update: (id, patch) => runMutation('profiles.update', () =>
         supabase.from('profiles').update(patch).eq('id', id)
     ),
+
+    // 🟩 Ghost-employee / duplicate-enrollment detection (see
+    // migrations/20260810_add_duplicate_enrollment_detection.sql) -- the
+    // comparison runs entirely server-side (Postgres RPC, SECURITY DEFINER,
+    // supervisor-gated inside the function itself); face_descriptor is
+    // never bulk-fetched to the client to do this, matching this file's
+    // existing column-selection discipline above.
+    findDuplicateEnrollments: () => runQuery('profiles.findDuplicateEnrollments', () =>
+        supabase.rpc('find_duplicate_enrollments')
+    ),
 };

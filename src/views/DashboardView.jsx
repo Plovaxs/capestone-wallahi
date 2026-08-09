@@ -5,6 +5,8 @@ import {
     Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { memoizeWithLru } from '../patterns/LRUCache';
+import { profilesRepository } from '../data/repositories/profilesRepository';
+import { showUserError } from '../utils/errorHandling';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -43,6 +45,25 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const { t } = useTranslation();
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
+    // 🟩 GHOST-EMPLOYEE DETECTION: on-demand (not auto-run on every dashboard
+    // visit -- it's an occasional integrity check, not something that needs
+    // to load unconditionally for every supervisor session) server-side
+    // comparison of every enrolled face template against every other
+    // employee's (see migrations/20260810_add_duplicate_enrollment_detection.sql).
+    // 'idle' | 'loading' | 'done'
+    const [duplicateCheckStatus, setDuplicateCheckStatus] = useState('idle');
+    const [duplicatePairs, setDuplicatePairs] = useState([]);
+    const runDuplicateEnrollmentCheck = async () => {
+        setDuplicateCheckStatus('loading');
+        try {
+            const rows = await profilesRepository.findDuplicateEnrollments();
+            setDuplicatePairs(rows || []);
+            setDuplicateCheckStatus('done');
+        } catch (err) {
+            showUserError('errors.checkDuplicateEnrollments', err);
+            setDuplicateCheckStatus('idle');
+        }
+    };
 
     // --- 1. CONFIGURABLE WIDGET STATE ---
     const DEFAULT_WIDGETS = {
@@ -485,10 +506,47 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                 Assignments (position/department/job desk/contract dates). --- */}
             {widgets.outsourceDirectory && userProfile.role === 'supervisor' && (
                 <div style={{ order: orderOf('outsourceDirectory') }} className="bg-white rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60 overflow-hidden">
-                    <div className="p-5 pb-0">
-                        <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.outsourceDirectory')}</h2>
-                        <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.outsourceDirectoryDescription')}</p>
+                    <div className="p-5 pb-0 flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                            <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.outsourceDirectory')}</h2>
+                            <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.outsourceDirectoryDescription')}</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={runDuplicateEnrollmentCheck}
+                            disabled={duplicateCheckStatus === 'loading'}
+                            title={t('dashboard.duplicateCheckHint')}
+                            className="shrink-0 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-300 px-3 py-1.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {duplicateCheckStatus === 'loading' ? t('dashboard.duplicateCheckRunning') : `🔍 ${t('dashboard.duplicateCheckButton')}`}
+                        </button>
                     </div>
+
+                    {duplicateCheckStatus === 'done' && (
+                        <div className="mx-5 mb-4">
+                            {duplicatePairs.length === 0 ? (
+                                <p className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900/50 rounded-lg px-3 py-2">
+                                    ✅ {t('dashboard.duplicateCheckClean')}
+                                </p>
+                            ) : (
+                                <div className="text-xs bg-red-50 border border-red-200 dark:bg-red-950/30 dark:border-red-900/50 rounded-lg p-3 space-y-1.5">
+                                    <p className="font-bold text-red-700 dark:text-red-300">
+                                        ⚠️ {t('dashboard.duplicateCheckFound', { count: duplicatePairs.length })}
+                                    </p>
+                                    {duplicatePairs.map((pair, idx) => (
+                                        <p key={idx} className="text-red-600 dark:text-red-400">
+                                            {t('dashboard.duplicatePairLine', {
+                                                a: pair.employee_a_name,
+                                                b: pair.employee_b_name,
+                                                distance: Number(pair.min_distance).toFixed(3),
+                                            })}
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {employeeUsers.length > 0 ? (
                         <div className="overflow-x-auto">
                             <table className="w-full text-xs">
