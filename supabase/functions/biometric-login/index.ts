@@ -3,6 +3,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const allowedOrigins = [
   "https://capstone-final-mxbr-git-final-form-mannltc19s-projects.vercel.app",
   "https://capestone-wallahi.vercel.app",
+  "https://www.djbc-oms-portal.com",
+  "https://djbc-oms-portal.com",
   "http://localhost:5173",
 ];
 
@@ -170,7 +172,7 @@ Deno.serve(async (req) => {
       .not("face_descriptor", "is", null);
     if (fetchError) throw fetchError;
 
-    let bestMatch: { id: string } | null = null;
+    let bestMatch: { id: string; email: string | null } | null = null;
     let lowestDistance = MATCH_THRESHOLD;
 
     for (const profile of profiles) {

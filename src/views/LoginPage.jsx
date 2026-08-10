@@ -596,7 +596,16 @@ export default function LoginPage() {
 
   const refreshLoginNonce = async () => {
     try {
-      const { data } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
+      const { data, error } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
+      if (error) {
+        // 🟩 DIAGNOSTIC: supabase-js resolves (not rejects) on a non-2xx
+        // response, so this previously failed completely silently --
+        // loginNonceRef just stayed null/stale with no console trace at
+        // all, making "every login attempt gets rejected" hard to
+        // distinguish from an actual liveness/match failure.
+        console.error('[login] challenge request returned an error:', error);
+        return;
+      }
       if (data?.nonce) {
         loginNonceRef.current = data.nonce;
         loginNonceIssuedAtRef.current = Date.now();
