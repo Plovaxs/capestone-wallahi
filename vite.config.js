@@ -8,6 +8,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // main.jsx registers the SW itself (via virtual:pwa-register) so it
+      // can force a reload on controllerchange -- disable the plugin's own
+      // auto-injected register script to avoid double-registering.
+      injectRegister: false,
       // Attendance depends on live GPS + webcam + Supabase auth, none of
       // which work meaningfully offline — this only exists so the app is
       // installable and loads instantly on repeat visits, not for offline use.
