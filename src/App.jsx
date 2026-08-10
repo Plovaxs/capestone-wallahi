@@ -48,6 +48,7 @@ const SettingsView = React.lazy(() => import('./views/SettingsView'));
 const HelpdeskView = React.lazy(() => import('./views/HelpdeskView'));
 const ErrorMonitorView = React.lazy(() => import('./views/ErrorMonitorView'));
 const AuditLogView = React.lazy(() => import('./views/AuditLogView'));
+const ContractExpiryView = React.lazy(() => import('./views/ContractExpiryView'));
 const FleetHealthView = React.lazy(() => import('./views/FleetHealthView'));
 
 const MainContent = ({ view, userProfile, ...props }) => {
@@ -62,6 +63,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
     case 'errorMonitor': return <ErrorMonitorView userProfile={userProfile} />;
     case 'auditLog': return <AuditLogView userProfile={userProfile} allUsers={props.allUsers} />;
+    case 'contractExpiry': return <ContractExpiryView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'fleetHealth': return <FleetHealthView userProfile={userProfile} allUsers={props.allUsers} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }

@@ -580,6 +580,7 @@
     "diagPixelLiveness": "Liveness Piksel",
     "diagColorLiveness": "Liveness Warna",
     "diagPulse": "Sinyal Detak Jantung (rPPG)",
+    "diagPulseBpm": "~{{bpm}} BPM",
     "diagDetected": "Terdeteksi",
     "diagWarming": "Memanaskan",
     "diagNoSensor": "Tidak tersedia",
@@ -720,6 +721,7 @@
     "contributions": "Kontribusi",
     "helpdesk": "Helpdesk",
     "performance": "Kinerja",
+    "contractExpiry": "Masa Kontrak",
     "auditLog": "Log Audit",
     "fleetHealth": "Kesehatan Perangkat",
     "errorMonitor": "Pemantau Error",
@@ -990,6 +992,20 @@
     "descEvaluationUpdated": "Memperbarui skor penilaian {{employee}} dari {{from}} ke {{to}}",
     "descEvaluationDeleted": "Menghapus penilaian {{employee}} (sebelumnya {{score}})",
     "descRoleChange": "Role {{name}} berubah dari {{from}} ke {{to}}"
+  },
+  "contractExpiry": {
+    "title": "Masa Kontrak",
+    "subtitle": "Kontrak atau masa magang siapa yang perlu diperpanjang atau diakhiri segera.",
+    "supervisorOnly": "Halaman ini cuma tersedia untuk supervisor.",
+    "statExpired": "Sudah Berakhir",
+    "statUrgent": "Berakhir dalam 7 hari",
+    "statWarning": "Berakhir dalam 30 hari",
+    "statOk": "Masih Aman",
+    "listTitle": "Berdasarkan urgensi",
+    "noContracts": "Belum ada karyawan yang punya periode kontrak.",
+    "expiredAgo": "Berakhir {{days}} hari lalu",
+    "expiresToday": "Berakhir hari ini",
+    "expiresInDays": "{{days}} hari lagi"
   },
   "fleetHealth": {
     "title": "Kesehatan Perangkat",

@@ -291,6 +291,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         colorPlausible: true,
         pulseReady: false,
         pulsePlausible: true,
+        pulseBpm: null,
         latencyReady: false,
         latencyOverBudget: false,
         avgLatencyMs: 0,
@@ -1257,9 +1258,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 pulseDetectorRef.current.addSample(avgGreen, Date.now());
 
                 const pulseStats = pulseDetectorRef.current.getStats();
-                setSensorDiagnostics((prev) => (prev.pulseReady === pulseStats.ready && prev.pulsePlausible === pulseStats.hasPlausiblePulse
+                setSensorDiagnostics((prev) => (prev.pulseReady === pulseStats.ready && prev.pulsePlausible === pulseStats.hasPlausiblePulse && prev.pulseBpm === pulseStats.estimatedBpm
                     ? prev
-                    : { ...prev, pulseReady: pulseStats.ready, pulsePlausible: pulseStats.hasPlausiblePulse }));
+                    : { ...prev, pulseReady: pulseStats.ready, pulsePlausible: pulseStats.hasPlausiblePulse, pulseBpm: pulseStats.estimatedBpm }));
             } catch (_err) {
                 // getImageData can throw on a tainted canvas in some browsers -- non-critical signal, skip this tick.
             }

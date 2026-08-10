@@ -60,6 +60,7 @@ const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensor
                 label={t('attendance.diagPulse')}
                 value={!sensorDiagnostics.pulseReady ? t('attendance.diagWarming') : sensorDiagnostics.pulsePlausible ? t('attendance.diagDetected') : t('attendance.diagFlagged')}
                 ok={!sensorDiagnostics.pulseReady || sensorDiagnostics.pulsePlausible}
+                detail={sensorDiagnostics.pulseReady && sensorDiagnostics.pulsePlausible && sensorDiagnostics.pulseBpm ? t('attendance.diagPulseBpm', { bpm: sensorDiagnostics.pulseBpm }) : null}
             />
             <DiagnosticTile
                 label={t('attendance.diagNetwork')}

@@ -580,6 +580,7 @@
     "diagPixelLiveness": "Pixel Liveness",
     "diagColorLiveness": "Color Liveness",
     "diagPulse": "Pulse Signal (rPPG)",
+    "diagPulseBpm": "~{{bpm}} BPM",
     "diagDetected": "Detected",
     "diagWarming": "Warming up",
     "diagNoSensor": "Unavailable",
@@ -720,6 +721,7 @@
     "contributions": "Contributions",
     "helpdesk": "Helpdesk",
     "performance": "Performance",
+    "contractExpiry": "Contract Expiry",
     "auditLog": "Audit Log",
     "fleetHealth": "Fleet Health",
     "errorMonitor": "Error Monitor",
@@ -990,6 +992,20 @@
     "descEvaluationUpdated": "Updated {{employee}}'s evaluation score from {{from}} to {{to}}",
     "descEvaluationDeleted": "Deleted {{employee}}'s evaluation (was {{score}})",
     "descRoleChange": "{{name}}'s role changed from {{from}} to {{to}}"
+  },
+  "contractExpiry": {
+    "title": "Contract Expiry",
+    "subtitle": "Whose contract or internship period needs a renewal or offboarding conversation soon.",
+    "supervisorOnly": "This page is only available to supervisors.",
+    "statExpired": "Expired",
+    "statUrgent": "Due within 7 days",
+    "statWarning": "Due within 30 days",
+    "statOk": "On track",
+    "listTitle": "By urgency",
+    "noContracts": "No employees have a contract period set yet.",
+    "expiredAgo": "Expired {{days}}d ago",
+    "expiresToday": "Expires today",
+    "expiresInDays": "{{days}}d left"
   },
   "fleetHealth": {
     "title": "Fleet Health",
