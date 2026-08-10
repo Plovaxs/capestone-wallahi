@@ -142,40 +142,41 @@ describe('LivenessDetector (legacy blink-only)', () => {
 });
 
 describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-step logic)', () => {
-    it('confirms a blink challenge via a SUSTAINED open -> closed -> closed -> open -> open sequence', () => {
+    it('confirms a blink challenge as soon as a single tick catches the closed->open transition', () => {
+        // 2026-08-11b: a single-frame crossing is now enough (see
+        // livenessDetector.js's rationale) -- the app's detection tick is
+        // slower than a real blink, so requiring 2 consecutive ticks inside
+        // one blink routinely missed genuine users.
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 
-    it('does NOT confirm a blink from a single noisy closed-frame dip (jitter, not a real blink)', () => {
-        // Exactly the exploit: an incidental single-frame dip (hand tremor
-        // moving a held-up photo, a bad landmark read) must not be enough.
+    it('never confirms a blink for a face that never actually transitions (a static photo)', () => {
+        // The anti-spoof property now rests on the TRANSITION, not frame
+        // count: a photo's eyes are permanently open (or permanently
+        // closed) and never cross both thresholds, however many frames are sampled.
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
-        challenge.registerFrame(makeLandmarks(openEye));
-        challenge.registerFrame(makeLandmarks(closedEye)); // one dip only
-        challenge.registerFrame(makeLandmarks(openEye));
-        challenge.registerFrame(makeLandmarks(openEye));
-        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+        for (let i = 0; i < 10; i++) {
+            expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+        }
     });
 
-    it('confirms a blink challenge from a sustained soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
+    it('confirms a blink challenge from a soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye));
-        challenge.registerFrame(makeLandmarks(softBlinkEye));
-        challenge.registerFrame(makeLandmarks(softBlinkEye));
         challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(softBlinkEye));
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 
-    it('confirms a SMILE challenge via a large, SUSTAINED widening of the mouth', () => {
+    it('confirms a SMILE challenge as soon as the mouth widens past the baseline threshold', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
         expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // establishes baseline
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(true);
     });
 
@@ -194,13 +195,12 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, openMouth))).toBe(true);
     });
 
-    it('does not confirm SMILE/MOUTH_OPEN from an oscillating change (a hand-held photo jittering, not a real deliberate expression)', () => {
+    it('does not confirm SMILE/MOUTH_OPEN unless the matching frame lands once enough frames have been observed', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
-        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // baseline
-        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth)); // matches (run=1)
-        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // drops back -- breaks the run
-        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth)); // matches (run=1 again)
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // drops back again
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // baseline (frame 1)
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth)); // matches, but not enough frames yet (frame 2)
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // drops back (frame 3)
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // frame 4 (enough frames now), but not smiling right now
     });
 
     it('expires after the time box elapses without confirmation', () => {

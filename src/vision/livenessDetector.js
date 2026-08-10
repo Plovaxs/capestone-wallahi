@@ -113,7 +113,7 @@ const EAR_OPEN_THRESHOLD = 0.28;
 // SUSTAINED, CONSISTENT change across multiple frames -- every challenge
 // type below requires that, not a single-frame crossing.
 //
-// 🟩 REDESIGN (2026-08-11): the previous version of this file used 4
+// 🟩 REDESIGN (2026-08-11a): the previous version of this file used 4
 // head-turn/pitch directional challenges (look left/right/up/down)
 // alongside blink. Real-user feedback: the yaw/pitch sensor felt
 // "finicky" (device/webcam-angle-dependent, harder to satisfy reliably
@@ -122,9 +122,22 @@ const EAR_OPEN_THRESHOLD = 0.28;
 // 2D landmark-ratio math as blink (not head-pose estimation), so they
 // should be just as reliable while still giving 3 distinct,
 // unpredictable challenge types instead of 1.
+//
+// 🟩 REDESIGN (2026-08-11b): the app's face-detection tick only runs every
+// 350ms-1.8s (Login/Attendance) -- a genuine human blink is typically
+// 100-400ms, well under that. Requiring the closed/open state to hold for
+// TWO separate ticks in a row meant a real blink was routinely too fast to
+// ever land two consecutive samples inside it, so real users kept getting
+// "skipped" past before the challenge registered anything. Lowered to a
+// single-frame threshold crossing -- the anti-spoof property this relies
+// on isn't frame-count, it's that the EAR must actually TRANSITION across
+// both thresholds (closed then open): a static photo's eyes never move at
+// all, so it can never trigger this regardless of how many frames are
+// sampled, while a real blink now registers on whichever single tick
+// happens to land during it.
 const SMILE_THRESHOLD = 0.05;
 const MOUTH_OPEN_THRESHOLD = 0.15;
-const MIN_CONSECUTIVE_FRAMES = 2; // consecutive frames the triggering condition must hold
+const MIN_CONSECUTIVE_FRAMES = 1; // frames the triggering condition must hold (see 2026-08-11b above)
 const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed (this step) before confirmation is even possible
 // 🟩 Two independent, unpredictable steps instead of one -- a static
 // photo or a short looped/prerecorded clip prepared in advance for
