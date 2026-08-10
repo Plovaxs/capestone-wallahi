@@ -19,10 +19,13 @@
 // this app's own data). Deliberately a loose band: this is a weak signal
 // that only counts alongside the texture check below, not a precise
 // segmentation.
-const SKIN_R_MIN = 0.34;
-const SKIN_R_MAX = 0.49;
-const SKIN_G_MIN = 0.26;
-const SKIN_G_MAX = 0.39;
+// Exported so handRegionHeuristic.js can reuse the exact same
+// skin-plausibility band when sampling a DIFFERENT region of the frame
+// (around/below the face, not inside it) without duplicating the tuning.
+export const SKIN_R_MIN = 0.34;
+export const SKIN_R_MAX = 0.49;
+export const SKIN_G_MIN = 0.26;
+export const SKIN_G_MAX = 0.39;
 const MIN_SKIN_PIXEL_FRACTION = 0.3;
 
 /** Fraction of sampled pixels whose chromaticity falls in the skin-plausible band. */

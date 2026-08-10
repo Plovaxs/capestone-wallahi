@@ -112,9 +112,9 @@ describe('LivenessDetector (legacy blink-only)', () => {
     });
 });
 
-describe('RandomLivenessChallenge', () => {
+describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-step logic)', () => {
     it('confirms a blink challenge via a SUSTAINED open -> closed -> closed -> open -> open sequence', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
@@ -125,7 +125,7 @@ describe('RandomLivenessChallenge', () => {
     it('does NOT confirm a blink from a single noisy closed-frame dip (jitter, not a real blink)', () => {
         // Exactly the exploit: an incidental single-frame dip (hand tremor
         // moving a held-up photo, a bad landmark read) must not be enough.
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye)); // one dip only
         challenge.registerFrame(makeLandmarks(openEye));
@@ -134,7 +134,7 @@ describe('RandomLivenessChallenge', () => {
     });
 
     it('confirms a blink challenge from a sustained soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(softBlinkEye));
         challenge.registerFrame(makeLandmarks(softBlinkEye));
@@ -142,32 +142,53 @@ describe('RandomLivenessChallenge', () => {
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 
-    it('confirms a head-turn challenge via a large, SUSTAINED offset from baseline', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
+    it('confirms a LOOK_RIGHT challenge via a large, SUSTAINED offset in the specific required direction', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
         expect(challenge.registerFrame(makeLandmarks(openEye, 0))).toBe(false); // establishes baseline
         expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(true);
     });
 
-    it('does not confirm a head-turn challenge for a negligible movement', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
+    it('does NOT confirm LOOK_RIGHT when the movement is in the opposite (LEFT) direction', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye, 0));
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0.01))).toBe(false);
+        challenge.registerFrame(makeLandmarks(openEye, -0.3));
+        challenge.registerFrame(makeLandmarks(openEye, -0.3));
+        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false);
     });
 
-    it('does not confirm a head-turn challenge from an oscillating/wobbling offset (a hand-held photo jittering, not a real deliberate turn)', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
+    it('confirms LOOK_UP / LOOK_DOWN via calculatePitchRatio, in the specific required direction', () => {
+        const up = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_UP, steps: 1 });
+        up.registerFrame(makeLandmarks(openEye, 0, 60)); // baseline, forward-facing pitch
+        up.registerFrame(makeLandmarks(openEye, 0, 10));
+        up.registerFrame(makeLandmarks(openEye, 0, 10));
+        expect(up.registerFrame(makeLandmarks(openEye, 0, 10))).toBe(true);
+
+        const down = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_DOWN, steps: 1 });
+        down.registerFrame(makeLandmarks(openEye, 0, 60));
+        down.registerFrame(makeLandmarks(openEye, 0, 60)); // wrong direction (no movement) -- never confirms
+        expect(down.registerFrame(makeLandmarks(openEye, 0, 60))).toBe(false);
+    });
+
+    it('does not confirm a directional challenge for a negligible movement', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_LEFT, steps: 1 });
+        challenge.registerFrame(makeLandmarks(openEye, 0));
+        expect(challenge.registerFrame(makeLandmarks(openEye, -0.01))).toBe(false);
+    });
+
+    it('does not confirm a directional challenge from an oscillating/wobbling offset (a hand-held photo jittering, not a real deliberate turn)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye, 0)); // baseline
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // +
-        challenge.registerFrame(makeLandmarks(openEye, -0.3)); // - (oscillation breaks the run)
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // +
-        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false); // -
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // matches direction (run=1)
+        challenge.registerFrame(makeLandmarks(openEye, -0.3)); // wrong direction -- breaks the run
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // matches direction (run=1 again)
+        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false); // wrong direction again
     });
 
     it('expires after the time box elapses without confirmation', () => {
         vi.useFakeTimers();
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, timeoutMs: 1000 });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, timeoutMs: 1000, steps: 1 });
         expect(challenge.isExpired()).toBe(false);
 
         vi.advanceTimersByTime(1001);
@@ -177,7 +198,7 @@ describe('RandomLivenessChallenge', () => {
     });
 
     it('reset() starts a fresh challenge and clears expiry/confirmation', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye));
         challenge.registerFrame(makeLandmarks(closedEye));
@@ -189,11 +210,69 @@ describe('RandomLivenessChallenge', () => {
         expect(challenge.confirmed).toBe(false);
     });
 
-    it('picks a random challenge type when none is forced', () => {
+    it('picks a random challenge type from all 5 when none is forced', () => {
         const seen = new Set();
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 40; i++) {
             seen.add(new RandomLivenessChallenge().challengeType);
         }
-        expect([...seen].every((t) => t === CHALLENGE_TYPES.BLINK || t === CHALLENGE_TYPES.HEAD_TURN)).toBe(true);
+        const validTypes = Object.values(CHALLENGE_TYPES);
+        expect([...seen].every((t) => validTypes.includes(t))).toBe(true);
+    });
+});
+
+describe('RandomLivenessChallenge (default 2-step sequence)', () => {
+    it('requires BOTH steps -- confirmed stays false after only the first step is satisfied', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_RIGHT });
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        const afterStepOne = challenge.registerFrame(makeLandmarks(openEye));
+        expect(afterStepOne).toBe(false); // step 1 (blink) done, but step 2 (look right) hasn't started
+        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.LOOK_RIGHT); // now prompting for step 2
+    });
+
+    it('confirms only once both sequential steps are satisfied, in order', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_RIGHT });
+        // Step 1: blink
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        expect(challenge.confirmed).toBe(false);
+
+        // Step 2: look right -- baseline re-established fresh for this step
+        challenge.registerFrame(makeLandmarks(openEye, 0));
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(true);
+        expect(challenge.confirmed).toBe(true);
+    });
+
+    it('a video/photo prepared only for step 1\'s challenge type cannot also satisfy an unrelated step 2 prompt', () => {
+        // Simulates an attacker who only prepared to blink -- repeating the
+        // same blink motion does not satisfy a LOOK_UP second step.
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_UP });
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.LOOK_UP);
+
+        // Keeps blinking instead of looking up -- never confirms.
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+    });
+
+    it('getStepProgress reflects live progress toward the CURRENT step (0-1)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
+        expect(challenge.getStepProgress()).toBe(0);
+        challenge.registerFrame(makeLandmarks(openEye, 0));
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));
+        expect(challenge.getStepProgress()).toBeGreaterThan(0);
+        expect(challenge.getStepProgress()).toBeLessThanOrEqual(1);
     });
 });

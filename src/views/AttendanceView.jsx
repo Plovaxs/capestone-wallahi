@@ -12,7 +12,9 @@ import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { isWeekend } from '../domain/attendanceDayPolicy';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
-import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
+import { checkHandInFrame } from '../vision/handRegionHeuristic';
+import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
@@ -1069,6 +1071,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             } else if (!guardRef.current) {
                                 let livenessSuspicious = false;
                                 let challengeConfirmed = false;
+                                let handCheck = { suspicious: false };
+                                let deviceEdgeCheck = { suspicious: false };
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
                                     const marginX = Math.round(liveDet.box.width * 0.15);
@@ -1093,6 +1097,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // read" treatment as the device/pixel-motion trackers.
                                     const pulseStats = pulseDetectorRef.current.getStats();
                                     const pulseSuspicious = pulseStats.ready && !pulseStats.hasPlausiblePulse;
+                                    // 🟩 SECURITY: hand/device-edge checks -- see
+                                    // vision/handRegionHeuristic.js and vision/deviceEdgeHeuristic.js.
+                                    deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
+                                    const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                    handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
 
                                     setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                         && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -1111,6 +1120,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         pixelFlat: microMotionStats.ready ? pixelFlat : null,
                                         colorSuspicious,
                                         textureFlat: textureSuspicious,
+                                        deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
+                                        handSuspicious: handCheck.suspicious,
                                         pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
                                     }).suspicious;
 
@@ -1131,12 +1142,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // replay stays flagged indefinitely instead of ever
                                     // sneaking through.
                                     livenessChallengeRef.current.reset();
-                                    setBiometricStatus(t('attendance.statusLivenessSuspicious'));
+                                    setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                 } else if (!challengeConfirmed) {
-                                    setBiometricStatus(t(livenessChallengeRef.current.challengeType === CHALLENGE_TYPES.HEAD_TURN
-                                        ? 'attendance.statusAwaitingHeadTurn'
-                                        : 'attendance.statusAwaitingBlink'));
+                                    const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
+                                    setBiometricStatus(
+                                        `${CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]} ${t(`attendance.statusAwaiting${suffix}`, {
+                                            step: livenessChallengeRef.current.stepIndex + 1,
+                                            totalSteps: livenessChallengeRef.current.totalSteps,
+                                        })}`
+                                    );
                                 } else {
                                     guardRef.current = true;
                                     livenessChallengeRef.current.reset();

@@ -14,7 +14,9 @@ import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
-import { RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
+import { checkHandInFrame } from '../vision/handRegionHeuristic';
+import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
+import { RandomLivenessChallenge, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
@@ -426,17 +428,27 @@ export default function LoginPage() {
         );
         const textureCheck = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height);
         const pulseStats = pulseDetectorRef.current.getStats();
+        // 🟩 SECURITY: hand/device-edge checks -- see vision/handRegionHeuristic.js
+        // and vision/deviceEdgeHeuristic.js. deviceEdges reuses the already-
+        // computed borderRegion crop (a phone/photo edge held near the face
+        // shows up right at that margin); hand detection needs the FULL
+        // frame since fingers holding a device can extend well past it.
+        const deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
+        const fullFrame = ctx.getImageData(0, 0, width, height);
+        const handCheck = checkHandInFrame(fullFrame.data, width, height, box);
         const passiveVote = evaluatePassiveLiveness({
           borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
           pixelFlat: microMotionStats.isSuspiciouslyFlat,
           colorSuspicious: colorLiveness.suspicious,
           textureFlat: textureCheck.suspicious,
+          deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
+          handSuspicious: handCheck.suspicious,
           pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
         });
 
         if (passiveVote.suspicious) {
           livenessChallengeRef.current.reset();
-          setBiometricStatus(t('login.statusLivenessSuspicious'));
+          setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
           return;
         }
 
@@ -448,9 +460,13 @@ export default function LoginPage() {
 
         const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
         if (!challengeConfirmed) {
-          setBiometricStatus(t(livenessChallengeRef.current.challengeType === CHALLENGE_TYPES.HEAD_TURN
-            ? 'login.statusAwaitingHeadTurn'
-            : 'login.statusAwaitingBlink'));
+          const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
+          setBiometricStatus(
+            `${CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]} ${t(`login.statusAwaiting${suffix}`, {
+              step: livenessChallengeRef.current.stepIndex + 1,
+              totalSteps: livenessChallengeRef.current.totalSteps,
+            })}`
+          );
           return;
         }
 
