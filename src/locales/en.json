@@ -59,7 +59,8 @@
     "submitSelfAssessment": "Couldn't submit the self-assessment",
     "setClockPin": "Couldn't update your clock-in PIN",
     "verifyClockPin": "Couldn't verify your PIN",
-    "recordAttendanceOut": "Couldn't record your clock-out"
+    "recordAttendanceOut": "Couldn't record your clock-out",
+    "fetchKnownDevices": "Couldn't load known devices"
   },
   "export": {
     "noData": "There's no data to export yet.",
@@ -769,6 +770,7 @@
     "badgeScanner": "Badge Scanner",
     "myTeam": "My Team",
     "messages": "Messages",
+    "securitySignals": "Security Signals",
     "settings": "Settings",
     "menu": "Menu"
   },
@@ -1069,7 +1071,12 @@
     "descEvaluationCreated": "Created a performance evaluation for {{employee}} (score {{score}})",
     "descEvaluationUpdated": "Updated {{employee}}'s evaluation score from {{from}} to {{to}}",
     "descEvaluationDeleted": "Deleted {{employee}}'s evaluation (was {{score}})",
-    "descRoleChange": "{{name}}'s role changed from {{from}} to {{to}}"
+    "descRoleChange": "{{name}}'s role changed from {{from}} to {{to}}",
+    "explainLeaveWithQuota": "Requested {{days}} day(s) — {{balance}} day(s) remained on the balance at the time of this decision",
+    "explainLeaveNoQuota": "Requested {{days}} day(s)",
+    "explainTaskLate": "Decided {{days}} day(s) after the deadline",
+    "explainTaskEarly": "Decided {{days}} day(s) before the deadline",
+    "explainTaskOnDeadline": "Decided exactly on the deadline"
   },
   "contractExpiry": {
     "title": "Contract Expiry",
@@ -1093,7 +1100,8 @@
     "certificateBody": "in recognition of successfully completing the {{position}} assignment in the {{department}} department, on behalf of {{institution}}, for the period of {{period}}.",
     "certificateSupervisorLabel": "Supervisor",
     "certificateIssuedOn": "Issued on",
-    "certificateFilenamePrefix": "Completion_Certificate"
+    "certificateFilenamePrefix": "Completion_Certificate",
+    "reminderSent": "Contract expiry reminder sent to {{name}}"
   },
   "onboardingTracker": {
     "title": "Onboarding Tracker",
@@ -1150,6 +1158,21 @@
     "loading": "Loading messages...",
     "placeholder": "Type a message...",
     "send": "Send"
+  },
+  "securitySignals": {
+    "title": "Security Signals",
+    "subtitle": "Anomaly-detection signals worth a look — advisory only, not proof of wrongdoing.",
+    "supervisorOnly": "This page is only available to supervisors.",
+    "unknownUser": "Unknown user",
+    "unknownDevice": "Unknown device",
+    "loading": "Loading...",
+    "travelTitle": "Impossible Travel",
+    "travelDescription": "Consecutive clock-ins implying a travel speed no real transport could achieve — same pattern used for login anomalies (impossible-travel detection).",
+    "noTravelFlags": "No impossible-travel flags.",
+    "travelFlagDetail": "{{distance}} km apart in {{hours}}h (~{{speed}} km/h implied) — {{from}} to {{to}}",
+    "devicesTitle": "New Device Sign-ins",
+    "devicesDescription": "Devices seen for the first time in the last 24 hours.",
+    "noNewDevices": "No new devices in the last 24 hours."
   },
   "team": {
     "title": "My Team",

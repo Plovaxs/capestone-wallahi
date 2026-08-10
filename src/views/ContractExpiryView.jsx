@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { analyzeContractExpiry } from '../domain/contractExpiryTracker';
 import { showUserError } from '../utils/errorHandling';
+import { supabase } from '../supabaseClient';
 
 const URGENCY_STYLES = {
     expired: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50',
@@ -26,6 +27,26 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
     const employeeUsers = useMemo(() => allUsers.filter((u) => u.role === 'employee'), [allUsers]);
     const entries = useMemo(() => analyzeContractExpiry(employeeUsers), [employeeUsers]);
     const [generatingId, setGeneratingId] = useState(null);
+
+    // 🟩 AUTOMATED REMINDERS: upgrades this page from "a supervisor has to
+    // remember to check" into proactive -- notifies both the employee and
+    // the supervisor once a contract enters the urgent/expired tier. The
+    // RPC itself dedupes per tier (migrations/20260810_add_contract_expiry_reminders.sql),
+    // this ref just avoids firing the same batch of RPC calls again on
+    // every re-render within one page visit.
+    const remindedThisVisitRef = useRef(new Set());
+    useEffect(() => {
+        const urgentEntries = entries.filter((e) => e.urgency === 'urgent' || e.urgency === 'expired');
+        urgentEntries.forEach((entry) => {
+            if (remindedThisVisitRef.current.has(entry.id)) return;
+            remindedThisVisitRef.current.add(entry.id);
+            supabase.rpc('send_contract_expiry_reminder', { p_employee_id: entry.id, p_tier: entry.urgency })
+                .then(({ data: sent, error }) => {
+                    if (!error && sent) toast(t('contractExpiry.reminderSent', { name: entry.name }), { icon: '📨' });
+                })
+                .catch((err) => console.error('send_contract_expiry_reminder failed:', err.message));
+        });
+    }, [entries, t]);
 
     const handleGenerateCertificate = async (entry) => {
         setGeneratingId(entry.id);

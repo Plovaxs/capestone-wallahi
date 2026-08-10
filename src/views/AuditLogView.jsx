@@ -77,6 +77,33 @@ const AuditLogView = ({ userProfile, allUsers = [] }) => {
         }
     };
 
+    /**
+     * "Why" line, shown BELOW the plain-language description -- rule/
+     * threshold context captured AT THE MOMENT of an automated-adjacent
+     * decision (see migrations/20260810_add_audit_explainability.sql),
+     * rather than making a supervisor cross-reference quota/deadline data
+     * that may since have changed. Returns null when there's nothing to
+     * explain (e.g. this entry predates the migration, or the context
+     * genuinely doesn't apply -- Unpaid Leave has no quota balance).
+     */
+    const explainEntry = (entry) => {
+        const d = entry.details || {};
+        if (entry.entity_type === 'leave_request' && entry.action === 'status_change') {
+            if (d.requested_days == null) return null;
+            if (d.quota_balance_at_decision != null) {
+                return t('auditLog.explainLeaveWithQuota', { days: d.requested_days, balance: d.quota_balance_at_decision });
+            }
+            return t('auditLog.explainLeaveNoQuota', { days: d.requested_days });
+        }
+        if (entry.entity_type === 'task' && entry.action === 'status_change') {
+            if (d.days_relative_to_deadline == null) return null;
+            if (d.days_relative_to_deadline > 0) return t('auditLog.explainTaskLate', { days: d.days_relative_to_deadline });
+            if (d.days_relative_to_deadline < 0) return t('auditLog.explainTaskEarly', { days: Math.abs(d.days_relative_to_deadline) });
+            return t('auditLog.explainTaskOnDeadline');
+        }
+        return null;
+    };
+
     const stats = useMemo(() => {
         const now = Date.now();
         return {
@@ -159,6 +186,9 @@ const AuditLogView = ({ userProfile, allUsers = [] }) => {
                                 <span className="text-lg shrink-0" aria-hidden="true">{ENTITY_ICONS[entry.entity_type] || '📄'}</span>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-xs font-bold text-gray-800 dark:text-gray-100">{describeEntry(entry)}</p>
+                                    {explainEntry(entry) && (
+                                        <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-0.5 italic">{explainEntry(entry)}</p>
+                                    )}
                                     <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
                                         {t('auditLog.byActor', { actor: getUserName(entry.actor_id) })} &middot; {new Date(entry.created_at).toLocaleString()}
                                     </p>

@@ -43,6 +43,7 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
                 nav('correlationInsights', t('nav.correlationInsights')),
                 nav('badgeScanner', t('nav.badgeScanner')),
                 nav('auditLog', t('nav.auditLog')),
+                nav('securitySignals', t('nav.securitySignals')),
                 nav('fleetHealth', t('nav.fleetHealth')),
                 nav('errorMonitor', t('nav.errorMonitor')),
             );

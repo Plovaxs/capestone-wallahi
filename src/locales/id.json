@@ -59,7 +59,8 @@
     "submitSelfAssessment": "Gagal mengajukan penilaian diri",
     "setClockPin": "Gagal memperbarui PIN absen Anda",
     "verifyClockPin": "Gagal memverifikasi PIN Anda",
-    "recordAttendanceOut": "Gagal mencatat absen pulang Anda"
+    "recordAttendanceOut": "Gagal mencatat absen pulang Anda",
+    "fetchKnownDevices": "Gagal memuat daftar perangkat yang dikenal"
   },
   "export": {
     "noData": "Belum ada data untuk diekspor.",
@@ -769,6 +770,7 @@
     "badgeScanner": "Pemindai Kartu",
     "myTeam": "Tim Saya",
     "messages": "Pesan",
+    "securitySignals": "Sinyal Keamanan",
     "settings": "Pengaturan",
     "menu": "Menu"
   },
@@ -1069,7 +1071,12 @@
     "descEvaluationCreated": "Membuat penilaian kinerja untuk {{employee}} (skor {{score}})",
     "descEvaluationUpdated": "Memperbarui skor penilaian {{employee}} dari {{from}} ke {{to}}",
     "descEvaluationDeleted": "Menghapus penilaian {{employee}} (sebelumnya {{score}})",
-    "descRoleChange": "Role {{name}} berubah dari {{from}} ke {{to}}"
+    "descRoleChange": "Role {{name}} berubah dari {{from}} ke {{to}}",
+    "explainLeaveWithQuota": "Mengajukan {{days}} hari — sisa {{balance}} hari di saldo pada saat keputusan ini dibuat",
+    "explainLeaveNoQuota": "Mengajukan {{days}} hari",
+    "explainTaskLate": "Diputuskan {{days}} hari setelah deadline",
+    "explainTaskEarly": "Diputuskan {{days}} hari sebelum deadline",
+    "explainTaskOnDeadline": "Diputuskan tepat pada deadline"
   },
   "contractExpiry": {
     "title": "Masa Kontrak",
@@ -1093,7 +1100,8 @@
     "certificateBody": "atas keberhasilan menyelesaikan penugasan sebagai {{position}} di departemen {{department}}, mewakili {{institution}}, untuk periode {{period}}.",
     "certificateSupervisorLabel": "Supervisor",
     "certificateIssuedOn": "Diterbitkan pada",
-    "certificateFilenamePrefix": "Sertifikat_Penyelesaian"
+    "certificateFilenamePrefix": "Sertifikat_Penyelesaian",
+    "reminderSent": "Pengingat masa kontrak terkirim ke {{name}}"
   },
   "onboardingTracker": {
     "title": "Pelacak Onboarding",
@@ -1150,6 +1158,21 @@
     "loading": "Memuat pesan...",
     "placeholder": "Ketik pesan...",
     "send": "Kirim"
+  },
+  "securitySignals": {
+    "title": "Sinyal Keamanan",
+    "subtitle": "Sinyal deteksi anomali yang layak diperiksa — hanya sebagai peringatan, bukan bukti pelanggaran.",
+    "supervisorOnly": "Halaman ini cuma tersedia untuk supervisor.",
+    "unknownUser": "Pengguna tidak dikenal",
+    "unknownDevice": "Perangkat tidak dikenal",
+    "loading": "Memuat...",
+    "travelTitle": "Perjalanan Mustahil",
+    "travelDescription": "Absen berurutan yang menyiratkan kecepatan perjalanan yang mustahil dicapai transportasi apapun — pola yang sama dipakai untuk deteksi anomali login.",
+    "noTravelFlags": "Tidak ada tanda perjalanan mustahil.",
+    "travelFlagDetail": "{{distance}} km dalam {{hours}} jam (~{{speed}} km/jam) — {{from}} ke {{to}}",
+    "devicesTitle": "Perangkat Baru Login",
+    "devicesDescription": "Perangkat yang pertama kali terlihat dalam 24 jam terakhir.",
+    "noNewDevices": "Tidak ada perangkat baru dalam 24 jam terakhir."
   },
   "team": {
     "title": "Tim Saya",

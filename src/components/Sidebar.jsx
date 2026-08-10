@@ -34,6 +34,7 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
     { id: 'correlationInsights', label: t('nav.correlationInsights'), icon: Icons.ScatterChart, supervisorOnly: true },
     { id: 'badgeScanner', label: t('nav.badgeScanner'), icon: Icons.QrCode, supervisorOnly: true },
     { id: 'auditLog', label: t('nav.auditLog'), icon: Icons.ClipboardCheck, supervisorOnly: true },
+    { id: 'securitySignals', label: t('nav.securitySignals'), icon: Icons.ShieldCheck, supervisorOnly: true },
     { id: 'fleetHealth', label: t('nav.fleetHealth'), icon: Icons.CpuChip, supervisorOnly: true },
     { id: 'errorMonitor', label: t('nav.errorMonitor'), icon: Icons.AlertTriangle, supervisorOnly: true },
   ];

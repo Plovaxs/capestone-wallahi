@@ -15,9 +15,11 @@ import { contributionsRepository } from './data/repositories/contributionsReposi
 import { helpdeskRepository } from './data/repositories/helpdeskRepository';
 import { reviewsRepository } from './data/repositories/reviewsRepository';
 import { notificationsRepository } from './data/repositories/notificationsRepository';
+import { knownDevicesRepository } from './data/repositories/knownDevicesRepository';
 import { showUserError } from './utils/errorHandling';
 import { performClockIn } from './domain/attendanceClockIn';
 import { consumeFaceVerifiedLoginFlag } from './domain/faceLoginClockInFlag';
+import { computeDeviceFingerprint, deriveDeviceLabel } from './utils/deviceFingerprint';
 import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from './geo/officeGeofence';
 import { notificationDispatcher } from './patterns/notificationChannels/NotificationDispatcher';
 import { subscribeToTable } from './realtime/subscribeToTable';
@@ -56,6 +58,7 @@ const IdBadgeView = React.lazy(() => import('./views/IdBadgeView'));
 const BadgeScannerView = React.lazy(() => import('./views/BadgeScannerView'));
 const TeamView = React.lazy(() => import('./views/TeamView'));
 const DirectMessagesView = React.lazy(() => import('./views/DirectMessagesView'));
+const SecuritySignalsView = React.lazy(() => import('./views/SecuritySignalsView'));
 
 const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
@@ -77,6 +80,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'badgeScanner': return <BadgeScannerView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'myTeam': return <TeamView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
     case 'messages': return <DirectMessagesView userProfile={userProfile} allUsers={props.allUsers} />;
+    case 'securitySignals': return <SecuritySignalsView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }
 };
@@ -356,6 +360,35 @@ export default function App() {
   };
 
   /**
+   * TRANSACTION: checkAndRecordDevice
+   * PURPOSE: standard "new sign-in" device-trust pattern -- computes a
+   * lightweight device fingerprint (utils/deviceFingerprint.js) and checks
+   * it against public.known_devices. A device this account has used before
+   * just gets its last_seen_at touched; a genuinely new device gets
+   * recorded, which fires a server-side trigger that notifies the account
+   * owner and logs it to the audit trail (see
+   * migrations/20260810_add_device_trust.sql) -- so if someone else is
+   * signing into this account from a device the real owner doesn't
+   * recognize, the owner finds out. Silent on failure (non-critical,
+   * shouldn't block or alarm over a network hiccup) and runs for every
+   * role, not just employees.
+   */
+  const checkAndRecordDevice = async (profile) => {
+    if (!profile) return;
+    try {
+      const fingerprint = await computeDeviceFingerprint();
+      const existing = await knownDevicesRepository.findByFingerprint(profile.id, fingerprint);
+      if (existing) {
+        await knownDevicesRepository.touchLastSeen(existing.id);
+      } else {
+        await knownDevicesRepository.recordNewDevice(profile.id, fingerprint, deriveDeviceLabel());
+      }
+    } catch (err) {
+      console.error('checkAndRecordDevice failed:', err.message);
+    }
+  };
+
+  /**
    * TRANSACTION: attemptAutoClockInAfterLogin
    * PURPOSE: if this session was just established via a live, just-verified
    * face scan (markFaceVerifiedLogin/consumeFaceVerifiedLoginFlag -- see
@@ -462,10 +495,11 @@ export default function App() {
   useEffect(() => {
     if (userProfile) {
       loadAllAppData(userProfile).then(() => attemptAutoClockInAfterLogin(userProfile));
+      checkAndRecordDevice(userProfile);
     }
     // Intentional: only re-run when the logged-in user actually changes.
-    // loadAllAppData/attemptAutoClockInAfterLogin aren't memoized, so
-    // listing them would refetch everything on every render.
+    // loadAllAppData/attemptAutoClockInAfterLogin/checkAndRecordDevice
+    // aren't memoized, so listing them would refetch/re-check on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 
