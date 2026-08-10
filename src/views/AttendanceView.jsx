@@ -8,8 +8,9 @@ import { generateTablePdf } from '../utils/generateTablePdf';
 import SortableTh from '../components/SortableTh';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { showUserError } from '../utils/errorHandling';
-import { getServerNow } from '../utils/serverTime';
-import { performClockIn } from '../domain/attendanceClockIn';
+import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
+import { isWeekend } from '../domain/attendanceDayPolicy';
+import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES } from '../vision/livenessDetector';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
@@ -125,7 +126,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL || '/models';
     const FACE_MATCH_THRESHOLD = 0.5;
     const YOLO_FACE_THRESHOLD = 0.35;
-    const ATTENDANCE_TABLE = 'attendance';
     const FACE_SCAN_INTERVAL_MS = 1800;
     // 🟩 Built once face-api.js finishes loading (see loadModels) instead of
     // at module/component top-level, which previously required face-api.js
@@ -1403,20 +1403,75 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         }
     };
 
-    const handleClockOut = async () => {
+    // 🟩 Delegates to domain/attendanceClockIn.js's performClockOut -- see
+    // that module's comment for why this used to be a raw inline update
+    // (privacy: no location captured at clock-out) and is now shared with
+    // the PIN clock-out path below instead of a second copy of it.
+    const handleClockOut = async (source = 'face-match') => {
         setIsLoading(true);
-        const time = (await getServerNow()).toLocaleTimeString('en-GB', { hour12: false });
-        // 🟩 PRIVACY: deliberately does NOT record location at clock-out.
-        // Clock-in location is tied to the geofence/attendance-legitimacy
-        // check itself, which is a defensible reason to capture it -- but
-        // tracking exactly where an intern was standing when they clocked
-        // OUT (e.g. their home address, end of day) has no equivalent
-        // business justification and is exactly the kind of function-creep
-        // that runs into data-protection/privacy-law trouble. Don't collect
-        // it just because it's technically easy to.
-        await supabase.from(ATTENDANCE_TABLE).update({ clock_out: time }).eq('id', todayRecord.id);
-        await fetchAttendance();
-        setIsLoading(false);
+        try {
+            const result = await performClockOut({ attendanceRowId: todayRecord.id, source });
+            if (!result.success) {
+                showUserError('errors.recordAttendanceOut', result.error);
+                return false;
+            }
+            await fetchAttendance();
+            return true;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // --- PIN + GEOFENCE CLOCK-IN/OUT (camera-free alternative) ---
+    // Reuses the exact same geofence verdict (isInRange) the face-scan flow
+    // computes continuously above -- WFO still requires being physically in
+    // range, WFH still bypasses it. Only the identity-verification step
+    // differs (PIN instead of a live face match).
+    const [showPinModal, setShowPinModal] = useState(false);
+    const [pinInput, setPinInput] = useState('');
+    const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+
+    const handlePinClockAction = async () => {
+        if (!pinInput) return;
+        setIsVerifyingPin(true);
+        try {
+            const rateLimit = await checkRateLimit('pin-clock-attempt', { maxRequests: 5, windowSeconds: 60 });
+            if (!rateLimit.allowed) {
+                toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
+                return;
+            }
+
+            const { data: isValid, error: verifyError } = await supabase.rpc('verify_clock_pin', { pin: pinInput });
+            if (verifyError) { showUserError('errors.verifyClockPin', verifyError); return; }
+            if (!isValid) { toast.error(t('attendance.pinIncorrect')); return; }
+
+            if (!todayRecord) {
+                const requiresLocationGate = userProfile.role !== 'supervisor' && (userProfile.work_mode || 'WFO') === 'WFO';
+                if (requiresLocationGate && !isInRange) { toast.error(t('attendance.geofenceRejection')); return; }
+                const result = await performClockIn({ userProfile, coords: currentCoords, isInRange, today, source: 'pin' });
+                if (!result.success) {
+                    if (result.reason === 'already-clocked-in') { toast.error(t('attendance.alreadyClockedInToday')); await fetchAttendance(); }
+                    else showUserError('errors.recordAttendance', result.error);
+                    return;
+                }
+                setClockInAt(result.time);
+                setClockInSource('pin');
+                toast.success(t('attendance.pinClockInSuccess'));
+            } else if (!todayRecord.clock_out) {
+                const result = await performClockOut({ attendanceRowId: todayRecord.id, source: 'pin' });
+                if (!result.success) { showUserError('errors.recordAttendanceOut', result.error); return; }
+                toast.success(t('attendance.pinClockOutSuccess'));
+            } else {
+                toast.error(t('attendance.alreadyClockedInToday'));
+                return;
+            }
+
+            setPinInput('');
+            setShowPinModal(false);
+            await fetchAttendance();
+        } finally {
+            setIsVerifyingPin(false);
+        }
     };
 
     const handleToggleWorkMode = async (employeeId, currentMode) => {
@@ -1829,7 +1884,14 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 {(userProfile.work_mode || 'WFO') === 'WFO' ? '🏢' : '🏠'}
                             </div>
                             <div>
-                                <h2 className="text-base font-bold text-gray-900 dark:text-white">{t('attendance.assignedDutyProfile', { mode: (userProfile.work_mode || 'WFO') === 'WFO' ? t('attendance.officeBoundary') : t('attendance.remoteHome') })}</h2>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <h2 className="text-base font-bold text-gray-900 dark:text-white">{t('attendance.assignedDutyProfile', { mode: (userProfile.work_mode || 'WFO') === 'WFO' ? t('attendance.officeBoundary') : t('attendance.remoteHome') })}</h2>
+                                    {isWeekend(today) && (
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-600 dark:bg-violet-950/30 dark:text-violet-300">
+                                            {t('attendance.weekendOptional')}
+                                        </span>
+                                    )}
+                                </div>
                                 <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                                     {(userProfile.work_mode || 'WFO') === 'WFO'
                                         ? (liveDistance !== null ? t('attendance.coordinatesTracked', { distance: liveDistance.toFixed(0) }) : t('attendance.capturingGps'))
@@ -1886,6 +1948,20 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             )}
                             {todayRecord && todayRecord.clock_out && (
                                 <div className="w-full md:w-auto px-8 py-3 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 text-gray-400 dark:text-slate-500 font-extrabold rounded-xl text-xs uppercase tracking-widest text-center">{t('attendance.shiftCompleted')}</div>
+                            )}
+                            {/* 🟩 PIN + geofence: camera-free alternative, gated the same
+                                way as the face flow (geofence still enforced for WFO) --
+                                see handlePinClockAction above and migrations/
+                                20260810_add_clock_pin.sql. Only offered once there's
+                                something left to do today. */}
+                            {(!todayRecord || !todayRecord.clock_out) && userProfile.clock_pin_hash && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPinModal(true)}
+                                    className="w-full md:w-auto px-4 py-3 rounded-xl border border-gray-300 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-300 font-bold text-[10px] uppercase tracking-widest transition-all"
+                                >
+                                    {t('attendance.usePinInstead')}
+                                </button>
                             )}
                          </div>
                     </div>
@@ -2115,6 +2191,40 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             className="px-4 py-2 text-xs font-bold rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow-sm"
                         >
                             {t('attendance.consentAccept')}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal isOpen={showPinModal} onClose={() => { setShowPinModal(false); setPinInput(''); }} title={t('attendance.pinModalTitle')}>
+                <div className="space-y-4">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{t('attendance.pinModalDescription')}</p>
+                    <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={8}
+                        autoFocus
+                        value={pinInput}
+                        onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handlePinClockAction(); }}
+                        placeholder="••••"
+                        className="w-full p-4 text-center text-2xl tracking-[0.5em] border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-mono"
+                    />
+                    <div className="flex justify-end gap-2">
+                        <button
+                            type="button"
+                            onClick={() => { setShowPinModal(false); setPinInput(''); }}
+                            className="px-4 py-2 text-xs font-bold rounded-xl border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                            {t('confirm.cancel')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handlePinClockAction}
+                            disabled={!pinInput || isVerifyingPin}
+                            className="px-4 py-2 text-xs font-bold rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow-sm disabled:opacity-40"
+                        >
+                            {isVerifyingPin ? t('attendance.processing') : t('attendance.pinModalConfirm')}
                         </button>
                     </div>
                 </div>

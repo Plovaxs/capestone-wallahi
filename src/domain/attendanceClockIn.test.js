@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const maybeSingleMock = vi.fn();
 const insertMock = vi.fn();
+const updateEqMock = vi.fn();
 
 vi.mock('../supabaseClient', () => ({
     supabase: {
@@ -14,6 +15,7 @@ vi.mock('../supabaseClient', () => ({
                 }),
             }),
             insert: insertMock,
+            update: () => ({ eq: updateEqMock }),
         })),
     },
 }));
@@ -22,7 +24,7 @@ vi.mock('../utils/serverTime', () => ({
     getServerNow: vi.fn(),
 }));
 
-import { performClockIn, WORK_START_TIME } from './attendanceClockIn';
+import { performClockIn, performClockOut, WORK_START_TIME } from './attendanceClockIn';
 import { getServerNow } from '../utils/serverTime';
 
 const userProfile = { id: 'emp-1', role: 'employee' };
@@ -32,6 +34,7 @@ describe('performClockIn', () => {
         vi.clearAllMocks();
         maybeSingleMock.mockResolvedValue({ data: null, error: null });
         insertMock.mockResolvedValue({ error: null });
+        updateEqMock.mockResolvedValue({ error: null });
         getServerNow.mockResolvedValue(new Date('2026-01-01T01:00:00Z')); // renders as a UTC-based local time string in the sandbox's default TZ
     });
 
@@ -96,5 +99,31 @@ describe('performClockIn', () => {
         // constant the module itself compares against.
         const expectedStatus = result.time > WORK_START_TIME ? 'Late' : 'Present';
         expect(result.status).toBe(expectedStatus);
+    });
+
+    it('persists the clock-in method/source on the row', async () => {
+        await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01', source: 'pin' });
+        expect(insertMock).toHaveBeenCalledWith([expect.objectContaining({ clock_method: 'pin' })]);
+    });
+});
+
+describe('performClockOut', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        updateEqMock.mockResolvedValue({ error: null });
+        getServerNow.mockResolvedValue(new Date('2026-01-01T09:00:00Z'));
+    });
+
+    it('records a clock-out time and method for the given row, without location', async () => {
+        const result = await performClockOut({ attendanceRowId: 'row-1', source: 'pin' });
+        expect(result.success).toBe(true);
+        expect(updateEqMock).toHaveBeenCalledWith('id', 'row-1');
+    });
+
+    it('surfaces a db error instead of throwing', async () => {
+        const dbError = new Error('write failed');
+        updateEqMock.mockResolvedValue({ error: dbError });
+        const result = await performClockOut({ attendanceRowId: 'row-1' });
+        expect(result).toEqual({ success: false, reason: 'db-error', error: dbError });
     });
 });

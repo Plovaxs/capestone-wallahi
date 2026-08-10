@@ -6,6 +6,7 @@ import { sanitizeFileExtension } from '../utils/sanitize';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { validateAvatarFile } from '../utils/validateMime';
 import { showUserError } from '../utils/errorHandling';
+import { confirmDialog } from '../utils/confirm';
 import { notificationDispatcher } from '../patterns/notificationChannels/NotificationDispatcher';
 import { BrowserPushChannel } from '../patterns/notificationChannels/BrowserPushChannel';
 import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
@@ -220,6 +221,48 @@ const SettingsView = ({
         if (data) window.open(data.signedUrl, '_blank');
     };
 
+    // --- CAMERA-FREE CLOCK-IN PIN (see domain/attendanceClockIn.js / migrations/20260810_add_clock_pin.sql) ---
+    const [newPin, setNewPin] = useState('');
+    const [confirmPin, setConfirmPin] = useState('');
+    const [isSavingPin, setIsSavingPin] = useState(false);
+    const hasClockPin = !!userProfile.clock_pin_hash;
+
+    const handleSetPin = async () => {
+        if (newPin !== confirmPin) {
+            toast.error(t('settings.pinMismatch'));
+            return;
+        }
+        if (!/^\d{4,8}$/.test(newPin)) {
+            toast.error(t('settings.pinInvalidFormat'));
+            return;
+        }
+        setIsSavingPin(true);
+        try {
+            const { error } = await supabase.rpc('set_clock_pin', { pin: newPin });
+            if (error) { showUserError('errors.setClockPin', error); return; }
+            toast.success(t('settings.pinSaved'));
+            setNewPin('');
+            setConfirmPin('');
+            fetchProfile && fetchProfile();
+        } catch (error) {
+            showUserError('errors.setClockPin', error);
+        } finally {
+            setIsSavingPin(false);
+        }
+    };
+
+    const handleClearPin = async () => {
+        if (!(await confirmDialog(t('settings.confirmClearPin')))) return;
+        try {
+            const { error } = await supabase.rpc('clear_clock_pin');
+            if (error) { showUserError('errors.setClockPin', error); return; }
+            toast.success(t('settings.pinCleared'));
+            fetchProfile && fetchProfile();
+        } catch (error) {
+            showUserError('errors.setClockPin', error);
+        }
+    };
+
     const [togglingLeadId, setTogglingLeadId] = useState(null);
     const handleToggleTeamLead = async (emp) => {
         setTogglingLeadId(emp.id);
@@ -385,6 +428,70 @@ const SettingsView = ({
                         </button>
                     </div>
                 </div>
+
+                {/* --- CONTAINER SECTION: CAMERA-FREE CLOCK-IN PIN (employees only) --- */}
+                {userProfile.role !== 'supervisor' && (
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 md:col-span-2">
+                        <div className="mb-6 flex items-start justify-between gap-4">
+                            <div>
+                                <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.clockPinTitle')}</h3>
+                                <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">{t('settings.clockPinDescription')}</p>
+                            </div>
+                            {hasClockPin && (
+                                <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                                    {t('settings.clockPinActive')}
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                            <div className="space-y-1">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{hasClockPin ? t('settings.newPin') : t('settings.setPin')}</label>
+                                <input
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={8}
+                                    value={newPin}
+                                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="••••"
+                                    className="w-full p-3 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-medium text-xs"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.confirmPin')}</label>
+                                <input
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength={8}
+                                    value={confirmPin}
+                                    onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="••••"
+                                    className="w-full p-3 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none font-medium text-xs"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleSetPin}
+                                    disabled={!newPin || !confirmPin || isSavingPin}
+                                    className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-xs"
+                                >
+                                    {isSavingPin ? t('settings.saving') : t('settings.savePin')}
+                                </button>
+                                {hasClockPin && (
+                                    <button
+                                        type="button"
+                                        onClick={handleClearPin}
+                                        className="px-3 py-3 rounded-xl border border-gray-200 dark:border-gray-600 text-[11px] font-bold text-gray-500 hover:text-red-600 dark:text-gray-400"
+                                    >
+                                        {t('settings.clearPin')}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-3 italic">{t('settings.clockPinDisclaimer')}</p>
+                    </div>
+                )}
 
             </div>
 

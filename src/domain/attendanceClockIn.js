@@ -71,6 +71,7 @@ export async function performClockIn({ userProfile, coords, isInRange, today, so
             clock_in: time,
             latitude: coords ? coords.latitude : null,
             longitude: coords ? coords.longitude : null,
+            clock_method: source,
         }]);
 
         if (error) {
@@ -84,4 +85,33 @@ export async function performClockIn({ userProfile, coords, isInRange, today, so
         return navigator.locks.request(`attendance-clock-in-${userProfile.id}`, runInsert);
     }
     return runInsert();
+}
+
+/**
+ * Single source of truth for "record today's clock-out" -- extracted from
+ * AttendanceView's handleClockOut (which used to run a raw inline
+ * supabase.update()) so a second entry point (PIN-based clock-out) can
+ * reuse the exact same logic instead of a third copy of it.
+ *
+ * Deliberately does NOT record location at clock-out (privacy) -- see the
+ * comment this carries over from the original inline implementation.
+ *
+ * @param {object} params
+ * @param {string} params.attendanceRowId - the id of today's already-existing attendance row (must have been clocked in already)
+ * @param {string} [params.source] - free-text provenance tag, e.g. 'face-match' | 'pin'
+ */
+export async function performClockOut({ attendanceRowId, source = 'manual' }) {
+    const now = await getServerNow();
+    const time = now.toLocaleTimeString('en-GB', { hour12: false });
+
+    const { error } = await supabase
+        .from(ATTENDANCE_TABLE)
+        .update({ clock_out: time, clock_method: source })
+        .eq('id', attendanceRowId);
+
+    if (error) {
+        return { success: false, reason: 'db-error', error };
+    }
+
+    return { success: true, time, source };
 }
