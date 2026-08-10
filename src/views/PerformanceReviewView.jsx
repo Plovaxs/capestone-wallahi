@@ -8,6 +8,7 @@ import { confirmDialog } from '../utils/confirm';
 import { generateReviewPdf } from '../utils/generateReviewPdf';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
+import { selfAssessmentsRepository } from '../data/repositories/selfAssessmentsRepository';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -47,6 +48,61 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     // --- ROSTER SELECTION AND FILTER CONTROLS ---
     const [searchIntern, setSearchIntern] = useState('');
     const [sortOrder, setSortOrder] = useState('name-az');
+
+    // --- SELF-ASSESSMENT (employee self-scores, independent of the
+    // supervisor-authored evaluation above) ---
+    const [selfAssessments, setSelfAssessments] = useState([]);
+    const [selfScores, setSelfScores] = useState({});
+    const [selfComments, setSelfComments] = useState('');
+    const [isSubmittingSelf, setIsSubmittingSelf] = useState(false);
+
+    const fetchSelfAssessments = async () => {
+        try {
+            const data = await selfAssessmentsRepository.listAll();
+            setSelfAssessments(data || []);
+        } catch (err) {
+            showUserError('errors.loadSelfAssessments', err);
+        }
+    };
+
+    useEffect(() => {
+        if (userProfile) fetchSelfAssessments();
+    }, [userProfile]);
+
+    const myLatestSelfAssessment = useMemo(
+        () => selfAssessments.find((a) => a.employee_id === userProfile.id) || null,
+        [selfAssessments, userProfile.id]
+    );
+
+    const latestSelfAssessmentForSelected = useMemo(
+        () => (selectedUserId ? selfAssessments.find((a) => a.employee_id === selectedUserId) || null : null),
+        [selfAssessments, selectedUserId]
+    );
+
+    const totalSelfAnsweredQuestions = Object.keys(selfScores).length;
+
+    const handleSelectSelfScore = (itemId, rating) => {
+        setSelfScores((prev) => ({ ...prev, [itemId]: rating }));
+    };
+
+    const handleSubmitSelfAssessment = async () => {
+        if (totalSelfAnsweredQuestions < totalQuestionsCount) {
+            toast.error(t('reviews.incompleteRubric', { count: totalQuestionsCount - totalSelfAnsweredQuestions }));
+            return;
+        }
+        setIsSubmittingSelf(true);
+        try {
+            await selfAssessmentsRepository.submit(userProfile.id, selfScores, selfComments);
+            toast.success(t('reviews.selfAssessmentSubmitted'));
+            setSelfScores({});
+            setSelfComments('');
+            fetchSelfAssessments();
+        } catch (err) {
+            showUserError('errors.submitSelfAssessment', err);
+        } finally {
+            setIsSubmittingSelf(false);
+        }
+    };
 
     // Filter array mapping out access paths to list only intern profiles
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
@@ -428,6 +484,21 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                             </div>
                         </div>
 
+                        {/* SELF-ASSESSMENT REFERENCE (read-only, if the selected employee has submitted one) */}
+                        {latestSelfAssessmentForSelected && (
+                            <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-2">
+                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('reviews.selfAssessmentReference')}</h3>
+                                <p className="text-[10px] text-gray-400">
+                                    {t('reviews.selfAssessmentSubmittedOn', { date: new Date(latestSelfAssessmentForSelected.submitted_at).toLocaleDateString('en-GB') })}
+                                </p>
+                                {latestSelfAssessmentForSelected.comments && (
+                                    <p className="p-2.5 bg-gray-50 dark:bg-gray-900 rounded-xl text-[11px] italic text-gray-600 dark:text-gray-300">
+                                        "{latestSelfAssessmentForSelected.comments}"
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         {/* LIVE METRICS SYNC DISPLAY SHEET WIDGET */}
                         {telemetrySummary && (
                             <div className="bg-white dark:bg-gray-800 p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 space-y-3 animate-fade-in">
@@ -551,6 +622,82 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                                 <p className="text-[11px] max-w-xs leading-normal mt-0.5">{t('reviews.selectFromRoster')}</p>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* --- SELF-ASSESSMENT (employees only): score yourself before/independent of your supervisor's review --- */}
+            {userProfile.role !== 'supervisor' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
+                    <div className="p-5 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex justify-between items-center">
+                        <div>
+                            <h2 className="font-bold text-sm text-gray-800 dark:text-white">{t('reviews.selfAssessmentTitle')}</h2>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-0.5">
+                                {t('reviews.completedFields', { answered: totalSelfAnsweredQuestions, total: totalQuestionsCount })}
+                            </p>
+                        </div>
+                        {myLatestSelfAssessment && (
+                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                {t('reviews.selfAssessmentSubmittedOn', { date: new Date(myLatestSelfAssessment.submitted_at).toLocaleDateString('en-GB') })}
+                            </span>
+                        )}
+                    </div>
+                    <div className="p-5 space-y-8 max-h-[500px] overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700/60">
+                        {SECTIONS.map(section => (
+                            <div key={section.id} className="pt-6 first:pt-0 space-y-4">
+                                <h3 className="font-bold text-xs text-blue-600 dark:text-blue-400 uppercase tracking-wide border-b dark:border-gray-700 pb-1.5">{section.title}</h3>
+                                <div className="space-y-3">
+                                    {section.items.map((item, index) => (
+                                        <div key={item.id} className="p-3.5 border border-gray-50 dark:border-gray-700/40 bg-gray-50/20 dark:bg-gray-900/20 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                            <div className="flex gap-2 text-xs text-gray-700 dark:text-gray-300 leading-normal flex-1">
+                                                <span className="font-mono font-bold text-gray-400">{index + 1}.</span>
+                                                <p>{item.text}</p>
+                                            </div>
+                                            <div className="flex bg-gray-100 dark:bg-gray-900 p-1 rounded-xl self-end md:self-center shrink-0 border dark:border-gray-700 gap-1">
+                                                {SCORE_OPTIONS.map(opt => {
+                                                    const isSelected = selfScores[item.id] === opt.val;
+                                                    return (
+                                                        <button
+                                                            key={opt.val}
+                                                            type="button"
+                                                            onClick={() => handleSelectSelfScore(item.id, opt.val)}
+                                                            className={`px-3 py-1.5 text-[10px] font-extrabold rounded-lg transition-all ${
+                                                                isSelected ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+                                                            }`}
+                                                        >
+                                                            {opt.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        <div className="pt-6">
+                            <label htmlFor="self-assessment-comments" className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">{t('reviews.concludingFeedback')}</label>
+                            <textarea
+                                id="self-assessment-comments"
+                                value={selfComments}
+                                onChange={e => setSelfComments(e.target.value)}
+                                className="w-full p-4 border border-gray-100 dark:border-gray-600 text-xs rounded-xl bg-gray-50/50 dark:bg-gray-900 dark:text-white resize-none focus:outline-none"
+                                placeholder={t('reviews.concludingPlaceholder')}
+                                rows="2"
+                            ></textarea>
+                        </div>
+                    </div>
+                    <div className="p-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex justify-end items-center">
+                        <button
+                            type="button"
+                            onClick={handleSubmitSelfAssessment}
+                            disabled={isSubmittingSelf || totalSelfAnsweredQuestions < totalQuestionsCount}
+                            className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow transition-all ${
+                                totalSelfAnsweredQuestions < totalQuestionsCount ? 'bg-gray-300 dark:bg-gray-700 cursor-not-allowed text-gray-500' : 'bg-blue-600 hover:bg-blue-700'
+                            }`}
+                        >
+                            {isSubmittingSelf ? t('reviews.saving') : t('reviews.submitSelfAssessment')}
+                        </button>
                     </div>
                 </div>
             )}

@@ -25,8 +25,14 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
     { id: 'leave', label: t('nav.leaveRequests'), icon: Icons.CalendarDays },
     { id: 'contributions', label: t('nav.contributions'), icon: Icons.Trophy },
     { id: 'helpdesk', label: t('nav.helpdesk'), icon: Icons.LifeBuoy, badge: openTicketCount },
-    { id: 'reviews', label: t('nav.performance'), icon: Icons.UserCircle, supervisorOnly: true },
+    { id: 'messages', label: t('nav.messages'), icon: Icons.ChatBubble },
+    { id: 'idBadge', label: t('nav.idBadge'), icon: Icons.QrCode },
+    { id: 'reviews', label: t('nav.performance'), icon: Icons.UserCircle },
+    { id: 'myTeam', label: t('nav.myTeam'), icon: Icons.UsersGroup, teamLeadOnly: true },
     { id: 'contractExpiry', label: t('nav.contractExpiry'), icon: Icons.FileClock, supervisorOnly: true },
+    { id: 'onboardingTracker', label: t('nav.onboardingTracker'), icon: Icons.ListChecks, supervisorOnly: true },
+    { id: 'correlationInsights', label: t('nav.correlationInsights'), icon: Icons.ScatterChart, supervisorOnly: true },
+    { id: 'badgeScanner', label: t('nav.badgeScanner'), icon: Icons.QrCode, supervisorOnly: true },
     { id: 'auditLog', label: t('nav.auditLog'), icon: Icons.ClipboardCheck, supervisorOnly: true },
     { id: 'fleetHealth', label: t('nav.fleetHealth'), icon: Icons.CpuChip, supervisorOnly: true },
     { id: 'errorMonitor', label: t('nav.errorMonitor'), icon: Icons.AlertTriangle, supervisorOnly: true },
@@ -69,6 +75,7 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
           
           {menuItems.map(item => {
             if (item.supervisorOnly && userProfile?.role !== 'supervisor') return null;
+            if (item.teamLeadOnly && !userProfile?.is_team_lead) return null;
             
             const isActive = activeView === item.id;
             

@@ -10,7 +10,7 @@ import { runQuery, runMutation } from './apiClient';
 // listAll() meant downloading everyone's biometric templates on every
 // page that just needs names/roles. Excluding it here noticeably shrinks
 // that payload without touching anything that actually reads it.
-const PROFILE_LIST_COLUMNS = 'id, name, role, initials, vacation_days, sick_days, avatar_url, work_mode, source, email, department, position, job_desk, contract_start_date, contract_end_date, loa_file_path';
+const PROFILE_LIST_COLUMNS = 'id, name, role, initials, vacation_days, sick_days, avatar_url, work_mode, source, email, department, position, job_desk, contract_start_date, contract_end_date, loa_file_path, is_team_lead';
 
 export const profilesRepository = {
     getById: (userId) => runQuery('profiles.getById', () =>

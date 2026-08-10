@@ -31,8 +31,22 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
             nav('leave', t('nav.leaveRequests')),
             nav('contributions', t('nav.contributions')),
             nav('helpdesk', t('nav.helpdesk')),
+            nav('reviews', t('nav.performance')),
+            nav('messages', t('nav.messages')),
+            nav('idBadge', t('nav.idBadge')),
         ];
-        if (userProfile?.role === 'supervisor') commands.push(nav('reviews', t('nav.performance')));
+        if (userProfile?.is_team_lead) commands.push(nav('myTeam', t('nav.myTeam')));
+        if (userProfile?.role === 'supervisor') {
+            commands.push(
+                nav('contractExpiry', t('nav.contractExpiry')),
+                nav('onboardingTracker', t('nav.onboardingTracker')),
+                nav('correlationInsights', t('nav.correlationInsights')),
+                nav('badgeScanner', t('nav.badgeScanner')),
+                nav('auditLog', t('nav.auditLog')),
+                nav('fleetHealth', t('nav.fleetHealth')),
+                nav('errorMonitor', t('nav.errorMonitor')),
+            );
+        }
         commands.push(nav('settings', t('nav.settings')));
         commands.push({
             id: 'toggle-dark-mode',

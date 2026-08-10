@@ -51,7 +51,48 @@ const SettingsView = ({
     // mutation live in exactly one place.
     const staffEditor = useStaffAssignmentEditor(fetchAllUsers);
     const [isSavingPassword, setIsSavingPassword] = useState(false);
+    const [isImportingCsv, setIsImportingCsv] = useState(false);
+    const [importSummary, setImportSummary] = useState(null);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
+
+    /**
+     * PIPELINE TRANSACTION: handleBulkImportCsv
+     * PURPOSE: Lets a supervisor bulk-apply institution/position/
+     * department/contract fields to many already-registered employees at
+     * once (matched by email), instead of editing each one by hand.
+     * Deliberately does NOT create accounts -- see bulkImportAssignments.js.
+     */
+    const handleBulkImportCsv = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        setIsImportingCsv(true);
+        setImportSummary(null);
+        try {
+            const text = await file.text();
+            const { bulkImportAssignments } = await import('../utils/bulkImportAssignments');
+            const { patches, unmatchedEmails } = bulkImportAssignments(text, employeeUsers);
+
+            let succeeded = 0;
+            let failed = 0;
+            for (const { id, patch } of patches) {
+                const { error } = await supabase.from('profiles').update(patch).eq('id', id);
+                if (error) failed++; else succeeded++;
+            }
+
+            setImportSummary({ succeeded, failed, unmatched: unmatchedEmails.length });
+            if (succeeded > 0) {
+                toast.success(t('settings.bulkImportSuccess', { count: succeeded }));
+                fetchAllUsers && fetchAllUsers();
+            } else {
+                toast.error(t('settings.bulkImportNoMatches'));
+            }
+        } catch (error) {
+            showUserError('errors.bulkImport', error);
+        } finally {
+            setIsImportingCsv(false);
+            event.target.value = null;
+        }
+    };
 
     /**
      * PIPELINE TRANSACTION: handleAvatarUpload
@@ -179,6 +220,21 @@ const SettingsView = ({
         if (data) window.open(data.signedUrl, '_blank');
     };
 
+    const [togglingLeadId, setTogglingLeadId] = useState(null);
+    const handleToggleTeamLead = async (emp) => {
+        setTogglingLeadId(emp.id);
+        try {
+            const { error } = await supabase.from('profiles').update({ is_team_lead: !emp.is_team_lead }).eq('id', emp.id);
+            if (error) { showUserError('errors.updateAssignment', error); return; }
+            toast.success(emp.is_team_lead ? t('settings.teamLeadRemoved', { name: emp.name }) : t('settings.teamLeadGranted', { name: emp.name }));
+            fetchAllUsers && fetchAllUsers();
+        } catch (error) {
+            showUserError('errors.updateAssignment', error);
+        } finally {
+            setTogglingLeadId(null);
+        }
+    };
+
     const handleLanguageChange = (lang) => {
         i18n.changeLanguage(lang);
         localStorage.setItem('language', lang);
@@ -204,6 +260,10 @@ const SettingsView = ({
                         <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('settings.myAssignmentDescription')}</p>
                         <div className="flex flex-col sm:flex-row gap-6 text-xs">
                             <div className="space-y-1">
+                                <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.institution')}</span>
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.source || t('settings.notAssignedYet')}</span>
+                            </div>
+                            <div className="space-y-1">
                                 <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.position')}</span>
                                 <span className="font-bold text-gray-800 dark:text-gray-100">{userProfile.position || t('settings.notAssignedYet')}</span>
                             </div>
@@ -219,6 +279,18 @@ const SettingsView = ({
                                         : t('settings.notSetYet')}
                                 </span>
                             </div>
+                            {userProfile.loa_file_path && (
+                                <div className="space-y-1">
+                                    <span className="block font-bold text-gray-400 uppercase tracking-wider text-[10px]">{t('settings.loaDocument')}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleViewLoa(userProfile.loa_file_path)}
+                                        className="font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 underline"
+                                    >
+                                        {t('settings.viewLoa')}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                         {userProfile.job_desk && (
                             <div className="mt-4 space-y-1 text-xs">
@@ -319,8 +391,26 @@ const SettingsView = ({
             {/* --- CONTAINER SECTION 3: MANAGE STAFF ASSIGNMENTS (SUPERVISOR ONLY) --- */}
             {userProfile.role === 'supervisor' && (
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700">
-                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.manageStaffAssignments')}</h3>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 font-medium">{t('settings.manageStaffAssignmentsDescription')}</p>
+                    <div className="flex items-start justify-between gap-4 mb-1">
+                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100">{t('settings.manageStaffAssignments')}</h3>
+                        <label className={`shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer transition ${isImportingCsv ? 'opacity-40 cursor-not-allowed' : 'bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/30 dark:text-blue-300'}`}>
+                            {isImportingCsv ? t('settings.bulkImportImporting') : t('settings.bulkImportButton')}
+                            <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                className="hidden"
+                                onChange={handleBulkImportCsv}
+                                disabled={isImportingCsv}
+                            />
+                        </label>
+                    </div>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-2 font-medium">{t('settings.manageStaffAssignmentsDescription')}</p>
+                    <p className="text-[10px] text-gray-400 dark:text-gray-500 mb-4 italic">{t('settings.bulkImportHint')}</p>
+                    {importSummary && (
+                        <div className="mb-4 text-[11px] font-bold p-3 rounded-lg bg-gray-50 dark:bg-gray-900/40 text-gray-600 dark:text-gray-300">
+                            {t('settings.bulkImportSummary', { succeeded: importSummary.succeeded, failed: importSummary.failed, unmatched: importSummary.unmatched })}
+                        </div>
+                    )}
 
                     <div className="space-y-3">
                         {employeeUsers.length === 0 && (
@@ -338,6 +428,15 @@ const SettingsView = ({
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-3 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleToggleTeamLead(emp)}
+                                            disabled={togglingLeadId === emp.id || !emp.department}
+                                            title={!emp.department ? t('settings.teamLeadNeedsDepartment') : undefined}
+                                            className={`text-[11px] font-bold underline disabled:opacity-40 ${emp.is_team_lead ? 'text-amber-600 hover:text-amber-800 dark:text-amber-400' : 'text-gray-400 hover:text-gray-600 dark:text-gray-500'}`}
+                                        >
+                                            {emp.is_team_lead ? t('settings.teamLeadRevoke') : t('settings.teamLeadGrant')}
+                                        </button>
                                         {emp.loa_file_path && (
                                             <button
                                                 type="button"

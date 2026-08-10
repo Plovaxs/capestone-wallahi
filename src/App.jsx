@@ -50,6 +50,12 @@ const ErrorMonitorView = React.lazy(() => import('./views/ErrorMonitorView'));
 const AuditLogView = React.lazy(() => import('./views/AuditLogView'));
 const ContractExpiryView = React.lazy(() => import('./views/ContractExpiryView'));
 const FleetHealthView = React.lazy(() => import('./views/FleetHealthView'));
+const OnboardingTrackerView = React.lazy(() => import('./views/OnboardingTrackerView'));
+const CorrelationInsightsView = React.lazy(() => import('./views/CorrelationInsightsView'));
+const IdBadgeView = React.lazy(() => import('./views/IdBadgeView'));
+const BadgeScannerView = React.lazy(() => import('./views/BadgeScannerView'));
+const TeamView = React.lazy(() => import('./views/TeamView'));
+const DirectMessagesView = React.lazy(() => import('./views/DirectMessagesView'));
 
 const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
@@ -65,6 +71,12 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'auditLog': return <AuditLogView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'contractExpiry': return <ContractExpiryView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'fleetHealth': return <FleetHealthView userProfile={userProfile} allUsers={props.allUsers} />;
+    case 'onboardingTracker': return <OnboardingTrackerView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
+    case 'correlationInsights': return <CorrelationInsightsView userProfile={userProfile} allUsers={props.allUsers} tasks={props.tasks} attendance={props.attendance} reviews={props.reviews} />;
+    case 'idBadge': return <IdBadgeView userProfile={userProfile} />;
+    case 'badgeScanner': return <BadgeScannerView userProfile={userProfile} allUsers={props.allUsers} />;
+    case 'myTeam': return <TeamView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
+    case 'messages': return <DirectMessagesView userProfile={userProfile} allUsers={props.allUsers} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }
 };

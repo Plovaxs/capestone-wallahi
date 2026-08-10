@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { analyzeContractExpiry } from '../domain/contractExpiryTracker';
+import { showUserError } from '../utils/errorHandling';
 
 const URGENCY_STYLES = {
     expired: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50',
@@ -23,6 +25,37 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
     const { t } = useTranslation();
     const employeeUsers = useMemo(() => allUsers.filter((u) => u.role === 'employee'), [allUsers]);
     const entries = useMemo(() => analyzeContractExpiry(employeeUsers), [employeeUsers]);
+    const [generatingId, setGeneratingId] = useState(null);
+
+    const handleGenerateCertificate = async (entry) => {
+        setGeneratingId(entry.id);
+        try {
+            const { generateCompletionCertificate } = await import('../utils/generateCompletionCertificate');
+            await generateCompletionCertificate({
+                employeeName: entry.name,
+                institution: entry.source,
+                position: entry.position,
+                department: entry.department,
+                contractStartDate: entry.contract_start_date,
+                contractEndDate: entry.contract_end_date,
+                supervisorName: userProfile.name,
+                labels: {
+                    orgName: t('contractExpiry.certificateOrgName'),
+                    certificateTitle: t('contractExpiry.certificateTitle'),
+                    presentedTo: t('contractExpiry.certificatePresentedTo'),
+                    bodyText: ({ position, department, institution, period }) => t('contractExpiry.certificateBody', { position, department, institution, period }),
+                    supervisorLabel: t('contractExpiry.certificateSupervisorLabel'),
+                    issuedOn: t('contractExpiry.certificateIssuedOn'),
+                    filenamePrefix: t('contractExpiry.certificateFilenamePrefix'),
+                },
+            });
+            toast.success(t('contractExpiry.certificateGenerated'));
+        } catch (error) {
+            showUserError('errors.generateCertificate', error);
+        } finally {
+            setGeneratingId(null);
+        }
+    };
 
     const stats = useMemo(() => ({
         expired: entries.filter((e) => e.urgency === 'expired').length,
@@ -87,9 +120,19 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
                                         {entry.position || t('dashboard.notSet')} &middot; {entry.department || t('dashboard.notSet')} &middot; {new Date(entry.contract_end_date).toLocaleDateString('en-GB')}
                                     </p>
                                 </div>
-                                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 ${URGENCY_STYLES[entry.urgency]}`}>
-                                    {describeDays(entry)}
-                                </span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${URGENCY_STYLES[entry.urgency]}`}>
+                                        {describeDays(entry)}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleGenerateCertificate(entry)}
+                                        disabled={generatingId === entry.id}
+                                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 underline disabled:opacity-40"
+                                    >
+                                        {generatingId === entry.id ? t('contractExpiry.certificateGenerating') : t('contractExpiry.certificateGenerate')}
+                                    </button>
+                                </div>
                             </div>
                         ))}
                     </div>
