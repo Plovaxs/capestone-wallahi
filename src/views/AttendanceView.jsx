@@ -12,7 +12,7 @@ import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { isWeekend } from '../domain/attendanceDayPolicy';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
-import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
@@ -34,7 +34,6 @@ import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
-import { ScreenReflectionChallenge, calculateAverageRGB } from '../vision/screenReflectionChallenge';
 import { detectAutomation } from '../vision/automationDetector';
 import { checkVirtualCamera } from '../vision/virtualCameraDetector';
 import { createLatencyMonitor } from '../vision/inferenceLatencyMonitor';
@@ -253,15 +252,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // 🟩 SECURITY: active liveness challenge, reinstated as a mandatory gate
     // on top of the passive signals above (see vision/livenessFusion.js)
     // after a printed photo defeated the previous passive-only design for
-    // BOTH this page and Login during the capstone defense. Randomly
-    // alternates between blink and head-turn (no forced challengeType --
-    // see livenessDetector.js's pickRandomChallengeType) rather than
-    // always blink, since real footage of the enrolled person blinking
-    // (a video replay, not just a static photo) would otherwise satisfy a
-    // blink-only challenge every time. Per the examiner's explicit
-    // request, the occasional couple of extra seconds is an accepted
-    // trade-off for closing that gap.
-    const livenessChallengeRef = useRef(new RandomLivenessChallenge());
+    // BOTH this page and Login during the capstone defense. 🟩 REDESIGN
+    // (2026-08-11): fixed to a double-blink requirement instead of a random
+    // blink/smile/mouth-open mix -- see LoginPage.jsx's identical change for
+    // the rationale (the separate screen-color-flash check, removed below,
+    // was reported as a seizure-risk visual and dropped; a forced double
+    // blink already needs the same two-independent-sustained-cycles
+    // behavior a still photo or short loop can't fake).
+    const livenessChallengeRef = useRef(new RandomLivenessChallenge({
+        challengeType: CHALLENGE_TYPES.BLINK,
+        secondChallengeType: CHALLENGE_TYPES.BLINK,
+    }));
     // 🟩 rPPG PULSE LIVENESS: an additional, independent biometric vote --
     // see vision/pulseDetector.js for the full rationale. Deliberately
     // decoupled from the main ~1.2s scan tick below (a pulse needs ~20Hz
@@ -275,14 +276,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const pulseDetectorRef = useRef(createPulseDetector());
     const latestFaceBoxRef = useRef(null);
     const pulseCanvasRef = useRef(null);
-    // 🟩 SECURITY: screen-color-reflection check -- see LoginPage.jsx's
-    // identical wiring and vision/screenReflectionChallenge.js for the
-    // full rationale. Advisory signal only (one more fusion vote).
-    const screenReflectionRef = useRef(new ScreenReflectionChallenge());
-    const reflectionPhaseRef = useRef('baseline');
-    const reflectionPhaseStartedAtRef = useRef(Date.now());
-    const reflectionResultRef = useRef(null);
-    const [flashColor, setFlashColor] = useState(null);
     // 🟩 EDGE-INFERENCE LATENCY MONITOR: see vision/inferenceLatencyMonitor.js
     // -- observed (not just predicted-at-mount-time) per-tick detection
     // latency. dynamicYoloDisableRef is a one-way circuit breaker: once a
@@ -1165,7 +1158,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
                                         handSuspicious: handCheck.suspicious,
                                         pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
-                                        colorReflectionSuspicious: reflectionResultRef.current ? reflectionResultRef.current.failed : null,
                                     }).suspicious;
 
                                     if (!livenessSuspicious) {
@@ -1299,9 +1291,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         if (!isCameraReady || !isTabVisible || disableYolo || userProfile.role === 'supervisor') return;
 
         const PULSE_SAMPLE_INTERVAL_MS = 50; // ~20Hz -- well above the Nyquist rate for a <=3.5Hz (210 BPM) signal
-        const REFLECTION_BASELINE_MS = 200;
-        const REFLECTION_FLASH_MS = 300;
-        const REFLECTION_PAUSE_MS = 800;
         const timer = setInterval(() => {
             const box = latestFaceBoxRef.current;
             const video = webcamVideoRef.current;
@@ -1334,37 +1323,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 setSensorDiagnostics((prev) => (prev.pulseReady === pulseStats.ready && prev.pulsePlausible === pulseStats.hasPlausiblePulse && prev.pulseBpm === pulseStats.estimatedBpm
                     ? prev
                     : { ...prev, pulseReady: pulseStats.ready, pulsePlausible: pulseStats.hasPlausiblePulse, pulseBpm: pulseStats.estimatedBpm }));
-
-                // 🟩 SCREEN-COLOR-REFLECTION: continuously cycles baseline ->
-                // flash -> baseline -> flash -> ... -> pause -> reset,
-                // piggybacking on this same face-region capture. See
-                // vision/screenReflectionChallenge.js.
-                const avgRgb = calculateAverageRGB(region.data);
-                const reflection = screenReflectionRef.current;
-                const nowMs = Date.now();
-                const phaseElapsed = nowMs - reflectionPhaseStartedAtRef.current;
-                const phase = reflectionPhaseRef.current;
-
-                if (phase === 'baseline' && phaseElapsed >= REFLECTION_BASELINE_MS) {
-                    reflection.recordBaseline(avgRgb);
-                    reflectionPhaseRef.current = 'flash';
-                    reflectionPhaseStartedAtRef.current = nowMs;
-                    setFlashColor(reflection.currentFlashColor);
-                } else if (phase === 'flash' && phaseElapsed >= REFLECTION_FLASH_MS) {
-                    reflection.recordFlashSample(avgRgb);
-                    setFlashColor(null);
-                    if (reflection.isComplete) {
-                        reflectionResultRef.current = { confirmed: reflection.confirmed, failed: reflection.failed };
-                        reflectionPhaseRef.current = 'pause';
-                    } else {
-                        reflectionPhaseRef.current = 'baseline';
-                    }
-                    reflectionPhaseStartedAtRef.current = nowMs;
-                } else if (phase === 'pause' && phaseElapsed >= REFLECTION_PAUSE_MS) {
-                    reflection.reset();
-                    reflectionPhaseRef.current = 'baseline';
-                    reflectionPhaseStartedAtRef.current = nowMs;
-                }
             } catch (_err) {
                 // getImageData can throw on a tainted canvas in some browsers -- non-critical signal, skip this tick.
             }
@@ -1775,15 +1733,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // so this renders correctly in both themes instead of only ever
         // looking right in dark mode.
         <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-6 text-gray-800 dark:text-slate-100">
-            {/* 🟩 SECURITY: screen-color-reflection flash overlay -- see
-                LoginPage.jsx's identical overlay and vision/screenReflectionChallenge.js. */}
-            {flashColor && (
-                <div
-                    aria-hidden="true"
-                    className="fixed inset-0 z-40 pointer-events-none transition-opacity duration-100"
-                    style={{ backgroundColor: `rgb(${flashColor[0]}, ${flashColor[1]}, ${flashColor[2]})`, opacity: 0.85 }}
-                />
-            )}
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center border-b border-gray-200 dark:border-slate-800 pb-5 gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
