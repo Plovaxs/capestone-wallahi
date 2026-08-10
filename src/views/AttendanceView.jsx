@@ -406,7 +406,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         const sourceCanvas = document.createElement('canvas');
         sourceCanvas.width = width;
         sourceCanvas.height = height;
-        const sourceContext = sourceCanvas.getContext('2d');
+        // 🟩 PERF: this canvas's context gets read back with getImageData
+        // several times per tick downstream (face-box region, lens/hand
+        // full-frame checks, device-edge border region) -- willReadFrequently
+        // tells the browser to optimize for that instead of GPU-accelerated
+        // drawing, avoiding the "Multiple readback operations" warning and
+        // the actual readback slowdown it's warning about. Must be set here,
+        // at first getContext() -- a canvas's context (and its options) are
+        // fixed for its lifetime, so setting it on a later getContext() call
+        // on the same canvas (e.g. where liveDet.sourceCanvas is reused
+        // further down) has no effect.
+        const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
         if (!sourceContext) return null;
         // 🟩 LOW-LIGHT IMAGE ENHANCEMENT: when recent frames came back too
         // dark, boost brightness/contrast on the way into the capture canvas

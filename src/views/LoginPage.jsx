@@ -337,7 +337,13 @@ export default function LoginPage() {
         const sourceCanvas = document.createElement('canvas');
         sourceCanvas.width = width;
         sourceCanvas.height = height;
-        const ctx = sourceCanvas.getContext('2d');
+        // 🟩 PERF: this context now does multiple getImageData reads per
+        // tick (face-box region, border region for device-edge detection,
+        // full-frame for hand detection) -- willReadFrequently tells the
+        // browser to optimize for that access pattern instead of GPU-
+        // accelerated drawing, avoiding the "Multiple readback operations"
+        // console warning and the readback slowdown it's warning about.
+        const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) return;
         ctx.filter = isLowLightRef.current ? 'brightness(1.6) contrast(1.15)' : 'none';
         ctx.drawImage(videoEl, 0, 0, width, height);
