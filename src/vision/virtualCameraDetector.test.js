@@ -35,6 +35,20 @@ describe('checkVirtualCamera', () => {
         }
     });
 
+    it('does NOT flag AI-effects passthrough tools on a real camera (real-world false-positive regression)', async () => {
+        // NVIDIA Broadcast, YouCam, Logitech Capture, Elgato Camera Hub all
+        // register a "virtual" camera device too, but they layer filters
+        // (background blur, noise removal) on a genuine live physical feed
+        // -- not a tool for injecting arbitrary media. NVIDIA Broadcast
+        // ships on a large share of ordinary gaming laptops; a real user
+        // got locked out of face-login by this before the fix.
+        for (const label of ['Camera (NVIDIA Broadcast)', 'CyberLink YouCam', 'Logitech Capture', 'Elgato Camera Hub']) {
+            mockDevices([{ kind: 'videoinput', label }]);
+            const result = await checkVirtualCamera();
+            expect(result.suspicious, `expected "${label}" to NOT be flagged`).toBe(false);
+        }
+    });
+
     it('ignores non-videoinput devices', async () => {
         mockDevices([{ kind: 'audioinput', label: 'OBS Virtual Camera Audio' }]);
         const result = await checkVirtualCamera();

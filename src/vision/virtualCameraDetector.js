@@ -25,6 +25,18 @@
  * this specific attack technique for anyone using off-the-shelf tooling
  * without bothering to rename it, not a guarantee against a determined,
  * knowledgeable attacker.
+ *
+ * 🟩 FALSE-POSITIVE FIX (2026-08-10): deliberately excludes AI-effects
+ * passthrough tools (NVIDIA Broadcast, CyberLink YouCam, Logitech Capture,
+ * Elgato Camera Hub) -- these register as a "virtual" camera device too,
+ * but they're a real-time filter (background blur/replacement, noise
+ * removal) layered on a genuine live physical camera feed, not a tool for
+ * injecting arbitrary pre-rendered/synthetic media. NVIDIA Broadcast in
+ * particular ships on a large share of ordinary gaming laptops -- blocking
+ * it locked out real users on their own real webcam, a worse outcome than
+ * the marginal security this specific pattern was buying. Only patterns
+ * for tools actually designed/marketed around feeding arbitrary media
+ * (OBS, ManyCam, Snap Camera, "prank video call" tools, etc.) stay listed.
  */
 const VIRTUAL_CAMERA_NAME_PATTERNS = [
     /obs\b/i,
@@ -42,11 +54,7 @@ const VIRTUAL_CAMERA_NAME_PATTERNS = [
     /streamlabs/i,
     /e2esoft/i,
     /wondershare/i,
-    /youcam/i,
     /\bvcam\b/i,
-    /logitech capture/i,
-    /nvidia broadcast/i,
-    /elgato\s*camera\s*hub/i,
 ];
 
 export async function checkVirtualCamera() {
