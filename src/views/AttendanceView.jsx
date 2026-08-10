@@ -35,6 +35,7 @@ import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { detectAutomation } from '../vision/automationDetector';
+import { checkVirtualCamera } from '../vision/virtualCameraDetector';
 import { createLatencyMonitor } from '../vision/inferenceLatencyMonitor';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
@@ -194,6 +195,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // WebDriver-controlled session from the face-scan gate entirely, near-zero
     // false-positive signal, doesn't affect the manual clock-in button).
     const [automationDetected] = useState(() => detectAutomation().suspicious);
+    // 🟩 SECURITY: virtual/software camera driver -- see
+    // vision/virtualCameraDetector.js and LoginPage.jsx's identical check.
+    // Only knowable once camera permission is granted, so set once
+    // getUserMedia resolves below, not up front like automationDetected.
+    const [virtualCameraDetected, setVirtualCameraDetected] = useState(false);
     // 🟩 MITIGATION: the neural model loader below previously had no
     // try/catch at all -- a failed model fetch (flaky network, CDN hiccup)
     // threw an unhandled promise rejection with zero user-facing feedback;
@@ -774,6 +780,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     stream.getTracks().forEach(track => track.stop());
                     return;
                 }
+
+                const virtualCameraCheck = await checkVirtualCamera();
+                if (isCancelled) { stream.getTracks().forEach(track => track.stop()); return; }
+                if (virtualCameraCheck.suspicious) {
+                    console.warn('[attendance] virtual camera driver detected:', virtualCameraCheck.matchedLabel);
+                    stream.getTracks().forEach(track => track.stop());
+                    setVirtualCameraDetected(true);
+                    setCameraStatus('error');
+                    return;
+                }
+
                 webcamStreamRef.current = stream;
                 if (webcamVideoRef.current) {
                     webcamVideoRef.current.srcObject = stream;
@@ -2006,6 +2023,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         <span className="text-3xl" aria-hidden="true">🤖🚫</span>
                                         <h4 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.automationBlockedTitle')}</h4>
                                         <p className="text-[11px] text-gray-500 dark:text-slate-400 max-w-xs leading-relaxed">{t('attendance.automationBlockedBody')}</p>
+                                    </div>
+                                )}
+
+                                {/* 🟩 SECURITY: virtual/software camera driver detected -- see
+                                    vision/virtualCameraDetector.js. */}
+                                {virtualCameraDetected && (
+                                    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-white dark:bg-slate-950/95 text-center p-6">
+                                        <span className="text-3xl" aria-hidden="true">📹🚫</span>
+                                        <h4 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.virtualCameraBlockedTitle')}</h4>
+                                        <p className="text-[11px] text-gray-500 dark:text-slate-400 max-w-xs leading-relaxed">{t('attendance.virtualCameraBlockedBody')}</p>
                                     </div>
                                 )}
 

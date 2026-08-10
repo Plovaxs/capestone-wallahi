@@ -20,6 +20,7 @@ import { RandomLivenessChallenge, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECT
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
+import { checkVirtualCamera } from '../vision/virtualCameraDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
@@ -159,6 +160,14 @@ export default function LoginPage() {
   // controlled?) with a near-zero false-positive signal, unlike the noisier
   // per-frame heuristics that fusion combines.
   const [automationDetected] = useState(() => detectAutomation().suspicious);
+  // 🟩 SECURITY: virtual/software camera driver (OBS Virtual Camera,
+  // ManyCam, etc.) supplying the feed instead of a real webcam -- the
+  // dominant real-world technique for beating browser liveness checks
+  // (see vision/virtualCameraDetector.js). Device labels only populate
+  // once camera permission is actually granted, so this can't be checked
+  // up front like automationDetected -- it's set once getUserMedia
+  // resolves, below.
+  const [virtualCameraDetected, setVirtualCameraDetected] = useState(false);
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
   const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
 
@@ -231,6 +240,20 @@ export default function LoginPage() {
 
         if (!isCurrent) {
           stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        // 🟩 SECURITY: device labels only populate once permission is
+        // granted, so this is the earliest point it can run. A match stops
+        // the stream immediately -- same hard-block treatment as
+        // automationDetected, not one more vote in the passive fusion.
+        const virtualCameraCheck = await checkVirtualCamera();
+        if (!isCurrent) { stream.getTracks().forEach(track => track.stop()); return; }
+        if (virtualCameraCheck.suspicious) {
+          console.warn('[login] virtual camera driver detected:', virtualCameraCheck.matchedLabel);
+          stream.getTracks().forEach(track => track.stop());
+          setVirtualCameraDetected(true);
+          setBiometricStatus(t('login.statusVirtualCameraBlocked'));
           return;
         }
 
@@ -1001,6 +1024,17 @@ export default function LoginPage() {
               <span className="text-2xl" aria-hidden="true">🤖🚫</span>
               <h4 className="text-[11px] font-bold text-white leading-tight">{t('login.automationBlockedTitle')}</h4>
               <p className="text-[9px] text-slate-400 leading-relaxed">{t('login.automationBlockedBody')}</p>
+            </div>
+          )}
+
+          {/* 🟩 SECURITY: a virtual/software camera driver (OBS Virtual
+              Camera, ManyCam, etc.) supplying the feed instead of a real
+              webcam -- see vision/virtualCameraDetector.js. */}
+          {virtualCameraDetected && (
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+              <span className="text-2xl" aria-hidden="true">📹🚫</span>
+              <h4 className="text-[11px] font-bold text-white leading-tight">{t('login.virtualCameraBlockedTitle')}</h4>
+              <p className="text-[9px] text-slate-400 leading-relaxed">{t('login.virtualCameraBlockedBody')}</p>
             </div>
           )}
 
