@@ -60,21 +60,24 @@ export function calculatePitchRatio(landmarks) {
     return (noseTip.y - (browY + chinY) / 2) / faceHeight;
 }
 
-// 🟩 BUG FIX: these were stricter than LoginPage.jsx's own (separate,
-// hand-rolled) blink check, which uses a single 0.26 crossing point and has
-// been reliably working there. A user whose blink only dipped to ~0.24-0.25
-// (a real, common range depending on eye shape/camera angle/lighting) could
-// log in fine via LoginPage but never satisfy the stricter 0.23 threshold
-// here on the Attendance liveness challenge — "face detected, blinks
-// registering on Login, but Attendance's blink challenge never confirms."
-// Aligned the closed threshold with LoginPage's proven 0.26, with a wider
-// hysteresis gap to the open threshold so noise can't double-count a blink.
 const EAR_CLOSED_THRESHOLD = 0.26;
 const EAR_OPEN_THRESHOLD = 0.28;
-// 🟩 LOOSENED: real-user feedback ("lihat kiri kanan" struggle) — this
-// required a bigger, more deliberate head turn than felt natural in front
-// of a webcam to register the head-turn liveness challenge at all.
-const HEAD_TURN_THRESHOLD = 0.05;
+// 🟩 SECURITY HARDENING (2026-08-10): a real photo, physically wobbled by
+// hand while being held up to the camera, was reported to satisfy the
+// blink/head-turn challenge -- a single noisy frame crossing a threshold
+// (one bad landmark read, one moment of hand tremor) was previously
+// enough to confirm either challenge outright. Raising thresholds alone
+// doesn't fix this (incidental jitter can be just as large as a real,
+// deliberate movement); what a genuine blink/head-turn has that random
+// jitter doesn't is SUSTAINED, CONSISTENT motion across multiple frames.
+// Both challenges below now require the triggering condition to hold for
+// several consecutive frames, not one, and a minimum number of frames
+// must have been observed in total before ANY confirmation is possible --
+// closing the "got lucky in the first frame or two" window a static photo
+// exploited.
+const HEAD_TURN_THRESHOLD = 0.09;
+const MIN_CONSECUTIVE_FRAMES = 2; // consecutive frames the triggering condition must hold
+const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed overall before confirmation is even possible
 const DEFAULT_CHALLENGE_TIMEOUT_MS = 15000;
 
 export const CHALLENGE_TYPES = { BLINK: 'blink', HEAD_TURN: 'head_turn' };
@@ -96,8 +99,10 @@ const pickRandomChallengeType = () => (Math.random() < 0.5 ? CHALLENGE_TYPES.BLI
  * Confirms the face in front of the camera is a live person, not a photo
  * or video replay, by requiring the user to blink or turn their head
  * (randomly chosen per challenge, see pickRandomChallengeType above)
- * within a time window. The time box means a static photo or a looped
- * clip can't just be held up indefinitely waiting for a lucky frame.
+ * within a time window, with SUSTAINED motion (see the security-hardening
+ * comment above the thresholds) rather than a single-frame threshold
+ * crossing. The time box means a static photo or a looped clip can't
+ * just be held up indefinitely waiting for a lucky sequence of frames.
  */
 export class RandomLivenessChallenge {
     constructor({ challengeType = null, timeoutMs = DEFAULT_CHALLENGE_TIMEOUT_MS } = {}) {
@@ -111,6 +116,12 @@ export class RandomLivenessChallenge {
         this.hasBeenClosed = false;
         this.baselineTurnRatio = null;
         this.confirmed = false;
+        this.framesObserved = 0;
+        // Consecutive-frame run counters, reset whenever the run breaks.
+        this._closedRun = 0;
+        this._openRun = 0;
+        this._turnDirection = 0; // sign of the first sustained deviation, so a turn has to keep going the same way, not oscillate
+        this._turnRun = 0;
     }
 
     isExpired() {
@@ -123,22 +134,51 @@ export class RandomLivenessChallenge {
         if (!landmarks || typeof landmarks.getLeftEye !== 'function') return false;
         if (this.isExpired()) return false;
 
+        this.framesObserved += 1;
+        const enoughFramesSeen = this.framesObserved >= MIN_TOTAL_FRAMES_BEFORE_CONFIRM;
+
         if (this.challengeType === CHALLENGE_TYPES.BLINK) {
             const leftEAR = calculateEAR(landmarks.getLeftEye());
             const rightEAR = calculateEAR(landmarks.getRightEye());
             const avgEAR = (leftEAR + rightEAR) / 2;
 
             if (avgEAR < EAR_CLOSED_THRESHOLD) {
-                this.hasBeenClosed = true;
-            } else if (avgEAR > EAR_OPEN_THRESHOLD && this.hasBeenClosed) {
-                this.confirmed = true;
+                this._closedRun += 1;
+                this._openRun = 0;
+                if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) this.hasBeenClosed = true;
+            } else if (avgEAR > EAR_OPEN_THRESHOLD) {
+                this._closedRun = 0;
+                if (this.hasBeenClosed) {
+                    this._openRun += 1;
+                    if (this._openRun >= MIN_CONSECUTIVE_FRAMES && enoughFramesSeen) this.confirmed = true;
+                }
+            } else {
+                // Ambiguous middle ground (neither clearly open nor closed) --
+                // a single such frame doesn't reset progress (real blinks pass
+                // through this band too), but it doesn't extend a run either.
             }
         } else {
             const ratio = calculateHeadTurnRatio(landmarks);
             if (this.baselineTurnRatio === null) {
                 this.baselineTurnRatio = ratio;
-            } else if (Math.abs(ratio - this.baselineTurnRatio) > HEAD_TURN_THRESHOLD) {
-                this.confirmed = true;
+            } else {
+                const delta = ratio - this.baselineTurnRatio;
+                const direction = Math.sign(delta);
+                const pastThreshold = Math.abs(delta) > HEAD_TURN_THRESHOLD;
+
+                if (pastThreshold && direction !== 0 && (this._turnDirection === 0 || direction === this._turnDirection)) {
+                    this._turnDirection = direction;
+                    this._turnRun += 1;
+                    if (this._turnRun >= MIN_CONSECUTIVE_FRAMES && enoughFramesSeen) this.confirmed = true;
+                } else if (!pastThreshold) {
+                    // Dropped back below threshold -- not a sustained turn, reset the run (but keep the baseline).
+                    this._turnRun = 0;
+                    this._turnDirection = 0;
+                } else {
+                    // Past threshold but in the OPPOSITE direction from the run in progress -- oscillation, not a real turn. Reset.
+                    this._turnRun = 0;
+                    this._turnDirection = 0;
+                }
             }
         }
 
@@ -153,7 +193,8 @@ export class RandomLivenessChallenge {
 
 /**
  * @deprecated kept for backward compatibility — prefer RandomLivenessChallenge,
- * which adds a head-turn alternative and a time box on top of this blink-only check.
+ * which adds a head-turn alternative, sustained-motion requirements, and a
+ * time box on top of this blink-only check.
  */
 export class LivenessDetector {
     constructor() {

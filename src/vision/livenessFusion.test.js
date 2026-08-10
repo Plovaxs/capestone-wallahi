@@ -43,4 +43,32 @@ describe('evaluatePassiveLiveness', () => {
         expect(result.total).toBe(1);
         expect(result.suspicious).toBe(false);
     });
+
+    it('a confirmed absent pulse is authoritative -- overrides every other signal reading "not suspicious"', () => {
+        // The exact scenario a well-lit, sharp, hand-wobbled photo produces:
+        // border/pixel/color/texture all read fine, only pulse catches it.
+        const result = evaluatePassiveLiveness({
+            borderUniform: false,
+            pixelFlat: false,
+            colorSuspicious: false,
+            textureFlat: false,
+            pulseSuspicious: true,
+        });
+        expect(result.suspicious).toBe(true);
+    });
+
+    it('a confirmed present pulse does not by itself clear an otherwise-suspicious vote', () => {
+        const result = evaluatePassiveLiveness({
+            borderUniform: true,
+            pixelFlat: true,
+            pulseSuspicious: false,
+        });
+        expect(result.suspicious).toBe(true);
+    });
+
+    it('falls back to majority vote over the other signals while pulse data is not ready yet (null)', () => {
+        const result = evaluatePassiveLiveness({ borderUniform: true, pixelFlat: false, pulseSuspicious: null });
+        expect(result.suspicious).toBe(false);
+        expect(result.total).toBe(2); // pulse not counted at all while unavailable
+    });
 });

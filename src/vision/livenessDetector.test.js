@@ -113,23 +113,40 @@ describe('LivenessDetector (legacy blink-only)', () => {
 });
 
 describe('RandomLivenessChallenge', () => {
-    it('confirms a blink challenge via an open -> closed -> open sequence', () => {
+    it('confirms a blink challenge via a SUSTAINED open -> closed -> closed -> open -> open sequence', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
-    });
-
-    it('confirms a blink challenge from a soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        expect(challenge.registerFrame(makeLandmarks(closedEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(softBlinkEye))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 
-    it('confirms a head-turn challenge via a large enough offset from baseline', () => {
+    it('does NOT confirm a blink from a single noisy closed-frame dip (jitter, not a real blink)', () => {
+        // Exactly the exploit: an incidental single-frame dip (hand tremor
+        // moving a held-up photo, a bad landmark read) must not be enough.
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(closedEye)); // one dip only
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+    });
+
+    it('confirms a blink challenge from a sustained soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
+        challenge.registerFrame(makeLandmarks(openEye));
+        challenge.registerFrame(makeLandmarks(softBlinkEye));
+        challenge.registerFrame(makeLandmarks(softBlinkEye));
+        challenge.registerFrame(makeLandmarks(openEye));
+        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
+    });
+
+    it('confirms a head-turn challenge via a large, SUSTAINED offset from baseline', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
         expect(challenge.registerFrame(makeLandmarks(openEye, 0))).toBe(false); // establishes baseline
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(true);
     });
 
@@ -137,6 +154,15 @@ describe('RandomLivenessChallenge', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
         challenge.registerFrame(makeLandmarks(openEye, 0));
         expect(challenge.registerFrame(makeLandmarks(openEye, 0.01))).toBe(false);
+    });
+
+    it('does not confirm a head-turn challenge from an oscillating/wobbling offset (a hand-held photo jittering, not a real deliberate turn)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.HEAD_TURN });
+        challenge.registerFrame(makeLandmarks(openEye, 0)); // baseline
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // +
+        challenge.registerFrame(makeLandmarks(openEye, -0.3)); // - (oscillation breaks the run)
+        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // +
+        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false); // -
     });
 
     it('expires after the time box elapses without confirmation', () => {
@@ -154,6 +180,8 @@ describe('RandomLivenessChallenge', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(closedEye));
+        challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(openEye));
         expect(challenge.confirmed).toBe(true);
 
