@@ -133,6 +133,21 @@ export default function LoginPage() {
   const pulseCanvasRef = useRef(null);
   const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
 
+  // 🟩 SECURITY: server-issued, single-use liveness nonce -- closes the gap
+  // every purely client-side liveness check above (however hardened) can
+  // never close on its own: the biometric-login Edge Function used to
+  // accept a bare descriptor with zero awareness of whether any liveness
+  // check ran at all, so a captured/replayed network request, or a script
+  // calling the function directly with a leaked descriptor, could skip the
+  // camera UI entirely. The server now requires a fresh, single-use nonce
+  // (fetched before the challenge starts) and enforces a minimum elapsed
+  // time between issuing it and the login attempt using it -- a real
+  // replay-prevention/rate control, NOT a cryptographic proof that a human
+  // blinked. See supabase/functions/biometric-login/index.ts.
+  const loginNonceRef = useRef(null);
+  const loginNonceIssuedAtRef = useRef(0);
+  const NONCE_REFRESH_MARGIN_MS = 10000; // refresh proactively before the server-side ~35s expiry
+
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false); // 🟩 NEW: drives a retry button -- a failed model load used to leave the user permanently stuck with only a status-pill message and no way forward but a full page reload
   const [modelLoadAttempt, setModelLoadAttempt] = useState(0); // 🟩 NEW: bumping this re-runs the model-load effect, giving the retry button something to trigger
@@ -475,6 +490,7 @@ export default function LoginPage() {
         await executeBiometricLogin(detection.descriptor);
         livenessChallengeRef.current.reset();
         pulseDetectorRef.current.reset();
+        refreshLoginNonce(); // the nonce just used is now consumed server-side either way -- line up a fresh one for the next attempt
       } catch (err) {
         console.error('Face detection error:', err);
         // 🟩 MITIGATION: a repeatedly-throwing detection loop (WebGL context
@@ -494,6 +510,7 @@ export default function LoginPage() {
     };
 
     if (modelsLoaded) {
+      if (authMode === 'login') refreshLoginNonce();
       intervalId = setInterval(detectTick, DETECT_INTERVAL_MS);
     }
 
@@ -554,12 +571,35 @@ export default function LoginPage() {
   // instead of each page keeping its own copy of the same math.
   const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: videoRef.current });
 
+  const refreshLoginNonce = async () => {
+    try {
+      const { data } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
+      if (data?.nonce) {
+        loginNonceRef.current = data.nonce;
+        loginNonceIssuedAtRef.current = Date.now();
+      }
+    } catch (err) {
+      // Non-fatal: executeBiometricLogin will just get rejected server-side
+      // (missing/invalid nonce) and fall into the existing retry path below.
+      console.error('[login] failed to fetch a fresh login nonce:', err);
+    }
+  };
+
   const executeBiometricLogin = async (liveDescriptor) => {
    isRedirectingRef.current = true;
    setBiometricStatus(t('login.statusVerifyingServer'));
 
+   // The nonce proves SOME real time elapsed since it was issued (the
+   // server enforces a minimum) -- fetching a replacement right here,
+   // an instant before submitting, would defeat that entirely. Only
+   // refresh proactively if the current one is getting old enough to
+   // risk server-side expiry while the user was still mid-challenge.
+   if (!loginNonceRef.current || Date.now() - loginNonceIssuedAtRef.current > NONCE_REFRESH_MARGIN_MS * 2.5) {
+     await refreshLoginNonce();
+   }
+
    const { data, error } = await supabase.functions.invoke('biometric-login', {
-     body: { descriptor: Array.from(liveDescriptor) },
+     body: { descriptor: Array.from(liveDescriptor), nonce: loginNonceRef.current },
    });
 
    if (error || !data?.token_hash) {
@@ -593,6 +633,13 @@ export default function LoginPage() {
        // Doesn't count toward biometricFailCount -- being rate-limited says
        // nothing about whether this user's face actually matches, so it
        // shouldn't push them toward "give up and use a password" any faster.
+     } else if (reason === 'invalid_or_expired_challenge' || reason === 'challenge_too_fast') {
+       // 🟩 A legitimate timing edge case (nonce expired while lighting/
+       // positioning took a while, or a clock skew quirk), not a real
+       // failure of the user's face -- silently line up a fresh nonce and
+       // let the next completed challenge retry, no scary message, no
+       // count toward the password-fallback threshold.
+       refreshLoginNonce();
      } else {
        // Network failure (offline, DNS, CORS) or an unexpected 5xx -- the
        // request may not have reached the matching logic at all.

@@ -37,6 +37,15 @@ function euclideanDistance(a: number[], b: number[]): number {
 }
 
 const MATCH_THRESHOLD = 0.42;
+// A real, completed 2-step liveness challenge (see vision/livenessDetector.js)
+// takes at least a few seconds even at the fastest polling interval this app
+// uses -- this floor is deliberately conservative (well under that) so it
+// never rejects a genuine user, while still closing off "capture a valid
+// request and instantly replay it" and "call this function directly, zero
+// interaction" attacks, which would otherwise complete in single-digit
+// milliseconds.
+const MIN_CHALLENGE_ELAPSED_MS = 1500;
+const CHALLENGE_TTL_SECONDS = 35;
 
 Deno.serve(async (req) => {
   const corsHeaders = corsHeadersFor(req.headers.get("origin"));
@@ -50,6 +59,48 @@ Deno.serve(async (req) => {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
   try {
+    const body = await req.json();
+
+    // 🟩 SECURITY: issues a fresh, single-use, short-lived nonce the client
+    // must hold onto for the DURATION of its liveness challenge and send
+    // back with the actual login attempt below. This is what makes the
+    // client-side liveness checks (however hardened -- see
+    // vision/livenessDetector.js, livenessFusion.js) actually matter to
+    // this endpoint at all: without it, a captured/replayed request or a
+    // script calling this function directly with a leaked descriptor had
+    // zero obligation to have gone through any camera check whatsoever.
+    if (body?.action === "challenge") {
+      const { data: rl, error: rlError } = await admin.rpc("check_rate_limit_internal", {
+        p_key: `biometric-challenge:${ip}`,
+        p_max_requests: 20,
+        p_window_seconds: 60,
+      });
+      if (rlError) throw rlError;
+      if (!rl.allowed) {
+        return new Response(
+          JSON.stringify({ error: "rate_limited", retry_after_ms: rl.retry_after_ms }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const { data: challenge, error: insertError } = await admin
+        .from("login_challenges")
+        .insert({ ip, expires_at: new Date(Date.now() + CHALLENGE_TTL_SECONDS * 1000).toISOString() })
+        .select("nonce, expires_at")
+        .single();
+      if (insertError) throw insertError;
+
+      // Opportunistic cleanup -- keeps this table from growing forever
+      // without needing a separate cron job for what's a tiny amount of data.
+      admin.from("login_challenges").delete().lt("expires_at", new Date(Date.now() - 3600_000).toISOString())
+        .then(() => {}, (err) => console.error("login_challenges cleanup failed:", err));
+
+      return new Response(
+        JSON.stringify({ nonce: challenge.nonce, expiresAt: challenge.expires_at }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     // Rate limit by IP before doing any work — brute-forcing face
     // matches (replaying descriptors, trying many faces) gets slowed here.
     const { data: rl, error: rlError } = await admin.rpc("check_rate_limit_internal", {
@@ -65,9 +116,47 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { descriptor } = await req.json();
+    const { descriptor, nonce } = body;
     if (!Array.isArray(descriptor) || descriptor.length !== 128) {
       return new Response(JSON.stringify({ error: "Invalid descriptor" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (typeof nonce !== "string" || !nonce) {
+      return new Response(JSON.stringify({ error: "invalid_or_expired_challenge" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Atomically consume the nonce: only succeeds once, only before expiry.
+    // The UPDATE's WHERE clause is the actual single-use enforcement (a
+    // second concurrent attempt with the same nonce updates 0 rows and
+    // gets nothing back) -- reading the row first and checking in
+    // application code would leave a race window between the check and
+    // the consume.
+    const { data: consumedChallenge, error: consumeError } = await admin
+      .from("login_challenges")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("nonce", nonce)
+      .is("consumed_at", null)
+      .gt("expires_at", new Date().toISOString())
+      .select("issued_at")
+      .maybeSingle();
+    if (consumeError) throw consumeError;
+
+    if (!consumedChallenge) {
+      return new Response(JSON.stringify({ error: "invalid_or_expired_challenge" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const elapsedMs = Date.now() - new Date(consumedChallenge.issued_at).getTime();
+    if (elapsedMs < MIN_CHALLENGE_ELAPSED_MS) {
+      return new Response(JSON.stringify({ error: "challenge_too_fast" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
