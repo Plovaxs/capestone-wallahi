@@ -8,6 +8,7 @@ import { validateAvatarFile } from '../utils/validateMime';
 import { showUserError } from '../utils/errorHandling';
 import { notificationDispatcher } from '../patterns/notificationChannels/NotificationDispatcher';
 import { BrowserPushChannel } from '../patterns/notificationChannels/BrowserPushChannel';
+import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
 
 /**
  * COMPONENT: SettingsView
@@ -45,9 +46,10 @@ const SettingsView = ({
     const [confirmPassword, setConfirmPassword] = useState('');
 
     // --- SUPERVISOR-ONLY: STAFF DEPARTMENT / CONTRACT ASSIGNMENT ---
-    const [editingStaffId, setEditingStaffId] = useState(null);
-    const [staffEditDraft, setStaffEditDraft] = useState({ name: '', source: '', department: '', position: '', job_desk: '', work_mode: 'WFO', contract_start_date: '', contract_end_date: '' });
-    const [savingStaffId, setSavingStaffId] = useState(null);
+    // Shared with Dashboard's Outsource Directory inline editing -- see
+    // hooks/useStaffAssignmentEditor.js -- so the field list and save
+    // mutation live in exactly one place.
+    const staffEditor = useStaffAssignmentEditor(fetchAllUsers);
     const [isSavingPassword, setIsSavingPassword] = useState(false);
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
 
@@ -159,46 +161,6 @@ const SettingsView = ({
             showUserError('errors.updatePassword', err);
         } finally {
             setIsSavingPassword(false);
-        }
-    };
-
-    /**
-     * PIPELINE TRANSACTION: handleSaveStaffAssignment
-     * PURPOSE: Supervisor-only update of another user's department and
-     * internship contract period. Guarded server-side by the
-     * protect_privileged_profile_columns trigger regardless of what the
-     * client sends.
-     */
-    const handleSaveStaffAssignment = async (targetId) => {
-        setSavingStaffId(targetId);
-        try {
-            const { error } = await supabase
-                .from('profiles')
-                .update({
-                    name: staffEditDraft.name || null,
-                    source: staffEditDraft.source || null,
-                    department: staffEditDraft.department || null,
-                    position: staffEditDraft.position || null,
-                    job_desk: staffEditDraft.job_desk || null,
-                    work_mode: staffEditDraft.work_mode || 'WFO',
-                    contract_start_date: staffEditDraft.contract_start_date || null,
-                    contract_end_date: staffEditDraft.contract_end_date || null,
-                })
-                .eq('id', targetId);
-
-            if (error) {
-                showUserError('errors.updateAssignment', error);
-            } else {
-                setEditingStaffId(null);
-                fetchAllUsers && fetchAllUsers();
-            }
-        } catch (err) {
-            // A thrown (not just {error}) network failure previously left
-            // savingStaffId set forever — the Save button stuck disabled
-            // with no explanation until a full page reload.
-            showUserError('errors.updateAssignment', err);
-        } finally {
-            setSavingStaffId(null);
         }
     };
 
@@ -385,22 +347,10 @@ const SettingsView = ({
                                                 {t('settings.viewLoa')}
                                             </button>
                                         )}
-                                        {editingStaffId !== emp.id && (
+                                        {staffEditor.editingId !== emp.id && (
                                             <button
                                                 type="button"
-                                                onClick={() => {
-                                                    setEditingStaffId(emp.id);
-                                                    setStaffEditDraft({
-                                                        name: emp.name || '',
-                                                        source: emp.source || '',
-                                                        department: emp.department || '',
-                                                        position: emp.position || '',
-                                                        job_desk: emp.job_desk || '',
-                                                        work_mode: emp.work_mode || 'WFO',
-                                                        contract_start_date: emp.contract_start_date || '',
-                                                        contract_end_date: emp.contract_end_date || '',
-                                                    });
-                                                }}
+                                                onClick={() => staffEditor.startEdit(emp)}
                                                 className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
                                             >
                                                 {t('settings.edit')}
@@ -409,14 +359,14 @@ const SettingsView = ({
                                     </div>
                                 </div>
 
-                                {editingStaffId === emp.id && (
+                                {staffEditor.editingId === emp.id && (
                                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         <div className="space-y-1">
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.staffName')}</label>
                                             <input
                                                 type="text"
-                                                value={staffEditDraft.name}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, name: e.target.value }))}
+                                                value={staffEditor.draft.name}
+                                                onChange={(e) => staffEditor.updateField('name', e.target.value)}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
                                         </div>
@@ -424,8 +374,8 @@ const SettingsView = ({
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.institution')}</label>
                                             <input
                                                 type="text"
-                                                value={staffEditDraft.source}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, source: e.target.value }))}
+                                                value={staffEditor.draft.source}
+                                                onChange={(e) => staffEditor.updateField('source', e.target.value)}
                                                 placeholder={t('settings.institutionPlaceholder')}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
@@ -433,8 +383,8 @@ const SettingsView = ({
                                         <div className="space-y-1">
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.dutyMode')}</label>
                                             <select
-                                                value={staffEditDraft.work_mode}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, work_mode: e.target.value }))}
+                                                value={staffEditor.draft.work_mode}
+                                                onChange={(e) => staffEditor.updateField('work_mode', e.target.value)}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             >
                                                 <option value="WFO">{t('settings.dutyModeOffice')}</option>
@@ -445,8 +395,8 @@ const SettingsView = ({
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.department')}</label>
                                             <input
                                                 type="text"
-                                                value={staffEditDraft.department}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, department: e.target.value }))}
+                                                value={staffEditor.draft.department}
+                                                onChange={(e) => staffEditor.updateField('department', e.target.value)}
                                                 placeholder={t('settings.departmentPlaceholder')}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
@@ -455,8 +405,8 @@ const SettingsView = ({
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.position')}</label>
                                             <input
                                                 type="text"
-                                                value={staffEditDraft.position}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, position: e.target.value }))}
+                                                value={staffEditor.draft.position}
+                                                onChange={(e) => staffEditor.updateField('position', e.target.value)}
                                                 placeholder={t('settings.positionPlaceholder')}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
@@ -465,8 +415,8 @@ const SettingsView = ({
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.contractStart')}</label>
                                             <input
                                                 type="date"
-                                                value={staffEditDraft.contract_start_date}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, contract_start_date: e.target.value }))}
+                                                value={staffEditor.draft.contract_start_date}
+                                                onChange={(e) => staffEditor.updateField('contract_start_date', e.target.value)}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
                                         </div>
@@ -474,16 +424,16 @@ const SettingsView = ({
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.contractEnd')}</label>
                                             <input
                                                 type="date"
-                                                value={staffEditDraft.contract_end_date}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, contract_end_date: e.target.value }))}
+                                                value={staffEditor.draft.contract_end_date}
+                                                onChange={(e) => staffEditor.updateField('contract_end_date', e.target.value)}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none"
                                             />
                                         </div>
                                         <div className="space-y-1 sm:col-span-3">
                                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">{t('settings.jobDesk')}</label>
                                             <textarea
-                                                value={staffEditDraft.job_desk}
-                                                onChange={(e) => setStaffEditDraft(d => ({ ...d, job_desk: e.target.value }))}
+                                                value={staffEditor.draft.job_desk}
+                                                onChange={(e) => staffEditor.updateField('job_desk', e.target.value)}
                                                 placeholder={t('settings.jobDeskPlaceholder')}
                                                 rows={2}
                                                 className="w-full p-2 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none resize-none"
@@ -492,18 +442,18 @@ const SettingsView = ({
                                         <div className="sm:col-span-3 flex gap-2 justify-end mt-1">
                                             <button
                                                 type="button"
-                                                onClick={() => setEditingStaffId(null)}
+                                                onClick={staffEditor.cancelEdit}
                                                 className="px-3 py-1.5 text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 rounded-lg"
                                             >
                                                 {t('settings.cancel')}
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={() => handleSaveStaffAssignment(emp.id)}
-                                                disabled={savingStaffId === emp.id}
+                                                onClick={() => staffEditor.save(emp.id)}
+                                                disabled={staffEditor.savingId === emp.id}
                                                 className="px-3 py-1.5 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
                                             >
-                                                {savingStaffId === emp.id ? t('settings.saving') : t('settings.save')}
+                                                {staffEditor.savingId === emp.id ? t('settings.saving') : t('settings.save')}
                                             </button>
                                         </div>
                                     </div>

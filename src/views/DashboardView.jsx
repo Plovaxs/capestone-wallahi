@@ -8,6 +8,8 @@ import { memoizeWithLru } from '../patterns/LRUCache';
 import { profilesRepository } from '../data/repositories/profilesRepository';
 import { showUserError } from '../utils/errorHandling';
 import { detectAttendanceAnomalies } from '../domain/attendanceAnomalyDetector';
+import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
+import { supabase } from '../supabaseClient';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -42,10 +44,27 @@ const computeLeaderboard = memoizeWithLru(
  * PURPOSE: Executive Telemetry Dashboard Aggregator.
  * FIXED: Shifted month index processing from (Jul-Dec) to (Jan-Jun) to perfectly match active internship timeline data.
  */
-const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView }) => {
+const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView, fetchAllUsers }) => {
     const { t } = useTranslation();
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
+    // 🟩 INLINE EDITING: Outsource Directory edits an employee's assignment
+    // fields directly in the table now (no more redirecting to Settings) --
+    // shared hook with Settings > Manage Staff Assignments (see
+    // hooks/useStaffAssignmentEditor.js) so both stay in sync on the field
+    // list and save mutation.
+    const staffEditor = useStaffAssignmentEditor(fetchAllUsers);
+    // 🟩 Same signed-URL pattern as Settings > Manage Staff Assignments'
+    // handleViewLoa -- the loa_documents bucket is private, so this is the
+    // only way to actually open one.
+    const handleViewLoa = async (path) => {
+        const { data, error } = await supabase.storage.from('loa_documents').createSignedUrl(path, 60);
+        if (error) {
+            showUserError('errors.openLoaDocument', error);
+            return;
+        }
+        if (data) window.open(data.signedUrl, '_blank');
+    };
     // 🟩 GHOST-EMPLOYEE DETECTION: on-demand (not auto-run on every dashboard
     // visit -- it's an occasional integrity check, not something that needs
     // to load unconditionally for every supervisor session) server-side
@@ -579,35 +598,81 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
-                                    {[...employeeUsers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((emp) => (
-                                        <tr key={emp.id} className="text-gray-700 dark:text-gray-300 hover:bg-gray-50/60 dark:hover:bg-gray-900/20">
-                                            <td className="px-4 py-2.5 font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap">{emp.name}</td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">{emp.source || emp.university || t('dashboard.notSet')}</td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap" title={emp.job_desk || ''}>{emp.position || t('dashboard.notSet')}</td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">{emp.department || t('dashboard.notSet')}</td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">{(emp.work_mode || 'WFO') === 'WFO' ? t('dashboard.dutyModeOffice') : t('dashboard.dutyModeRemote')}</td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">
-                                                {emp.contract_start_date && emp.contract_end_date
-                                                    ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
-                                                    : t('dashboard.notSet')}
-                                            </td>
-                                            <td className="px-4 py-2.5 whitespace-nowrap">
-                                                {/* 🟩 NEW: jumps straight to Settings > Manage Staff
-                                                    Assignments, already extended with all of these
-                                                    fields (name/institution/position/department/duty
-                                                    mode/contract period) plus a "View LOA" link --
-                                                    reuses that existing editor instead of duplicating
-                                                    a second one here. */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setActiveView && setActiveView('settings')}
-                                                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                                                >
-                                                    {t('dashboard.editStaff')}
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {[...employeeUsers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((emp) => {
+                                        const isEditing = staffEditor.editingId === emp.id;
+                                        // 🟩 INLINE EDITING: same shared hook/field-set as Settings
+                                        // > Manage Staff Assignments (hooks/useStaffAssignmentEditor.js)
+                                        // -- edits happen right in this row instead of redirecting
+                                        // away, per explicit request.
+                                        const cellInputClass = "w-full p-1.5 text-xs border border-gray-200 rounded-lg dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none";
+                                        return (
+                                            <tr key={emp.id} className="text-gray-700 dark:text-gray-300 hover:bg-gray-50/60 dark:hover:bg-gray-900/20 align-top">
+                                                <td className="px-4 py-2.5 font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <input type="text" value={staffEditor.draft.name} onChange={(e) => staffEditor.updateField('name', e.target.value)} className={cellInputClass} />
+                                                    ) : emp.name}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <input type="text" value={staffEditor.draft.source} onChange={(e) => staffEditor.updateField('source', e.target.value)} placeholder={t('settings.institutionPlaceholder')} className={cellInputClass} />
+                                                    ) : (emp.source || emp.university || t('dashboard.notSet'))}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap" title={!isEditing ? (emp.job_desk || '') : ''}>
+                                                    {isEditing ? (
+                                                        <input type="text" value={staffEditor.draft.position} onChange={(e) => staffEditor.updateField('position', e.target.value)} placeholder={t('settings.positionPlaceholder')} className={cellInputClass} />
+                                                    ) : (emp.position || t('dashboard.notSet'))}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <input type="text" value={staffEditor.draft.department} onChange={(e) => staffEditor.updateField('department', e.target.value)} placeholder={t('settings.departmentPlaceholder')} className={cellInputClass} />
+                                                    ) : (emp.department || t('dashboard.notSet'))}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <select value={staffEditor.draft.work_mode} onChange={(e) => staffEditor.updateField('work_mode', e.target.value)} className={cellInputClass}>
+                                                            <option value="WFO">{t('dashboard.dutyModeOffice')}</option>
+                                                            <option value="WFH">{t('dashboard.dutyModeRemote')}</option>
+                                                        </select>
+                                                    ) : ((emp.work_mode || 'WFO') === 'WFO' ? t('dashboard.dutyModeOffice') : t('dashboard.dutyModeRemote'))}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <div className="flex gap-1">
+                                                            <input type="date" value={staffEditor.draft.contract_start_date} onChange={(e) => staffEditor.updateField('contract_start_date', e.target.value)} className={cellInputClass} />
+                                                            <input type="date" value={staffEditor.draft.contract_end_date} onChange={(e) => staffEditor.updateField('contract_end_date', e.target.value)} className={cellInputClass} />
+                                                        </div>
+                                                    ) : (
+                                                        emp.contract_start_date && emp.contract_end_date
+                                                            ? `${new Date(emp.contract_start_date).toLocaleDateString('en-GB')} – ${new Date(emp.contract_end_date).toLocaleDateString('en-GB')}`
+                                                            : t('dashboard.notSet')
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2.5 whitespace-nowrap">
+                                                    {isEditing ? (
+                                                        <div className="flex gap-2">
+                                                            <button type="button" onClick={() => staffEditor.save(emp.id)} disabled={staffEditor.savingId === emp.id} className="text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded-lg disabled:opacity-50">
+                                                                {staffEditor.savingId === emp.id ? t('settings.saving') : t('settings.save')}
+                                                            </button>
+                                                            <button type="button" onClick={staffEditor.cancelEdit} className="text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 px-2 py-1 rounded-lg">
+                                                                {t('settings.cancel')}
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex gap-3">
+                                                            {emp.loa_file_path && (
+                                                                <button type="button" onClick={() => handleViewLoa(emp.loa_file_path)} className="text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 underline">
+                                                                    {t('settings.viewLoa')}
+                                                                </button>
+                                                            )}
+                                                            <button type="button" onClick={() => staffEditor.startEdit(emp)} className="text-[11px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400">
+                                                                {t('dashboard.editStaff')}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
