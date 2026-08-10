@@ -369,8 +369,15 @@ export default function LoginPage() {
         ctx.drawImage(videoEl, 0, 0, width, height);
         ctx.filter = 'none';
 
+        // 🟩 FINE-TUNING (2026-08-11): bumped inputSize 416 -> 512 to match
+        // both this page's own registration capture and AttendanceView's
+        // continuous scan -- a higher detector input resolution produces
+        // meaningfully more precise landmark coordinates, which directly
+        // improves BOTH face-match accuracy (a sharper descriptor) and the
+        // blink/smile/mouth-open challenge readings (their EAR/ratio math
+        // is only as good as the landmark points it's computed from).
         const allDetections = await faceapiRef.current
-          .detectAllFaces(sourceCanvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
+          .detectAllFaces(sourceCanvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.3 }))
           .withFaceLandmarks()
           .withFaceDescriptors();
 
