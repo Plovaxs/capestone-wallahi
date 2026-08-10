@@ -8,6 +8,7 @@ import { memoizeWithLru } from '../patterns/LRUCache';
 import { profilesRepository } from '../data/repositories/profilesRepository';
 import { showUserError } from '../utils/errorHandling';
 import { detectAttendanceAnomalies } from '../domain/attendanceAnomalyDetector';
+import { computeEngagementScores } from '../domain/employeeEngagementScore';
 import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
 import { supabase } from '../supabaseClient';
 
@@ -96,6 +97,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         individualTrend: true,
         outsourceDirectory: true,
         attendanceAnomalies: true,
+        engagementSignal: true,
     };
     const [widgets, setWidgets] = useState(() => {
         const saved = localStorage.getItem('dashboard_widgets');
@@ -117,7 +119,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // slot that can be shown/hidden (widgets state above) AND reordered
     // (widgetOrder below) at runtime — a small plugin-registry flavor
     // instead of a fixed hardcoded layout. Order is persisted per-browser. ---
-    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'outsourceDirectory', 'attendanceAnomalies', 'chartsGrid', 'recentReviews'];
+    const DEFAULT_WIDGET_ORDER = ['metrics', 'contractInfo', 'leaderboard', 'outsourceDirectory', 'attendanceAnomalies', 'engagementSignal', 'chartsGrid', 'recentReviews'];
     const [widgetOrder, setWidgetOrder] = useState(() => {
         const saved = localStorage.getItem('dashboard_widget_order');
         if (!saved) return DEFAULT_WIDGET_ORDER;
@@ -299,6 +301,17 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         [attendance]
     );
 
+    // --- ENGAGEMENT SIGNAL: composite punctuality/task-completion/review-
+    // trend/anomaly-count score per employee, worst-first -- see
+    // domain/employeeEngagementScore.js for why this is deliberately NOT
+    // framed as "flight risk prediction" the way some enterprise HR
+    // platforms do it (a well-documented ethical problem with that
+    // pattern). Advisory and fully explainable, not a black-box score.
+    const engagementScores = useMemo(
+        () => computeEngagementScores(employeeUsers, { tasks, attendance, reviews }),
+        [employeeUsers, tasks, attendance, reviews]
+    );
+
     // --- INDIVIDUAL PERFORMANCE TREND: only meaningful once a single
     // employee is picked in the selector above (not the "all" aggregate). ---
     const individualTrendData = selectedEmployee !== 'all'
@@ -376,6 +389,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                         <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
                                             <input type="checkbox" checked={widgets.attendanceAnomalies} onChange={() => toggleWidget('attendanceAnomalies')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
                                             <span>{t('dashboard.attendanceAnomalies')}</span>
+                                        </label>
+                                        <label className="flex items-center space-x-3 cursor-pointer hover:opacity-80">
+                                            <input type="checkbox" checked={widgets.engagementSignal} onChange={() => toggleWidget('engagementSignal')} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"/>
+                                            <span>{t('dashboard.engagementSignal')}</span>
                                         </label>
                                     </>
                                 )}
@@ -709,6 +726,48 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     </span>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* --- ENGAGEMENT SIGNAL: composite, fully-explainable score
+                (not a black-box prediction) surfacing who might benefit from
+                a supportive check-in -- see domain/employeeEngagementScore.js
+                for why this is deliberately NOT framed as "flight risk". --- */}
+            {widgets.engagementSignal && userProfile.role === 'supervisor' && (
+                <div style={{ order: orderOf('engagementSignal') }} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700/60">
+                    <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.engagementSignal')}</h2>
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.engagementSignalDescription')}</p>
+                    {engagementScores.filter((s) => s.compositeScore !== null).length === 0 ? (
+                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noEngagementData')}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {engagementScores.filter((s) => s.compositeScore !== null).slice(0, 8).map((s) => {
+                                const categoryStyle = {
+                                    urgent: 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300',
+                                    attention: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300',
+                                    steady: 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300',
+                                    thriving: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300',
+                                }[s.category];
+                                return (
+                                    <div key={s.employeeId} className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50/60 dark:bg-gray-900/30">
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-bold text-gray-800 dark:text-gray-100">{getUserName(s.employeeId)}</p>
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                                {t('dashboard.engagementBreakdown', {
+                                                    punctuality: s.breakdown.punctuality ?? '—',
+                                                    tasks: s.breakdown.taskCompletionRate ?? '—',
+                                                    anomalies: s.breakdown.anomalyCount,
+                                                })}
+                                            </p>
+                                        </div>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg shrink-0 ${categoryStyle}`}>
+                                            {t(`dashboard.engagementCategory_${s.category}`)} &middot; {s.compositeScore}
+                                        </span>
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
