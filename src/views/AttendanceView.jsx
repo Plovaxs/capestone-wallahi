@@ -208,6 +208,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
     const [faceStatus, setFaceStatus] = useState('idle');
     const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
+    // 🟩 UI: directional challenge glyph kept separate from biometricStatus
+    // text -- see LoginPage.jsx's identical split for the full rationale
+    // (a glyph+long-instruction string doesn't fit well in a small
+    // whitespace-nowrap overlay pill).
+    const [challengeGlyph, setChallengeGlyph] = useState(null);
     const [, setClockInAt] = useState(''); // write-only, never displayed
     const [, setClockInSource] = useState('none'); // write-only, never displayed
     const [, setCurrentModelVersion] = useState(null); // write-only, never displayed
@@ -1169,20 +1174,21 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // replay stays flagged indefinitely instead of ever
                                     // sneaking through.
                                     livenessChallengeRef.current.reset();
+                                    setChallengeGlyph(null);
                                     setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                 } else if (!challengeConfirmed) {
                                     const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
-                                    setBiometricStatus(
-                                        `${CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]} ${t(`attendance.statusAwaiting${suffix}`, {
-                                            step: livenessChallengeRef.current.stepIndex + 1,
-                                            totalSteps: livenessChallengeRef.current.totalSteps,
-                                        })}`
-                                    );
+                                    setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);
+                                    setBiometricStatus(t(`attendance.statusAwaiting${suffix}`, {
+                                        step: livenessChallengeRef.current.stepIndex + 1,
+                                        totalSteps: livenessChallengeRef.current.totalSteps,
+                                    }));
                                 } else {
                                     guardRef.current = true;
                                     livenessChallengeRef.current.reset();
                                     pulseDetectorRef.current.reset();
+                                    setChallengeGlyph(null);
                                     clearInterval(timer);
 
                                     if (clockingOutNow) {
@@ -1207,6 +1213,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         } else {
                             livenessChallengeRef.current.reset(); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
                             pulseDetectorRef.current.reset(); // don't mix pulse samples across different faces either
+                            setChallengeGlyph(null);
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
                             setBiometricStatus(bucketExhausted ? t('attendance.statusTooManyAttempts') : t('attendance.statusNotRecognized'));
                         }
@@ -1220,6 +1227,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     latestColorLivenessRef.current = { suspicious: false };
                     livenessChallengeRef.current.reset();
                     pulseDetectorRef.current.reset();
+                    setChallengeGlyph(null);
                     setBiometricStatus(t('attendance.statusScanning'));
                 }
             } catch (err) {
@@ -2108,10 +2116,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     </div>
                                 )}
 
-                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-900/95 border border-blue-500/30 backdrop-blur-md text-[10px] font-mono font-bold text-blue-600 dark:text-blue-400 px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap z-30 animate-pulse shadow-2xl">
-                                    {biometricStatus}
-                                </div>
                             </div>
+
+                            {/* 🟩 UI: directional challenge arrow, shown ABOVE the readiness bar
+                                (not cramped inside the panel overlay) -- big and prominent since
+                                it's the primary "what do I do right now" cue. */}
+                            {challengeGlyph && (
+                                <div className="mt-3 w-full max-w-md flex items-center justify-center h-9">
+                                    <span className="text-3xl animate-pulse" aria-hidden="true">{challengeGlyph}</span>
+                                </div>
+                            )}
 
                             {/* 🟩 SCAN READINESS BAR: live clock-in scan only (enrollment wizard has its own, pose-specific bar above) */}
                             {isCameraReady && hasStoredFace && !todayRecord && enrollmentStepIndex < 0 && (
@@ -2119,6 +2133,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     <ScanReadinessBar readiness={scanReadiness} label={t('attendance.scanReadinessLabel')} />
                                 </div>
                             )}
+
+                            {/* 🟩 UI: instruction/status text now lives below the bar, separate
+                                from the camera panel entirely, so a longer 2-step challenge
+                                instruction never overflows/clips inside the panel overlay. */}
+                            <p aria-live="polite" className="mt-2 text-[11px] font-bold text-blue-600 dark:text-blue-400 tracking-wide text-center max-w-md uppercase px-2">
+                                {biometricStatus}
+                            </p>
 
                             <div className="mt-4 flex flex-wrap gap-2 w-full max-w-md text-[10px] font-black uppercase tracking-widest font-mono">
                                 <button type="button" onClick={handleEnrollFaceFromStream} disabled={!isCameraReady || hasStoredFace || isEnrolling || enrollmentStepIndex >= 0} className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md disabled:bg-white dark:disabled:bg-slate-800 disabled:text-gray-500 dark:disabled:text-slate-600 transition-all">{isEnrolling ? t('attendance.enrolling') : t('attendance.enrollFacialMatrix')}</button>

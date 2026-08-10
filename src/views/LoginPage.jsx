@@ -91,6 +91,12 @@ export default function LoginPage() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
+  // 🟩 UI: the directional challenge glyph (⬅️➡️⬆️⬇️👁️) used to be prefixed
+  // directly into biometricStatus and rendered as one overlay pill cramped
+  // inside the circular camera frame -- kept separate so the layout can
+  // show the arrow prominently ABOVE the readiness bar and the instruction
+  // text BELOW it, without the frame overlay getting crowded.
+  const [challengeGlyph, setChallengeGlyph] = useState(null);
   // 🟩 PASSWORD FALLBACK: the zero-touch face login silently retries forever
   // on every blink — a legitimate user with a stale/no-longer-matching
   // descriptor (lighting, new glasses, re-enrollment needed) gets stuck in
@@ -373,6 +379,7 @@ export default function LoginPage() {
           livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
+          setChallengeGlyph(null);
           return;
         }
 
@@ -414,6 +421,7 @@ export default function LoginPage() {
           livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
+          setChallengeGlyph(null);
           return;
         }
 
@@ -493,28 +501,30 @@ export default function LoginPage() {
         if (passiveVote.suspicious) {
           livenessChallengeRef.current.reset();
           setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
+          setChallengeGlyph(null);
           return;
         }
 
         if (livenessChallengeRef.current.isExpired()) {
           livenessChallengeRef.current.reset();
           setBiometricStatus(t('login.statusChallengeExpired'));
+          setChallengeGlyph(null);
           return;
         }
 
         const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
         if (!challengeConfirmed) {
           const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
-          setBiometricStatus(
-            `${CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]} ${t(`login.statusAwaiting${suffix}`, {
-              step: livenessChallengeRef.current.stepIndex + 1,
-              totalSteps: livenessChallengeRef.current.totalSteps,
-            })}`
-          );
+          setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);
+          setBiometricStatus(t(`login.statusAwaiting${suffix}`, {
+            step: livenessChallengeRef.current.stepIndex + 1,
+            totalSteps: livenessChallengeRef.current.totalSteps,
+          }));
           return;
         }
 
         lastAttemptRef.current = now;
+        setChallengeGlyph(null);
         setBiometricStatus(t('login.statusLivenessVerified'));
         await executeBiometricLogin(detection.descriptor);
         livenessChallengeRef.current.reset();
@@ -1020,13 +1030,13 @@ export default function LoginPage() {
           <img src={LoginLogo} alt="Logo" className="h-10 w-auto opacity-60" />
         </div>
 
-        <div className="relative w-52 h-52 sm:w-64 sm:h-64 md:w-72 md:h-72 bg-black rounded-full border-4 border-dashed border-blue-400 overflow-hidden flex items-center justify-center mb-6 shadow-[0_0_35px_rgba(59,130,246,0.2)]">
+        <div className="relative w-64 h-64 sm:w-80 sm:h-80 md:w-96 md:h-96 bg-black rounded-3xl border-4 border-dashed border-blue-400 overflow-hidden flex items-center justify-center mb-4 shadow-[0_0_35px_rgba(59,130,246,0.2)]">
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="absolute inset-0 w-full h-full object-cover rounded-full z-10"
+            className="absolute inset-0 w-full h-full object-cover rounded-3xl z-10"
             style={{ transform: 'scaleX(-1)' }}
           />
 
@@ -1035,7 +1045,7 @@ export default function LoginPage() {
               the fix (use the password fields already on screen) is stated
               directly since there's nothing to retry here. */}
           {automationDetected && (
-            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-3xl">
               <span className="text-2xl" aria-hidden="true">🤖🚫</span>
               <h4 className="text-[11px] font-bold text-white leading-tight">{t('login.automationBlockedTitle')}</h4>
               <p className="text-[9px] text-slate-400 leading-relaxed">{t('login.automationBlockedBody')}</p>
@@ -1046,18 +1056,18 @@ export default function LoginPage() {
               Camera, ManyCam, etc.) supplying the feed instead of a real
               webcam -- see vision/virtualCameraDetector.js. */}
           {virtualCameraDetected && (
-            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-3xl">
               <span className="text-2xl" aria-hidden="true">📹🚫</span>
               <h4 className="text-[11px] font-bold text-white leading-tight">{t('login.virtualCameraBlockedTitle')}</h4>
               <p className="text-[9px] text-slate-400 leading-relaxed">{t('login.virtualCameraBlockedBody')}</p>
             </div>
           )}
 
-          {/* 🟩 CAMERA FALLBACK: covers the (black/empty) video circle with an
+          {/* 🟩 CAMERA FALLBACK: covers the (black/empty) video frame with an
               actionable, specific message instead of leaving it silently
               stuck on a generic "webcam unreachable" status pill. */}
           {cameraError && (
-            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-full">
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-slate-950/95 text-center p-4 rounded-3xl">
               <span className="text-2xl" aria-hidden="true">📷🚫</span>
               <h4 className="text-[11px] font-bold text-white leading-tight">{t(CAMERA_ERROR_I18N_KEYS[cameraError].title)}</h4>
               <p className="text-[9px] text-slate-400 leading-relaxed">
@@ -1081,9 +1091,6 @@ export default function LoginPage() {
               style={getFaceOverlayStyle() || { display: 'none' }}
             />
           )}
-          <div aria-live="polite" className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 w-[85%] bg-slate-900/90 border border-blue-500/30 backdrop-blur-sm text-[9px] sm:text-[10px] font-bold text-blue-400 px-2 sm:px-3 py-1 rounded-2xl uppercase tracking-widest text-center leading-tight z-20">
-            {biometricStatus}
-          </div>
         </div>
 
         {/* 🟩 MITIGATION: model download failed (flaky network, CDN hiccup,
@@ -1098,9 +1105,25 @@ export default function LoginPage() {
           </button>
         )}
 
-        <div className="w-full max-w-[220px] sm:max-w-xs mb-4">
+        {/* 🟩 UI: the directional challenge arrow, shown ABOVE the readiness
+            bar (not cramped inside the frame overlay) -- big and prominent
+            since it's the primary "what do I do right now" cue. */}
+        <div className="h-10 flex items-center justify-center mb-1" aria-hidden={!challengeGlyph}>
+          {challengeGlyph && (
+            <span className="text-4xl animate-pulse" aria-hidden="true">{challengeGlyph}</span>
+          )}
+        </div>
+
+        <div className="w-full max-w-[220px] sm:max-w-xs mb-3">
           <ScanReadinessBar readiness={scanReadiness} label={t('login.scanReadinessLabel')} />
         </div>
+
+        {/* 🟩 UI: instruction/status text now lives below the bar, separate
+            from the camera frame entirely, so a longer 2-step challenge
+            instruction never crowds or gets clipped inside the frame. */}
+        <p aria-live="polite" className="text-[11px] sm:text-xs font-bold text-blue-300 tracking-wide text-center max-w-xs uppercase px-4 mb-3 min-h-[2.5em]">
+          {biometricStatus}
+        </p>
 
         <h3 className="text-base sm:text-lg font-bold text-white mb-1 text-center px-4">{t('login.zeroTouchGate')}</h3>
         <p className="text-xs text-gray-400 tracking-wide text-center max-w-xs uppercase font-mono px-4">
