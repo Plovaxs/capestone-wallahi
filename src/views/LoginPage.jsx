@@ -18,6 +18,7 @@ import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { RandomLivenessChallenge, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
+import { ScreenReflectionChallenge, calculateAverageRGB } from '../vision/screenReflectionChallenge';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
 import { checkVirtualCamera } from '../vision/virtualCameraDetector';
@@ -139,6 +140,19 @@ export default function LoginPage() {
   const latestFaceBoxRef = useRef(null);
   const pulseCanvasRef = useRef(null);
   const faceapiRef = useRef(null); // 🟩 NEW: holds the dynamically-imported face-api.js module once loadNeuralModels finishes
+
+  // 🟩 SECURITY: screen-color-reflection check (vision/screenReflectionChallenge.js)
+  // -- runs continuously and independently of the expression challenge,
+  // piggybacking on the same fast pulse-sampling loop below. An ADVISORY
+  // signal (one more vote in the passive fusion), not a hard gate -- see
+  // that module's comment for why. reflectionResultRef is read (not
+  // state) since it only needs to be checked at the slower face-detection
+  // tick, not trigger its own re-renders.
+  const screenReflectionRef = useRef(new ScreenReflectionChallenge());
+  const reflectionPhaseRef = useRef('baseline'); // 'baseline' | 'flash' | 'pause'
+  const reflectionPhaseStartedAtRef = useRef(Date.now());
+  const reflectionResultRef = useRef(null); // { confirmed, failed } once at least one full cycle has completed
+  const [flashColor, setFlashColor] = useState(null); // [r,g,b] while a flash is active, else null -- drives the full-screen overlay
 
   // 🟩 SECURITY: server-issued, single-use liveness nonce -- closes the gap
   // every purely client-side liveness check above (however hardened) can
@@ -496,6 +510,7 @@ export default function LoginPage() {
           deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
           handSuspicious: handCheck.suspicious,
           pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
+          colorReflectionSuspicious: reflectionResultRef.current ? reflectionResultRef.current.failed : null,
         });
 
         if (passiveVote.suspicious) {
@@ -520,6 +535,19 @@ export default function LoginPage() {
             step: livenessChallengeRef.current.stepIndex + 1,
             totalSteps: livenessChallengeRef.current.totalSteps,
           }));
+          return;
+        }
+
+        // 🟩 SECURITY: rPPG pulse is now a MANDATORY gate, not just an
+        // authoritative-when-ready vote in passiveVote above -- a photo/
+        // screen genuinely cannot produce a periodic blood-flow signal, so
+        // this is one of the hardest signals here to fake, and login
+        // shouldn't be able to complete purely on a fast facial-expression
+        // challenge before the pulse buffer has even finished warming up
+        // (~2s). If it's not ready yet, the challenge stays confirmed
+        // (won't reset/re-prompt) and this tick just waits for the next one.
+        if (!pulseStats.ready) {
+          setBiometricStatus(t('login.statusAwaitingPulse'));
           return;
         }
 
@@ -576,6 +604,9 @@ export default function LoginPage() {
     if (!modelsLoaded || authMode !== 'login') return;
 
     const PULSE_SAMPLE_INTERVAL_MS = 50;
+    const REFLECTION_BASELINE_MS = 200;
+    const REFLECTION_FLASH_MS = 300;
+    const REFLECTION_PAUSE_MS = 800;
     const timer = setInterval(() => {
       const box = latestFaceBoxRef.current;
       const video = videoRef.current;
@@ -597,6 +628,37 @@ export default function LoginPage() {
         ctx.drawImage(video, sx, sy, sw, sh, 0, 0, 24, 24);
         const region = ctx.getImageData(0, 0, 24, 24);
         pulseDetectorRef.current.addSample(calculateAverageGreenChannel(region.data), Date.now());
+
+        // 🟩 SCREEN-COLOR-REFLECTION: continuously cycles baseline -> flash
+        // -> baseline -> flash -> ... -> pause -> reset, piggybacking on
+        // this same face-region capture (no extra canvas work). See
+        // vision/screenReflectionChallenge.js.
+        const avgRgb = calculateAverageRGB(region.data);
+        const reflection = screenReflectionRef.current;
+        const nowMs = Date.now();
+        const phaseElapsed = nowMs - reflectionPhaseStartedAtRef.current;
+        const phase = reflectionPhaseRef.current;
+
+        if (phase === 'baseline' && phaseElapsed >= REFLECTION_BASELINE_MS) {
+          reflection.recordBaseline(avgRgb);
+          reflectionPhaseRef.current = 'flash';
+          reflectionPhaseStartedAtRef.current = nowMs;
+          setFlashColor(reflection.currentFlashColor);
+        } else if (phase === 'flash' && phaseElapsed >= REFLECTION_FLASH_MS) {
+          reflection.recordFlashSample(avgRgb);
+          setFlashColor(null);
+          if (reflection.isComplete) {
+            reflectionResultRef.current = { confirmed: reflection.confirmed, failed: reflection.failed };
+            reflectionPhaseRef.current = 'pause';
+          } else {
+            reflectionPhaseRef.current = 'baseline';
+          }
+          reflectionPhaseStartedAtRef.current = nowMs;
+        } else if (phase === 'pause' && phaseElapsed >= REFLECTION_PAUSE_MS) {
+          reflection.reset();
+          reflectionPhaseRef.current = 'baseline';
+          reflectionPhaseStartedAtRef.current = nowMs;
+        }
       } catch (_err) {
         // getImageData can throw on a tainted canvas in some browsers -- non-critical signal, skip this tick.
       }
@@ -868,6 +930,19 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen w-full flex flex-col md:flex-row font-sans">
+      {/* 🟩 SECURITY: screen-color-reflection flash overlay -- see
+          vision/screenReflectionChallenge.js. Full-screen and mostly
+          opaque (needs to actually change the light hitting the user's
+          face, a low-opacity tint wouldn't) but brief (300ms) and
+          pointer-events-none so it never blocks interacting with the
+          password form underneath. */}
+      {flashColor && (
+        <div
+          aria-hidden="true"
+          className="fixed inset-0 z-40 pointer-events-none transition-opacity duration-100"
+          style={{ backgroundColor: `rgb(${flashColor[0]}, ${flashColor[1]}, ${flashColor[2]})`, opacity: 0.85 }}
+        />
+      )}
       <div className="w-full md:w-1/2 bg-slate-900 flex items-center justify-center p-6 sm:p-8">
         <div className="w-full max-w-sm">
           <div className="text-center mb-8">

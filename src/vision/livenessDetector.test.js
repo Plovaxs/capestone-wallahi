@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { calculateEAR, calculateHeadTurnRatio, calculatePitchRatio, LivenessDetector, RandomLivenessChallenge, CHALLENGE_TYPES } from './livenessDetector';
+import {
+    calculateEAR, calculateHeadTurnRatio, calculatePitchRatio,
+    calculateMouthWidthRatio, calculateMouthOpenRatio,
+    LivenessDetector, RandomLivenessChallenge, CHALLENGE_TYPES,
+} from './livenessDetector';
 
 // A synthetic "open eye" shape: roughly rectangular, taller than a closed slit.
 const openEye = [
@@ -36,13 +40,34 @@ const softBlinkEye = [
     { x: 2, y: 5.75 },
 ];
 
-const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50) => ({
+// face-api's 20-point mouth (indices 0-11 outer, 12-19 inner); only the
+// points calculateMouthWidthRatio/calculateMouthOpenRatio actually read
+// (0, 6, 12, 14, 16, 18) are meaningfully positioned -- the rest are
+// filler so getMouth() always returns a full 20-point array.
+const buildMouth = (width = 20, openHeight = 2) => {
+    const cx = 50;
+    const cy = 80;
+    const points = new Array(20).fill(null).map(() => ({ x: cx, y: cy }));
+    points[0] = { x: cx - width / 2, y: cy }; // outer left corner
+    points[6] = { x: cx + width / 2, y: cy }; // outer right corner
+    points[12] = { x: cx - width / 2 + 2, y: cy }; // inner left corner
+    points[16] = { x: cx + width / 2 - 2, y: cy }; // inner right corner
+    points[14] = { x: cx, y: cy - openHeight / 2 }; // inner top center
+    points[18] = { x: cx, y: cy + openHeight / 2 }; // inner bottom center
+    return points;
+};
+const neutralMouth = buildMouth(20, 2);
+const smilingMouth = buildMouth(32, 2); // wider, same openness
+const openMouth = buildMouth(20, 16); // same width, much taller gap
+
+const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50, mouth = neutralMouth) => ({
     getLeftEye: () => eye,
     getRightEye: () => eye,
     getNose: () => [{ x: 50 + headTurnRatio * 100, y: noseY }],
     getJawOutline: () => [{ x: 0, y: 100 }, { x: 50, y: 100 }, { x: 100, y: 100 }],
     getLeftEyeBrow: () => [{ x: 20, y: 20 }, { x: 30, y: 20 }, { x: 40, y: 20 }],
     getRightEyeBrow: () => [{ x: 60, y: 20 }, { x: 70, y: 20 }, { x: 80, y: 20 }],
+    getMouth: () => mouth,
 });
 
 describe('calculateEAR', () => {
@@ -60,7 +85,7 @@ describe('calculateEAR', () => {
     });
 });
 
-describe('calculateHeadTurnRatio', () => {
+describe('calculateHeadTurnRatio / calculatePitchRatio (still used by the enrollment wizard, no longer part of the challenge)', () => {
     it('returns ~0 when facing forward (nose centered between jaw endpoints)', () => {
         const landmarks = makeLandmarks(openEye, 0);
         expect(calculateHeadTurnRatio(landmarks)).toBeCloseTo(0, 1);
@@ -73,27 +98,31 @@ describe('calculateHeadTurnRatio', () => {
 
     it('returns 0 when landmarks are missing nose/jaw accessors', () => {
         expect(calculateHeadTurnRatio({})).toBe(0);
+        expect(calculatePitchRatio({})).toBe(0);
     });
 });
 
-describe('calculatePitchRatio', () => {
-    it('returns ~0 when the nose sits at the vertical midpoint (facing forward)', () => {
-        const landmarks = makeLandmarks(openEye, 0, 60); // midpoint of brow(20) and chin(100)
-        expect(calculatePitchRatio(landmarks)).toBeCloseTo(0, 1);
+describe('calculateMouthWidthRatio', () => {
+    it('is larger for a smiling (wider) mouth than a neutral one, relative to face width', () => {
+        const neutral = calculateMouthWidthRatio(makeLandmarks(openEye, 0, 50, neutralMouth));
+        const smiling = calculateMouthWidthRatio(makeLandmarks(openEye, 0, 50, smilingMouth));
+        expect(smiling).toBeGreaterThan(neutral);
     });
 
-    it('returns a negative ratio when the nose shifts toward the brows (tilted up)', () => {
-        const landmarks = makeLandmarks(openEye, 0, 25);
-        expect(calculatePitchRatio(landmarks)).toBeLessThan(-0.1);
+    it('returns 0 when landmarks are missing mouth/jaw accessors', () => {
+        expect(calculateMouthWidthRatio({})).toBe(0);
+    });
+});
+
+describe('calculateMouthOpenRatio', () => {
+    it('is larger for an open mouth than a closed/neutral one', () => {
+        const neutral = calculateMouthOpenRatio(makeLandmarks(openEye, 0, 50, neutralMouth));
+        const open = calculateMouthOpenRatio(makeLandmarks(openEye, 0, 50, openMouth));
+        expect(open).toBeGreaterThan(neutral);
     });
 
-    it('returns a positive ratio when the nose shifts toward the chin (tilted down)', () => {
-        const landmarks = makeLandmarks(openEye, 0, 95);
-        expect(calculatePitchRatio(landmarks)).toBeGreaterThan(0.1);
-    });
-
-    it('returns 0 when landmarks are missing required accessors', () => {
-        expect(calculatePitchRatio({})).toBe(0);
+    it('returns 0 when landmarks are missing the mouth accessor', () => {
+        expect(calculateMouthOpenRatio({})).toBe(0);
     });
 });
 
@@ -142,48 +171,36 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(true);
     });
 
-    it('confirms a LOOK_RIGHT challenge via a large, SUSTAINED offset in the specific required direction', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0))).toBe(false); // establishes baseline
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(false);
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(true);
+    it('confirms a SMILE challenge via a large, SUSTAINED widening of the mouth', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // establishes baseline
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(true);
     });
 
-    it('does NOT confirm LOOK_RIGHT when the movement is in the opposite (LEFT) direction', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
-        challenge.registerFrame(makeLandmarks(openEye, 0));
-        challenge.registerFrame(makeLandmarks(openEye, -0.3));
-        challenge.registerFrame(makeLandmarks(openEye, -0.3));
-        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false);
+    it('does NOT confirm SMILE from a negligible mouth-width change', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth));
+        const barelyWider = buildMouth(20.5, 2);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, barelyWider))).toBe(false);
     });
 
-    it('confirms LOOK_UP / LOOK_DOWN via calculatePitchRatio, in the specific required direction', () => {
-        const up = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_UP, steps: 1 });
-        up.registerFrame(makeLandmarks(openEye, 0, 60)); // baseline, forward-facing pitch
-        up.registerFrame(makeLandmarks(openEye, 0, 10));
-        up.registerFrame(makeLandmarks(openEye, 0, 10));
-        expect(up.registerFrame(makeLandmarks(openEye, 0, 10))).toBe(true);
-
-        const down = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_DOWN, steps: 1 });
-        down.registerFrame(makeLandmarks(openEye, 0, 60));
-        down.registerFrame(makeLandmarks(openEye, 0, 60)); // wrong direction (no movement) -- never confirms
-        expect(down.registerFrame(makeLandmarks(openEye, 0, 60))).toBe(false);
+    it('confirms a MOUTH_OPEN challenge via a large, SUSTAINED jaw drop', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.MOUTH_OPEN, steps: 1 });
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // baseline
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, openMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, openMouth))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, openMouth))).toBe(true);
     });
 
-    it('does not confirm a directional challenge for a negligible movement', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_LEFT, steps: 1 });
-        challenge.registerFrame(makeLandmarks(openEye, 0));
-        expect(challenge.registerFrame(makeLandmarks(openEye, -0.01))).toBe(false);
-    });
-
-    it('does not confirm a directional challenge from an oscillating/wobbling offset (a hand-held photo jittering, not a real deliberate turn)', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
-        challenge.registerFrame(makeLandmarks(openEye, 0)); // baseline
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // matches direction (run=1)
-        challenge.registerFrame(makeLandmarks(openEye, -0.3)); // wrong direction -- breaks the run
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));  // matches direction (run=1 again)
-        expect(challenge.registerFrame(makeLandmarks(openEye, -0.3))).toBe(false); // wrong direction again
+    it('does not confirm SMILE/MOUTH_OPEN from an oscillating change (a hand-held photo jittering, not a real deliberate expression)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // baseline
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth)); // matches (run=1)
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth)); // drops back -- breaks the run
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth)); // matches (run=1 again)
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false); // drops back again
     });
 
     it('expires after the time box elapses without confirmation', () => {
@@ -210,7 +227,7 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.confirmed).toBe(false);
     });
 
-    it('picks a random challenge type from all 5 when none is forced', () => {
+    it('picks a random challenge type from all 3 when none is forced', () => {
         const seen = new Set();
         for (let i = 0; i < 40; i++) {
             seen.add(new RandomLivenessChallenge().challengeType);
@@ -222,18 +239,18 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
 
 describe('RandomLivenessChallenge (default 2-step sequence)', () => {
     it('requires BOTH steps -- confirmed stays false after only the first step is satisfied', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_RIGHT });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.SMILE });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye));
         challenge.registerFrame(makeLandmarks(closedEye));
         challenge.registerFrame(makeLandmarks(openEye));
         const afterStepOne = challenge.registerFrame(makeLandmarks(openEye));
-        expect(afterStepOne).toBe(false); // step 1 (blink) done, but step 2 (look right) hasn't started
-        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.LOOK_RIGHT); // now prompting for step 2
+        expect(afterStepOne).toBe(false); // step 1 (blink) done, but step 2 (smile) hasn't started
+        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.SMILE); // now prompting for step 2
     });
 
     it('confirms only once both sequential steps are satisfied, in order', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_RIGHT });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.SMILE });
         // Step 1: blink
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye));
@@ -242,36 +259,36 @@ describe('RandomLivenessChallenge (default 2-step sequence)', () => {
         challenge.registerFrame(makeLandmarks(openEye));
         expect(challenge.confirmed).toBe(false);
 
-        // Step 2: look right -- baseline re-established fresh for this step
-        challenge.registerFrame(makeLandmarks(openEye, 0));
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));
-        expect(challenge.registerFrame(makeLandmarks(openEye, 0.3))).toBe(true);
+        // Step 2: smile -- baseline re-established fresh for this step
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth));
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth));
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth));
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth))).toBe(true);
         expect(challenge.confirmed).toBe(true);
     });
 
     it('a video/photo prepared only for step 1\'s challenge type cannot also satisfy an unrelated step 2 prompt', () => {
         // Simulates an attacker who only prepared to blink -- repeating the
-        // same blink motion does not satisfy a LOOK_UP second step.
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.LOOK_UP });
+        // same blink motion does not satisfy a MOUTH_OPEN second step.
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, secondChallengeType: CHALLENGE_TYPES.MOUTH_OPEN });
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(closedEye));
         challenge.registerFrame(makeLandmarks(closedEye));
         challenge.registerFrame(makeLandmarks(openEye));
         challenge.registerFrame(makeLandmarks(openEye));
-        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.LOOK_UP);
+        expect(challenge.challengeType).toBe(CHALLENGE_TYPES.MOUTH_OPEN);
 
-        // Keeps blinking instead of looking up -- never confirms.
-        challenge.registerFrame(makeLandmarks(closedEye));
-        challenge.registerFrame(makeLandmarks(closedEye));
-        expect(challenge.registerFrame(makeLandmarks(openEye))).toBe(false);
+        // Keeps blinking instead of opening its mouth -- never confirms.
+        challenge.registerFrame(makeLandmarks(closedEye, 0, 50, neutralMouth));
+        challenge.registerFrame(makeLandmarks(closedEye, 0, 50, neutralMouth));
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth))).toBe(false);
     });
 
     it('getStepProgress reflects live progress toward the CURRENT step (0-1)', () => {
-        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.LOOK_RIGHT, steps: 1 });
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.SMILE, steps: 1 });
         expect(challenge.getStepProgress()).toBe(0);
-        challenge.registerFrame(makeLandmarks(openEye, 0));
-        challenge.registerFrame(makeLandmarks(openEye, 0.3));
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, neutralMouth));
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50, smilingMouth));
         expect(challenge.getStepProgress()).toBeGreaterThan(0);
         expect(challenge.getStepProgress()).toBeLessThanOrEqual(1);
     });

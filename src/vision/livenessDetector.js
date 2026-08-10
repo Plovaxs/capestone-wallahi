@@ -20,8 +20,9 @@ export function calculateEAR(eyePoints) {
  * Head-turn ratio: horizontal offset of the nose tip from the midpoint
  * between the two jaw-outline endpoints, normalized by face width. Near 0
  * when facing the camera; grows in magnitude (sign indicates direction)
- * as the head turns left/right. Also uses only the existing 68-point
- * landmarks — no extra model.
+ * as the head turns left/right. Kept exported/used for the multi-angle
+ * enrollment wizard (AttendanceView.jsx) -- no longer part of the
+ * liveness CHALLENGE itself (see the 2026-08-11 note below).
  */
 export function calculateHeadTurnRatio(landmarks) {
     const nose = landmarks.getNose?.();
@@ -39,10 +40,8 @@ export function calculateHeadTurnRatio(landmarks) {
 
 /**
  * Pitch ratio: a 2D approximation of up/down head tilt. Compares where the
- * nose tip sits between the eyebrow line and the chin — tilting the head
- * down shifts the nose tip proportionally toward the chin; tilting up
- * shifts it toward the brows. Same landmarks-only approach as the other
- * two signals, no 3D head-pose model needed.
+ * nose tip sits between the eyebrow line and the chin. Same "kept for the
+ * enrollment wizard, not the challenge" status as calculateHeadTurnRatio above.
  */
 export function calculatePitchRatio(landmarks) {
     const nose = landmarks.getNose?.();
@@ -60,80 +59,114 @@ export function calculatePitchRatio(landmarks) {
     return (noseTip.y - (browY + chinY) / 2) / faceHeight;
 }
 
+/**
+ * Mouth-width ratio: distance between the outer mouth corners (face-api's
+ * 20-point mouth, points 0 and 6 of getMouth() = dlib's classic 48/54),
+ * normalized by face width. Smiling visibly widens the mouth relative to
+ * a neutral baseline -- same landmarks-only approach as every other
+ * signal here, no extra model.
+ */
+export function calculateMouthWidthRatio(landmarks) {
+    const mouth = landmarks.getMouth?.();
+    const jaw = landmarks.getJawOutline?.();
+    if (!mouth?.length || !jaw?.length) return 0;
+
+    const leftCorner = mouth[0];
+    const rightCorner = mouth[6];
+    const mouthWidth = distance(leftCorner, rightCorner);
+    const leftJaw = jaw[0];
+    const rightJaw = jaw[jaw.length - 1];
+    const faceWidth = distance(leftJaw, rightJaw);
+    if (faceWidth === 0) return 0;
+
+    return mouthWidth / faceWidth;
+}
+
+/**
+ * Mouth-open ratio (Mouth Aspect Ratio, MAR) -- the mouth equivalent of
+ * EAR above: inner-lip vertical gap (points 14/18) normalized by inner-lip
+ * horizontal span (points 12/16). Near-constant for a closed mouth,
+ * jumps noticeably when the jaw drops open.
+ */
+export function calculateMouthOpenRatio(landmarks) {
+    const mouth = landmarks.getMouth?.();
+    if (!mouth?.length) return 0;
+
+    const top = mouth[14];
+    const bottom = mouth[18];
+    const left = mouth[12];
+    const right = mouth[16];
+    const vertical = distance(top, bottom);
+    const horizontal = distance(left, right);
+    if (horizontal === 0) return 0;
+
+    return vertical / horizontal;
+}
+
 const EAR_CLOSED_THRESHOLD = 0.26;
 const EAR_OPEN_THRESHOLD = 0.28;
 // 🟩 SECURITY HARDENING (2026-08-10): a real photo, physically wobbled by
-// hand while being held up to the camera, was reported to satisfy the
-// blink/head-turn challenge -- a single noisy frame crossing a threshold
-// (one bad landmark read, one moment of hand tremor) was previously
-// enough to confirm either challenge outright. What a genuine directed
-// movement has that random jitter doesn't is SUSTAINED, CONSISTENT
-// motion across multiple frames, in the SPECIFIC direction asked for
-// (not just "any" direction) -- see the 4-directional redesign below.
-const YAW_THRESHOLD = 0.09;
-// Pitch ratio is normalized by face HEIGHT rather than width, and the
-// synthetic-but-representative fixture in livenessDetector.test.js shows
-// it swings roughly 1.3-1.5x further than the yaw ratio for a comparable
-// head movement -- scaled up proportionally as a starting point, same as
-// every other threshold in this file, tunable from real-user feedback.
-const PITCH_THRESHOLD = 0.12;
-const MIN_CONSECUTIVE_FRAMES = 2; // consecutive frames the triggering condition must hold, in the SAME direction
+// hand while being held up to the camera, was reported to satisfy a
+// single-frame-threshold-crossing challenge -- one bad landmark read or a
+// moment of hand tremor was previously enough to confirm it outright.
+// What a genuine, deliberate expression has that random jitter doesn't is
+// SUSTAINED, CONSISTENT change across multiple frames -- every challenge
+// type below requires that, not a single-frame crossing.
+//
+// 🟩 REDESIGN (2026-08-11): the previous version of this file used 4
+// head-turn/pitch directional challenges (look left/right/up/down)
+// alongside blink. Real-user feedback: the yaw/pitch sensor felt
+// "finicky" (device/webcam-angle-dependent, harder to satisfy reliably
+// than a blink). Replaced with two more mouth/eye-landmark-shape
+// challenges -- smile and mouth-open -- which use the exact same kind of
+// 2D landmark-ratio math as blink (not head-pose estimation), so they
+// should be just as reliable while still giving 3 distinct,
+// unpredictable challenge types instead of 1.
+const SMILE_THRESHOLD = 0.05;
+const MOUTH_OPEN_THRESHOLD = 0.15;
+const MIN_CONSECUTIVE_FRAMES = 2; // consecutive frames the triggering condition must hold
 const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed (this step) before confirmation is even possible
-// 🟩 SECURITY HARDENING (2026-08-10): two independent, unpredictable steps
-// instead of one -- a static photo or a short looped/prerecorded clip
-// prepared in advance for "blink" won't also satisfy a follow-up "look
-// down" prompt it wasn't built for. Bumped the time box up from the old
-// single-step default to comfortably fit two sequential sustained-motion
-// steps even at AttendanceView's slower (1.8s) detection interval.
+// 🟩 Two independent, unpredictable steps instead of one -- a static
+// photo or a short looped/prerecorded clip prepared in advance for
+// "blink" won't also satisfy a follow-up "smile" prompt it wasn't built
+// for. Time box comfortably fits two sequential sustained-change steps
+// even at AttendanceView's slower (1.8s) detection interval.
 const DEFAULT_CHALLENGE_TIMEOUT_MS = 25000;
 const DEFAULT_STEP_COUNT = 2;
 
 export const CHALLENGE_TYPES = {
     BLINK: 'blink',
-    LOOK_LEFT: 'look_left',
-    LOOK_RIGHT: 'look_right',
-    LOOK_UP: 'look_up',
-    LOOK_DOWN: 'look_down',
+    SMILE: 'smile',
+    MOUTH_OPEN: 'mouth_open',
 };
 
 // Maps each challenge type to a PascalCase suffix callers use to build
-// their own namespaced i18n keys, e.g. `t('login.statusAwaiting' + suffix)`
-// -- avoids a duplicated switch/ternary in both LoginPage.jsx and
-// AttendanceView.jsx (which used to just special-case HEAD_TURN vs
-// everything-else, back when there were only 2 challenge types).
+// their own namespaced i18n keys, e.g. `t('login.statusAwaiting' + suffix)`.
 export const CHALLENGE_INSTRUCTION_SUFFIX = {
     [CHALLENGE_TYPES.BLINK]: 'Blink',
-    [CHALLENGE_TYPES.LOOK_LEFT]: 'LookLeft',
-    [CHALLENGE_TYPES.LOOK_RIGHT]: 'LookRight',
-    [CHALLENGE_TYPES.LOOK_UP]: 'LookUp',
-    [CHALLENGE_TYPES.LOOK_DOWN]: 'LookDown',
+    [CHALLENGE_TYPES.SMILE]: 'Smile',
+    [CHALLENGE_TYPES.MOUTH_OPEN]: 'MouthOpen',
 };
 
-// Arrow glyph shown alongside the instruction for directional steps --
-// live progress feedback (getStepProgress()) is the real signal a user
-// follows moment to moment, same "numeric readout is the real feedback
-// loop" pattern already established elsewhere in this app; the glyph is
-// just a starting hint, deliberately screen-relative (an arrow pointing
-// left on a mirrored selfie preview) rather than a word like "left"/
-// "right" that real users found confusing during face-enrollment testing.
+// Glyph shown alongside the instruction -- live progress feedback
+// (getStepProgress()) is the real signal a user follows moment to
+// moment, same "numeric readout is the real feedback loop" pattern
+// already established elsewhere in this app; the glyph is just a
+// starting hint.
 export const CHALLENGE_DIRECTION_GLYPH = {
     [CHALLENGE_TYPES.BLINK]: '👁️',
-    [CHALLENGE_TYPES.LOOK_LEFT]: '⬅️',
-    [CHALLENGE_TYPES.LOOK_RIGHT]: '➡️',
-    [CHALLENGE_TYPES.LOOK_UP]: '⬆️',
-    [CHALLENGE_TYPES.LOOK_DOWN]: '⬇️',
+    [CHALLENGE_TYPES.SMILE]: '😊',
+    [CHALLENGE_TYPES.MOUTH_OPEN]: '😮',
 };
 
 const ALL_CHALLENGE_TYPES = Object.values(CHALLENGE_TYPES);
 
-// Which pose-ratio function and required sign of movement each directional
-// challenge type checks -- BLINK is handled separately (EAR-based, not a
-// directional ratio).
-const DIRECTION_CHECKS = {
-    [CHALLENGE_TYPES.LOOK_LEFT]: { getRatio: calculateHeadTurnRatio, sign: -1, threshold: YAW_THRESHOLD },
-    [CHALLENGE_TYPES.LOOK_RIGHT]: { getRatio: calculateHeadTurnRatio, sign: 1, threshold: YAW_THRESHOLD },
-    [CHALLENGE_TYPES.LOOK_UP]: { getRatio: calculatePitchRatio, sign: -1, threshold: PITCH_THRESHOLD },
-    [CHALLENGE_TYPES.LOOK_DOWN]: { getRatio: calculatePitchRatio, sign: 1, threshold: PITCH_THRESHOLD },
+// Which ratio function and threshold each non-blink challenge type checks
+// -- both are "sustained increase past a threshold relative to this
+// step's own baseline" checks, unlike blink's close-then-open pattern.
+const EXPRESSION_CHECKS = {
+    [CHALLENGE_TYPES.SMILE]: { getRatio: calculateMouthWidthRatio, threshold: SMILE_THRESHOLD },
+    [CHALLENGE_TYPES.MOUTH_OPEN]: { getRatio: calculateMouthOpenRatio, threshold: MOUTH_OPEN_THRESHOLD },
 };
 
 const pickRandomChallengeType = (exclude = null) => {
@@ -143,16 +176,14 @@ const pickRandomChallengeType = (exclude = null) => {
 
 /**
  * Confirms the face in front of the camera is a live person, not a photo
- * or video replay, by requiring TWO sequential, unpredictable actions
- * within one time window: blink, or look in one of 4 specific directions
- * (left/right/up/down -- see DIRECTION_CHECKS). Each step requires
- * SUSTAINED motion (multiple consecutive frames, in the specific
- * direction asked for) rather than a single-frame threshold crossing, so
- * incidental hand tremor from holding up a photo -- which moves
- * erratically, not in one sustained direction on demand -- can no longer
- * satisfy it. Whatever an attacker prepared in advance (a photo, a short
- * loop of the enrolled person blinking) has to also happen to satisfy
- * a second, independently-randomized prompt it wasn't built for.
+ * or video replay, by requiring TWO sequential, unpredictable expressions
+ * within one time window: blink, smile, or open your mouth (see
+ * EXPRESSION_CHECKS). Each step requires SUSTAINED change (multiple
+ * consecutive frames past threshold) rather than a single-frame crossing,
+ * so incidental hand tremor from holding up a photo can't satisfy it.
+ * Whatever an attacker prepared in advance (a photo, a short loop of the
+ * enrolled person blinking) has to also happen to satisfy a second,
+ * independently-randomized prompt it wasn't built for.
  */
 export class RandomLivenessChallenge {
     constructor({ challengeType = null, secondChallengeType = null, timeoutMs = DEFAULT_CHALLENGE_TIMEOUT_MS, steps = DEFAULT_STEP_COUNT } = {}) {
@@ -180,7 +211,7 @@ export class RandomLivenessChallenge {
         this.framesObserved = 0;
         this._closedRun = 0;
         this._openRun = 0;
-        this._directionRun = 0;
+        this._expressionRun = 0;
     }
 
     /** The challenge type for the CURRENT step -- what the UI should prompt for right now. */
@@ -238,7 +269,8 @@ export class RandomLivenessChallenge {
             return false;
         }
 
-        const check = DIRECTION_CHECKS[type];
+        // SMILE / MOUTH_OPEN: sustained increase past this step's own baseline.
+        const check = EXPRESSION_CHECKS[type];
         const ratio = check.getRatio(landmarks);
         if (this.baselineRatio === null) {
             this.baselineRatio = ratio;
@@ -246,18 +278,13 @@ export class RandomLivenessChallenge {
         }
 
         const delta = ratio - this.baselineRatio;
-        const matchesRequiredDirection = check.sign > 0 ? delta > check.threshold : delta < -check.threshold;
-
-        if (matchesRequiredDirection) {
-            this._directionRun += 1;
-            if (this._directionRun >= MIN_CONSECUTIVE_FRAMES && enoughFramesSeen) return true;
+        if (delta > check.threshold) {
+            this._expressionRun += 1;
+            if (this._expressionRun >= MIN_CONSECUTIVE_FRAMES && enoughFramesSeen) return true;
         } else {
-            // Any frame that doesn't match the SPECIFIC required direction --
-            // wrong direction, oscillation, or back below threshold -- breaks
-            // the run. This is what actually blocks incidental hand tremor:
-            // real jitter from holding a photo up doesn't move consistently
-            // one particular way on demand.
-            this._directionRun = 0;
+            // Dropped back toward baseline (or never really moved) -- not a
+            // sustained expression change, reset the run.
+            this._expressionRun = 0;
         }
         return false;
     }
@@ -267,7 +294,7 @@ export class RandomLivenessChallenge {
         if (this.challengeType === CHALLENGE_TYPES.BLINK) {
             return this.hasBeenClosed ? Math.min(this._openRun / MIN_CONSECUTIVE_FRAMES, 1) : 0;
         }
-        return Math.min(this._directionRun / MIN_CONSECUTIVE_FRAMES, 1);
+        return Math.min(this._expressionRun / MIN_CONSECUTIVE_FRAMES, 1);
     }
 
     /** Starts a fresh challenge (new random sequence unless types are forced). */
@@ -278,7 +305,7 @@ export class RandomLivenessChallenge {
 
 /**
  * @deprecated kept for backward compatibility — prefer RandomLivenessChallenge,
- * which adds 4 directional alternatives, a two-step sequence, sustained-motion
+ * which adds smile/mouth-open alternatives, a two-step sequence, sustained-change
  * requirements, and a time box on top of this blink-only check.
  */
 export class LivenessDetector {
