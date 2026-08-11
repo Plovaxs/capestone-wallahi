@@ -20,7 +20,16 @@
  */
 const GRID_SIZE = 24;
 const ALONG_STRIP_STRIDE = 3;
-const PEAK_RATIO_THRESHOLD = 3;
+// 🟩 LOOSENED (2026-08-11, real-user report): the analyzed region is the
+// face box plus a 15% margin (see callers), which reaches into the
+// temple/ear area -- exactly where a headphone band or ear cup sits. That
+// produces a long, fairly consistent luminance step not unlike a phone/
+// photo bezel, tripping this heuristic for headphone-wearing users. Raised
+// from 3 to reduce that false-positive rate; a genuine device/photo edge
+// (see the test file) still lands far above this. Uncalibrated against
+// real hardware -- if headphones still trip it, this needs to go higher
+// still, or the analyzed region needs to exclude the ear/temple strip.
+const PEAK_RATIO_THRESHOLD = 4.5;
 
 function luminanceAt(imageData, width, x, y) {
     const idx = (y * width + x) * 4;

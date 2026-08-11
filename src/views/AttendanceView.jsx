@@ -148,31 +148,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // enroll wajah nya") -- a single straight-on capture is far more
     // reliable to complete, at the cost of the multi-angle matching
     // robustness the extra poses used to buy.
+    // 🟩 SIMPLIFIED FURTHER (2026-08-11): only 'center' has ever been in this
+    // array since the fix above, and repeated real-user feedback (this
+    // session) confirmed any left/right/up/down turning -- in this wizard
+    // or the liveness challenge -- is unreliable/confusing for non-technical
+    // users ("old people do not like doing too much stuff"). Removed the
+    // now-fully-dead directional branches instead of leaving unreachable
+    // code behind them.
     const ENROLLMENT_POSES = ['center'];
-    // 🟩 LOOSENED (repeated real-user feedback: "susah bener enroll wajah
-    // nya"): these required a bigger head turn/tilt than most people
-    // naturally make in front of a webcam to register as "achieved" at
-    // all, on top of the yaw/pitch estimate itself only being a rough 2D
-    // approximation. Matches the same "usability over strictness" call
-    // already made for the liveness thresholds earlier this session.
-    const POSE_YAW_THRESHOLD = 0.06;
-    const POSE_PITCH_THRESHOLD = 0.06;
-    // Center uses its own, looser thresholds (isPoseAchieved below) since it's
-    // a "stay near dead-center" gate rather than a directional-turn gate --
-    // kept as named constants so the readiness bar (calculatePoseReadiness)
-    // can share the exact same numbers instead of drifting out of sync.
     const CENTER_YAW_THRESHOLD = 0.08;
     const CENTER_PITCH_THRESHOLD = 0.10;
-    const isPoseAchieved = (pose, yaw, pitch) => {
-        switch (pose) {
-            case 'center': return Math.abs(yaw) < CENTER_YAW_THRESHOLD && Math.abs(pitch) < CENTER_PITCH_THRESHOLD;
-            case 'left': return yaw < -POSE_YAW_THRESHOLD;
-            case 'right': return yaw > POSE_YAW_THRESHOLD;
-            case 'up': return pitch < -POSE_PITCH_THRESHOLD;
-            case 'down': return pitch > POSE_PITCH_THRESHOLD;
-            default: return false;
-        }
-    };
+    const isPoseAchieved = (pose, yaw, pitch) => (
+        pose === 'center' && Math.abs(yaw) < CENTER_YAW_THRESHOLD && Math.abs(pitch) < CENTER_PITCH_THRESHOLD
+    );
 
     const [isLoading, setIsLoading] = useState(false);
     const [isEnrolling, setIsEnrolling] = useState(false); // 🟩 NEW: guards against rapid re-clicks on Enroll Facial Matrix
@@ -2177,8 +2165,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             ENROLLMENT_POSES[enrollmentStepIndex],
                                             enrollmentPoseReading.yaw,
                                             enrollmentPoseReading.pitch,
-                                            ENROLLMENT_POSES[enrollmentStepIndex] === 'center' ? CENTER_YAW_THRESHOLD : POSE_YAW_THRESHOLD,
-                                            ENROLLMENT_POSES[enrollmentStepIndex] === 'center' ? CENTER_PITCH_THRESHOLD : POSE_PITCH_THRESHOLD
+                                            CENTER_YAW_THRESHOLD,
+                                            CENTER_PITCH_THRESHOLD
                                         )}
                                         label={t('attendance.enrollPoseReady')}
                                     />
