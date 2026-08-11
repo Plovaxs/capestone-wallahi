@@ -62,7 +62,13 @@ export function useStaffAssignmentEditor(fetchAllUsers) {
                 return false;
             }
             setEditingId(null);
-            fetchAllUsers && fetchAllUsers();
+            // 🟩 BUG FIX: this used to fire-and-forget the roster refetch,
+            // so `finally` re-enabled the Save/edit UI (setSavingId(null))
+            // before the refetch actually completed -- a supervisor could
+            // re-open the edit form or fire a second save while the roster
+            // still reflected pre-save data, and any rejection here became
+            // an unhandled promise rejection instead of a visible error.
+            if (fetchAllUsers) await fetchAllUsers();
             return true;
         } catch (err) {
             // A thrown (not just {error}) network failure previously left

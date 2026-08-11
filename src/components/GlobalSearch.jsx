@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 
 /**
@@ -17,7 +17,16 @@ const GlobalSearch = ({ tasks = [], contributions = [], leaveRequests = [], allU
     const [query, setQuery] = useState('');
     const containerRef = useRef(null);
 
-    const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || '';
+    // 🟩 PERFORMANCE: was an O(n) allUsers.find() per task/post/leave-
+    // request result -- a Map built once per allUsers change turns every
+    // lookup into O(1), matching the fix already applied to the equivalent
+    // pattern in TasksView/ContributionsView/AuditLogView.
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of allUsers) map.set(String(u.id), u);
+        return map;
+    }, [allUsers]);
+    const getUserName = useCallback((id) => usersById.get(String(id))?.name || '', [usersById]);
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -35,17 +44,27 @@ const GlobalSearch = ({ tasks = [], contributions = [], leaveRequests = [], allU
     }, []);
 
     const q = query.trim().toLowerCase();
-    const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
 
-    const taskResults = q.length >= 2
-        ? tasks.filter(task => matchesQuery(task.title, task.description)).slice(0, 5)
-        : [];
-    const forumResults = q.length >= 2
-        ? contributions.filter(post => matchesQuery(post.title, post.contribution, getUserName(post.employee_id))).slice(0, 5)
-        : [];
-    const leaveResults = q.length >= 2
-        ? leaveRequests.filter(req => matchesQuery(req.type, req.reason, getUserName(req.employee_id))).slice(0, 5)
-        : [];
+    // 🟩 PERFORMANCE: GlobalSearch lives in the always-mounted Header, so
+    // while a query is active, every unrelated App-level re-render
+    // (realtime events, the notification poll) used to re-run all three
+    // O(results x allUsers) filters again. Memoized so they only recompute
+    // when the query or the underlying data actually changes.
+    const taskResults = useMemo(() => {
+        if (q.length < 2) return [];
+        const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
+        return tasks.filter(task => matchesQuery(task.title, task.description)).slice(0, 5);
+    }, [q, tasks]);
+    const forumResults = useMemo(() => {
+        if (q.length < 2) return [];
+        const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
+        return contributions.filter(post => matchesQuery(post.title, post.contribution, getUserName(post.employee_id))).slice(0, 5);
+    }, [q, contributions, getUserName]);
+    const leaveResults = useMemo(() => {
+        if (q.length < 2) return [];
+        const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
+        return leaveRequests.filter(req => matchesQuery(req.type, req.reason, getUserName(req.employee_id))).slice(0, 5);
+    }, [q, leaveRequests, getUserName]);
 
     const hasResults = taskResults.length + forumResults.length + leaveResults.length > 0;
 

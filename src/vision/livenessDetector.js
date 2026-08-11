@@ -202,10 +202,20 @@ export class RandomLivenessChallenge {
     constructor({ challengeType = null, secondChallengeType = null, timeoutMs = DEFAULT_CHALLENGE_TIMEOUT_MS, steps = DEFAULT_STEP_COUNT } = {}) {
         this.timeoutMs = timeoutMs;
         this.totalSteps = Math.max(1, steps);
+        // 🟩 BUG FIX (2026-08-11): remembered so a parameterless reset() --
+        // the common case, since every call site resets on expiry/passive-
+        // suspicion/face-mismatch without re-specifying types -- reuses
+        // whatever was forced here instead of silently falling back to a
+        // random type. This app previously had to patch 12 separate
+        // `.reset()` call sites across two views to force blink-only after
+        // every reset; that was fixing the symptom at every call site
+        // instead of the class's own footgun default.
+        this._defaultFirstType = challengeType;
+        this._defaultSecondType = secondChallengeType;
         this._resetState(challengeType, secondChallengeType);
     }
 
-    _resetState(forcedFirstType = null, forcedSecondType = null) {
+    _resetState(forcedFirstType, forcedSecondType) {
         this.startedAt = Date.now();
         this.stepIndex = 0;
         this.confirmed = false;
@@ -310,42 +320,12 @@ export class RandomLivenessChallenge {
         return Math.min(this._expressionRun / MIN_CONSECUTIVE_FRAMES, 1);
     }
 
-    /** Starts a fresh challenge (new random sequence unless types are forced). */
-    reset(forcedType = null, forcedSecondType = null) {
+    /**
+     * Starts a fresh challenge. With no arguments, reuses whatever type(s)
+     * were forced at construction (or picks randomly again if none were);
+     * pass explicit type(s) to override for this reset only.
+     */
+    reset(forcedType = this._defaultFirstType, forcedSecondType = this._defaultSecondType) {
         this._resetState(forcedType, forcedSecondType);
-    }
-}
-
-/**
- * @deprecated kept for backward compatibility — prefer RandomLivenessChallenge,
- * which adds smile/mouth-open alternatives, a two-step sequence, sustained-change
- * requirements, and a time box on top of this blink-only check.
- */
-export class LivenessDetector {
-    constructor() {
-        this.hasBeenClosed = false;
-        this.blinkConfirmed = false;
-    }
-
-    registerFrame(landmarks) {
-        if (this.blinkConfirmed) return true;
-        if (!landmarks || typeof landmarks.getLeftEye !== 'function') return false;
-
-        const leftEAR = calculateEAR(landmarks.getLeftEye());
-        const rightEAR = calculateEAR(landmarks.getRightEye());
-        const avgEAR = (leftEAR + rightEAR) / 2;
-
-        if (avgEAR < EAR_CLOSED_THRESHOLD) {
-            this.hasBeenClosed = true;
-        } else if (avgEAR > EAR_OPEN_THRESHOLD && this.hasBeenClosed) {
-            this.blinkConfirmed = true;
-        }
-
-        return this.blinkConfirmed;
-    }
-
-    reset() {
-        this.hasBeenClosed = false;
-        this.blinkConfirmed = false;
     }
 }

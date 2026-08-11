@@ -12,6 +12,7 @@ import { sanitizeTaskSubmissionExtension } from '../utils/sanitize';
 import { sanitizeUserInput } from '../utils/sanitize';
 import { showUserError } from '../utils/errorHandling';
 import { TaskDeadlinePolicy } from '../domain/TaskDeadlinePolicy';
+import { getLocalDateString, parseLocalDateOnly } from '../utils/dateOnly';
 import { firstError } from '../validation/schemaRegistry';
 import { useUndoableAction } from '../patterns/useUndoableAction';
 import { canTransitionTo } from '../state-machines/taskWorkflowMachine';
@@ -210,7 +211,10 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
         for (let i = 0; i < 7; i++) {
             const d = new Date();
             d.setDate(d.getDate() + timelineOffsetDays + i);
-            days.push(d.toISOString().split('T')[0]);
+            // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date,
+            // which can land on the wrong day relative to `d`'s actual
+            // local calendar date depending on the viewer's timezone.
+            days.push(getLocalDateString(d));
         }
         return days;
     }, [timelineOffsetDays]);
@@ -249,7 +253,10 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
     const employeeUsers = (allUsers || []).filter(u => u.role === 'employee');
 
     // Calculates a dynamic baseline tomorrow constraint string used to validate minimum extension boundaries
-    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date, which
+    // can silently compute today's date (not tomorrow's) for part of the
+    // day depending on the viewer's timezone.
+    const tomorrowStr = getLocalDateString(new Date(Date.now() + 86400000));
 
     // Static layout configuration definitions matching Kanban column rules
     const COLUMNS = [
@@ -308,7 +315,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
         setIsCreatingTask(true);
         try {
             const { error } = await supabase.from('tasks').insert({
-                title: newTask.title,
+                title: sanitizeUserInput(newTask.title, { maxLength: 150 }),
                 description: sanitizeUserInput(newTask.description, { maxLength: 2000 }),
                 assigned_to: newTask.assigned_to,
                 due_date: newTask.due_date,
@@ -451,7 +458,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
     const applyPresetDays = (daysCount) => {
         const targetDate = new Date();
         targetDate.setDate(targetDate.getDate() + daysCount);
-        setExtensionDate(targetDate.toISOString().split('T')[0]);
+        setExtensionDate(getLocalDateString(targetDate));
     };
 
     const toggleAssignee = (userId) => {
@@ -502,7 +509,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
         setIsSavingEdit(true);
         try {
             const { error } = await supabase.from('tasks').update({
-                title: editDraft.title,
+                title: sanitizeUserInput(editDraft.title, { maxLength: 150 }),
                 description: sanitizeUserInput(editDraft.description, { maxLength: 2000 }),
                 assigned_to: editDraft.assigned_to,
                 due_date: editDraft.due_date,
@@ -1280,8 +1287,8 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                         <div className="min-w-[800px]">
                             <div className="grid grid-cols-8 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
                                 <div className="p-4 font-bold text-gray-500 text-xs uppercase tracking-wider">{t('tasks.employeeCol')}</div>
-                                {timelineDates.map(date => { 
-                                    const d = new Date(date); 
+                                {timelineDates.map(date => {
+                                    const d = parseLocalDateOnly(date);
                                     const isWeekend = d.getDay() === 0 || d.getDay() === 6; 
                                     return (
                                         <div key={date} className={`p-3 text-center border-l border-gray-100 dark:border-gray-700 ${isWeekend ? 'bg-gray-100/50 dark:bg-gray-800/30' : ''}`}>

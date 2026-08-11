@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { getLocalDateString } from '../utils/dateOnly';
 
 /**
  * VIEW: TeamView ("My Team")
@@ -11,7 +12,7 @@ import { useTranslation } from 'react-i18next';
  */
 const TeamView = ({ userProfile, allUsers = [], attendance = [] }) => {
     const { t } = useTranslation();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString();
 
     const teammates = useMemo(
         () => allUsers.filter((u) => u.role === 'employee' && u.department === userProfile.department && u.id !== userProfile.id),

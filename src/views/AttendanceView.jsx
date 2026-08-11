@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -15,6 +15,7 @@ import { deviceHealthRepository } from '../data/repositories/deviceHealthReposit
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
+import { getLocalDateString } from '../utils/dateOnly';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
@@ -317,8 +318,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         ));
     };
 
-    const today = new Date().toISOString().split('T')[0]; 
-    const attendanceRows = Array.isArray(attendance) ? attendance : [];
+    // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date, which
+    // is still YESTERDAY for a WIB (UTC+7) user clocking in before 7am
+    // local. getLocalDateString() uses local calendar fields instead.
+    const today = getLocalDateString();
+    // 🟩 Memoized so this always returns the SAME reference when `attendance`
+    // hasn't changed -- otherwise the `[]` fallback (taken whenever
+    // `attendance` isn't an array) would be a fresh array every render,
+    // defeating myHistory/filteredMyHistory's own memoization below.
+    const attendanceRows = useMemo(() => (Array.isArray(attendance) ? attendance : []), [attendance]);
     const todayRecord = attendanceRows.find(record => record.employee_id === userProfile.id && record.date === today);
 
 
@@ -534,14 +542,26 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     };
 
     // HISTORY SUMMARY CALCULATIONS
-    const myHistory = attendanceRows.filter(a => a.employee_id === userProfile.id);
+    // 🟩 PERFORMANCE: this used to re-filter/re-score the WHOLE company's
+    // attendance table (not just this employee's rows) on every render,
+    // including the live scan loop's own re-renders every
+    // FACE_SCAN_INTERVAL_MS while the camera is active -- unrelated to
+    // these history-tab numbers. Memoized like the rest of this file's
+    // derived state.
+    const myHistory = useMemo(
+        () => attendanceRows.filter(a => a.employee_id === userProfile.id),
+        [attendanceRows, userProfile.id]
+    );
     const totalDays = myHistory.length;
-    const lateDays = myHistory.filter(a => a.status === 'Late').length;
-    const punctualityScore = PunctualityPolicy.calculate(myHistory) ?? 0;
+    const lateDays = useMemo(() => myHistory.filter(a => a.status === 'Late').length, [myHistory]);
+    const punctualityScore = useMemo(() => PunctualityPolicy.calculate(myHistory) ?? 0, [myHistory]);
 
     // 🟩 NEW: Lets an intern filter their own log by On Time / Late instead of
     // scanning every card manually.
-    const filteredMyHistory = myHistory.filter(a => historyStatusFilter === 'all' || a.status === historyStatusFilter);
+    const filteredMyHistory = useMemo(
+        () => myHistory.filter(a => historyStatusFilter === 'all' || a.status === historyStatusFilter),
+        [myHistory, historyStatusFilter]
+    );
 
     const activeEmployees = allUsers.filter(u => u.role === 'employee');
     const clockedInTodayCount = activeEmployees.filter(emp => 
@@ -1088,7 +1108,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             //    security here (previously removed for speed;
                             //    reinstated after the defense incident).
                             const guardRef = clockingOutNow ? clockOutGuardRef : autoClockInGuardRef;
-                            if (!clockingOutNow && userProfile.work_mode === 'WFO' && !isInRange) {
+                            // 🟩 BUG FIX: this was the one place in the file
+                            // that checked `work_mode === 'WFO'` (exact
+                            // match) instead of the `(work_mode || 'WFO')
+                            // === 'WFO'` fail-safe pattern used everywhere
+                            // else (lines 555, 571, 651, 1503, 1938...) --
+                            // any value other than the literal string 'WFO'
+                            // (null/undefined, or an unvalidated CSV-import
+                            // value like "Onsite") skipped the geofence
+                            // block entirely instead of requiring it.
+                            if (!clockingOutNow && (userProfile.work_mode || 'WFO') === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!guardRef.current) {
                                 let livenessSuspicious = false;
@@ -1150,7 +1179,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                                     if (!livenessSuspicious) {
                                         if (livenessChallengeRef.current.isExpired()) {
-                                            livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+                                            livenessChallengeRef.current.reset();
                                         }
                                         challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
                                     }
@@ -1164,7 +1193,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // two as the rolling window updates; a genuine static
                                     // replay stays flagged indefinitely instead of ever
                                     // sneaking through.
-                                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+                                    livenessChallengeRef.current.reset();
                                     setChallengeGlyph(null);
                                     setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
@@ -1186,7 +1215,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     setBiometricStatus(t('attendance.statusAwaitingPulse'));
                                 } else {
                                     guardRef.current = true;
-                                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+                                    livenessChallengeRef.current.reset();
                                     pulseDetectorRef.current.reset();
                                     setChallengeGlyph(null);
                                     clearInterval(timer);
@@ -1211,7 +1240,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 }
                             }
                         } else {
-                            livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
+                            livenessChallengeRef.current.reset(); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
                             pulseDetectorRef.current.reset(); // don't mix pulse samples across different faces either
                             setChallengeGlyph(null);
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
@@ -1225,7 +1254,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     latestColorLivenessRef.current = { suspicious: false };
-                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+                    livenessChallengeRef.current.reset();
                     pulseDetectorRef.current.reset();
                     setChallengeGlyph(null);
                     setBiometricStatus(t('attendance.statusScanning'));
@@ -1973,7 +2002,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     type="button"
                                     onClick={() => {
                                         clockOutGuardRef.current = false;
-                                        livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+                                        livenessChallengeRef.current.reset();
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady}

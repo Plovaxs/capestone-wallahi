@@ -29,6 +29,15 @@ export function createCircuitBreaker({ failureThreshold = 5, cooldownMs = 20000,
                 const waitMs = currentCooldownMs - (Date.now() - openedAt);
                 throw new Error(`Circuit breaker open — short-circuited (retry in ${Math.ceil(waitMs / 1000)}s)`);
             }
+        } else if (state === State.HALF_OPEN) {
+            // 🟩 BUG FIX: this case was previously unhandled -- once ONE
+            // concurrent caller flipped state OPEN -> HALF_OPEN above, any
+            // OTHER concurrent caller for the same breaker no longer saw
+            // `state === State.OPEN` either, so it fell straight through to
+            // `fn()` completely unguarded. That let multiple simultaneous
+            // "probes" hit a backend that's still recovering, instead of
+            // exactly the one probe this breaker's own docstring promises.
+            throw new Error('Circuit breaker half-open — a probe is already in flight');
         }
 
         try {

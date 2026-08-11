@@ -14,7 +14,21 @@ export class NotificationDispatcher {
     }
 
     dispatch(notification) {
-        this.channels.filter((channel) => channel.isEnabled()).forEach((channel) => channel.send(notification));
+        // 🟩 BUG FIX: one throwing channel (e.g. BrowserPushChannel's `new
+        // Notification(...)` throws "Illegal constructor" on Android Chrome,
+        // which requires ServiceWorkerRegistration.showNotification()
+        // instead) used to abort this forEach entirely -- every channel
+        // after it silently never ran, AND the exception propagated up into
+        // App.jsx's own fetchNotifications loop, aborting it BEFORE
+        // dispatchAppData({type: 'SET_NOTIFICATIONS', ...}) ran, so a
+        // successful fetch never even reached app state that poll.
+        this.channels.filter((channel) => channel.isEnabled()).forEach((channel) => {
+            try {
+                channel.send(notification);
+            } catch (err) {
+                console.error('[notifications] channel failed to send:', err);
+            }
+        });
     }
 
     getChannel(ChannelClass) {

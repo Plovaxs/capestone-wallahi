@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { showUserError } from '../utils/errorHandling';
 import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosave';
 import { sanitizeUserInput } from '../utils/sanitize';
+import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
+import toast from 'react-hot-toast';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
@@ -57,11 +59,21 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
     const STATUS_LABEL_KEYS = { 'Open': 'statusOpen', 'In Progress': 'statusInProgress', 'Resolved': 'statusResolved' };
     const getStatusLabel = (status) => t(`helpdesk.${STATUS_LABEL_KEYS[status]}`);
 
-    const visibleTickets = helpdeskTickets
-        .filter(t => statusFilter === 'all' || t.ticket_status === statusFilter)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // 🟩 PERFORMANCE: unmemoized, this re-sorted/re-filtered the full
+    // ticket list on every render -- including every keystroke typed into
+    // the new-ticket title/content fields or any per-ticket reply box
+    // (all sibling state in this same component).
+    const visibleTickets = useMemo(
+        () => helpdeskTickets
+            .filter(t => statusFilter === 'all' || t.ticket_status === statusFilter)
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+        [helpdeskTickets, statusFilter]
+    );
 
-    const openCount = helpdeskTickets.filter(t => t.ticket_status === 'Open').length;
+    const openCount = useMemo(
+        () => helpdeskTickets.filter(t => t.ticket_status === 'Open').length,
+        [helpdeskTickets]
+    );
 
     const toggleProblemType = (type) => {
         setSelectedProblemTypes(prev =>
@@ -74,6 +86,15 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
         if (!newTitle.trim() || !newContent.trim()) return;
         setIsSubmitting(true);
         try {
+            // 🟩 SECURITY: this view's ticket/reply creation was the one
+            // free-text submission path in the app with no rate limit (its
+            // structural twin, ContributionsView's forum posts, already has
+            // one) -- nothing stopped a scripted flood of ticket creates.
+            const rateLimit = await checkRateLimit('helpdesk-ticket', { maxRequests: 5, windowSeconds: 60 });
+            if (!rateLimit.allowed) {
+                toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
+                return;
+            }
             const { error } = await supabase.from('helpdesk_tickets').insert({
                 employee_id: userProfile.id,
                 // 🟩 Consistency fix: every other free-text field in the app
@@ -140,6 +161,11 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
         if (!message) return;
         setSubmittingReplyId(ticketId);
         try {
+            const rateLimit = await checkRateLimit('helpdesk-reply', { maxRequests: 10, windowSeconds: 60 });
+            if (!rateLimit.allowed) {
+                toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
+                return;
+            }
             const { error } = await supabase
                 .from('helpdesk_replies')
                 .insert({ ticket_id: ticketId, author_id: userProfile.id, message });

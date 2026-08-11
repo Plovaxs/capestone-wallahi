@@ -13,7 +13,12 @@ import { runQuery, runMutation } from './apiClient';
 const PROFILE_LIST_COLUMNS = 'id, name, role, initials, vacation_days, sick_days, avatar_url, work_mode, source, email, department, position, job_desk, contract_start_date, contract_end_date, loa_file_path, is_team_lead';
 
 export const profilesRepository = {
-    getById: (userId) => runQuery('profiles.getById', () =>
+    // 🟩 SECURITY: label includes userId -- runQuery's in-flight dedup keys
+    // purely on this string, so two concurrent calls for two DIFFERENT
+    // users (e.g. a shared-device login switch while the first user's
+    // fetch is still in flight) must not collapse into one shared promise
+    // and hand user B the response meant for user A.
+    getById: (userId) => runQuery(`profiles.getById:${userId}`, () =>
         supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
     ),
 

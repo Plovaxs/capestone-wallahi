@@ -40,6 +40,22 @@ describe('bulkImportAssignments', () => {
         expect(patches).toHaveLength(0); // bob's row has no non-empty mapped fields
     });
 
+    it('normalizes a valid work_mode value case/whitespace-insensitively', () => {
+        const csv = 'email,work_mode\nbob@example.com, wfh ';
+        const { patches } = bulkImportAssignments(csv, employeeUsers);
+        expect(patches[0].patch.work_mode).toBe('WFH');
+    });
+
+    it('drops an unrecognized work_mode value instead of writing it unvalidated', () => {
+        // 🟩 SECURITY REGRESSION: AttendanceView's geofence check only ever
+        // required a location match for the exact string 'WFO' -- any other
+        // value (like a garbage CSV import) silently skipped that check.
+        const csv = 'email,work_mode,position\nbob@example.com,Onsite,QA Intern';
+        const { patches } = bulkImportAssignments(csv, employeeUsers);
+        expect(patches[0].patch.work_mode).toBeUndefined();
+        expect(patches[0].patch.position).toBe('QA Intern');
+    });
+
     it('handles quoted CSV fields containing commas', () => {
         const csv = 'email,job_desk\nbob@example.com,"Handles reports, tickets, and QA"';
         const { patches } = bulkImportAssignments(csv, employeeUsers);

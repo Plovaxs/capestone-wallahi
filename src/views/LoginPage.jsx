@@ -387,7 +387,7 @@ export default function LoginPage() {
           setScanReadiness(0);
           setFaceOverlayBox(null);
           microMotionTrackerRef.current.reset();
-          livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+          livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
           setChallengeGlyph(null);
@@ -429,7 +429,7 @@ export default function LoginPage() {
         const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
         if (qualityIssue) {
           microMotionTrackerRef.current.reset();
-          livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+          livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
           setChallengeGlyph(null);
@@ -510,14 +510,14 @@ export default function LoginPage() {
         });
 
         if (passiveVote.suspicious) {
-          livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+          livenessChallengeRef.current.reset();
           setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
           setChallengeGlyph(null);
           return;
         }
 
         if (livenessChallengeRef.current.isExpired()) {
-          livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+          livenessChallengeRef.current.reset();
           setBiometricStatus(t('login.statusChallengeExpired'));
           setChallengeGlyph(null);
           return;
@@ -551,7 +551,7 @@ export default function LoginPage() {
         setChallengeGlyph(null);
         setBiometricStatus(t('login.statusLivenessVerified'));
         await executeBiometricLogin(detection.descriptor);
-        livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+        livenessChallengeRef.current.reset();
         pulseDetectorRef.current.reset();
         refreshLoginNonce(); // the nonce just used is now consumed server-side either way -- line up a fresh one for the next attempt
       } catch (err) {
@@ -581,7 +581,7 @@ export default function LoginPage() {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
       microMotionTrackerRef.current.reset();
-      livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
+      livenessChallengeRef.current.reset();
       pulseDetectorRef.current.reset();
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback]);

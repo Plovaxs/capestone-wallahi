@@ -83,6 +83,24 @@ describe('createCircuitBreaker', () => {
         expect(result).toBe('recovered');
     });
 
+    it('lets only ONE concurrent probe through once the cooldown elapses, not every caller', async () => {
+        // Regression test: state flips OPEN -> HALF_OPEN synchronously
+        // before the first `await fn()`, so a second concurrent call must
+        // see HALF_OPEN (already probing) and short-circuit, not slip
+        // through ungated the way the pre-fix code did.
+        const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 1000 });
+        await expect(breaker(() => Promise.reject(new Error('first')))).rejects.toThrow('first');
+        vi.advanceTimersByTime(1001);
+
+        const slowProbe = () => new Promise((resolve) => setTimeout(() => resolve('probe result'), 500));
+        const firstCall = breaker(slowProbe);
+        const secondCall = breaker(slowProbe); // fired immediately after, while the first probe is still pending
+
+        await expect(secondCall).rejects.toThrow('Circuit breaker half-open');
+        vi.advanceTimersByTime(500);
+        await expect(firstCall).resolves.toBe('probe result');
+    });
+
     it('resets the backoff to the base cooldown after a full recovery', async () => {
         const breaker = createCircuitBreaker({ failureThreshold: 1, cooldownMs: 1000, maxCooldownMs: 100000 });
         await expect(breaker(() => Promise.reject(new Error('first')))).rejects.toThrow('first');

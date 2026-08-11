@@ -45,6 +45,20 @@ describe('OfflineMutationQueue', () => {
         expect(await queue.getQueueLength()).toBe(1);
     });
 
+    it('keeps an item queued (does not silently drop it) when no handler is registered for its type yet', async () => {
+        // 🟩 BUG FIX regression: `if (handler) await handler(...)` with no
+        // `else` used to fall through and delete the item from the queue as
+        // if it had succeeded, even though nothing ever ran it -- e.g. if
+        // flush() races ahead of a registerHandler() call still pending.
+        const queue = new OfflineMutationQueue();
+        Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+
+        await queue.enqueue('unregisteredType', { x: 1 });
+        await queue.flush();
+
+        expect(await queue.getQueueLength()).toBe(1); // still queued, not dropped
+    });
+
     it('re-queues an item whose handler throws, without losing concurrently-enqueued items', async () => {
         const queue = new OfflineMutationQueue();
         queue.registerHandler('flaky', vi.fn().mockRejectedValue(new Error('network down')));

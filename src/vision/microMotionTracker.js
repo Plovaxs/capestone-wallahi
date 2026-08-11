@@ -1,3 +1,5 @@
+import { luminanceAtIndex } from './colorMath';
+
 /**
  * Cheap, model-free "is this actually a live face" signal that works on
  * ANY device — including a plain desktop webcam, unlike the accelerometer-
@@ -24,8 +26,7 @@ export function sampleLuminanceGrid(imageData, width, height, gridSize = DEFAULT
         for (let gx = 0; gx < gridSize; gx++) {
             const x = Math.min(width - 1, Math.floor(((gx + 0.5) / gridSize) * width));
             const y = Math.min(height - 1, Math.floor(((gy + 0.5) / gridSize) * height));
-            const idx = (y * width + x) * 4;
-            samples.push(0.299 * imageData[idx] + 0.587 * imageData[idx + 1] + 0.114 * imageData[idx + 2]);
+            samples.push(luminanceAtIndex(imageData, (y * width + x) * 4));
         }
     }
     return samples;

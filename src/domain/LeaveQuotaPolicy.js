@@ -1,3 +1,5 @@
+import { parseLocalDateOnly } from '../utils/dateOnly';
+
 /**
  * Pure business rules for the paid-leave quota system, extracted out of
  * LeaveView where the same calculation used to be copy-pasted three times
@@ -51,7 +53,11 @@ export class LeaveQuotaPolicy {
                 req.employee_id === employeeId &&
                 req.type === 'Unpaid Leave' &&
                 (req.status === 'Approved' || req.status === 'Pending') &&
-                new Date(req.start_date).getFullYear() === year
+                // 🟩 TIMEZONE FIX: `new Date(req.start_date)` parses the
+                // plain date-only string as UTC midnight, which could read
+                // back as the PREVIOUS year for a Jan 1 request in any
+                // timezone west of UTC. parseLocalDateOnly avoids that.
+                parseLocalDateOnly(req.start_date).getFullYear() === year
             )
             .reduce((sum, req) => sum + LeaveQuotaPolicy.calculateRequestedDays(req.start_date, req.end_date), 0);
     }

@@ -25,17 +25,20 @@ describe('calculateFaceOverlayStyle', () => {
         expect(style.left).toBe('300px'); // viewportWidth(400) - standardLeft(0) - boxWidth(100)
     });
 
-    it('centers letterboxed offset when the viewport is wider than the video (object-cover crop on Y)', () => {
-        // Video is a 1:1 square (200x200), viewport is a wide rectangle (400x200) --
-        // object-cover fills width, no vertical crop needed here since ratio check picks height-fill.
+    it('scales to fill width and crops vertically when the viewport is wider than the video (true object-cover)', () => {
+        // Video is a 1:1 square (200x200), viewport is a wide rectangle (400x200).
+        // viewportRatio(2) > naturalRatio(1) -> object-cover fills the WIDTH
+        // (scale x2 to reach 400), letting height overflow to 400 and crop
+        // top/bottom -- not the letterboxed "fit inside, no crop" shape a
+        // `contain` (not `cover`) implementation would produce.
         const box = { x: 0, y: 0, width: 200, height: 200 };
         const videoEl = { videoWidth: 200, videoHeight: 200, clientWidth: 400, clientHeight: 200 };
         const style = calculateFaceOverlayStyle({ box, videoEl });
 
-        // viewportRatio(2) > naturalRatio(1) -> fills height, centers horizontally.
-        expect(style.height).toBe('200px');
-        expect(style.width).toBe('200px');
-        expect(style.top).toBe('0px');
+        expect(style.width).toBe('400px');
+        expect(style.height).toBe('400px');
+        // Cropped by 100px above the visible viewport (centered overflow).
+        expect(style.top).toBe('-100px');
     });
 
     it('falls back to the box-provided imageWidth/imageHeight when the video has no natural size', () => {

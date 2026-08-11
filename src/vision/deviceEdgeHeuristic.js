@@ -1,3 +1,5 @@
+import { luminanceAtIndex } from './colorMath';
+
 /**
  * Detects a dominant, long, straight edge (a "line") running through the
  * frame -- the signature of a phone/tablet bezel or a photo's paper edge
@@ -32,30 +34,41 @@ const ALONG_STRIP_STRIDE = 3;
 const PEAK_RATIO_THRESHOLD = 4.5;
 
 function luminanceAt(imageData, width, x, y) {
-    const idx = (y * width + x) * 4;
-    return 0.299 * imageData[idx] + 0.587 * imageData[idx + 1] + 0.114 * imageData[idx + 2];
+    return luminanceAtIndex(imageData, (y * width + x) * 4);
 }
 
-/** Average luminance of a vertical strip [x0,x1), sampled down the full height (every ALONG_STRIP_STRIDE-th row). */
+/**
+ * Average luminance of a vertical strip [x0,x1), sampled down the full
+ * height (every ALONG_STRIP_STRIDE-th row).
+ * 🟩 BUG FIX: `Math.min(x1 - 1, x0)` always evaluated to `x0` (the caller
+ * guarantees `x1 >= x0 + 1`), so this only ever sampled the strip's single
+ * leftmost column instead of averaging across its full width as the
+ * docstring/module comment describe -- a genuine edge landing mid-strip
+ * could be missed, and a single noisy/bright pixel column (glare, a hair
+ * strand) could produce an artificial spike, the opposite of the intended
+ * noise robustness.
+ */
 function columnStripAverage(imageData, width, height, x0, x1) {
-    const x = Math.min(x1 - 1, x0);
     let sum = 0;
     let count = 0;
     for (let y = 0; y < height; y += ALONG_STRIP_STRIDE) {
-        sum += luminanceAt(imageData, width, x, y);
-        count++;
+        for (let x = x0; x < x1; x++) {
+            sum += luminanceAt(imageData, width, x, y);
+            count++;
+        }
     }
     return count > 0 ? sum / count : 0;
 }
 
-/** Average luminance of a horizontal strip [y0,y1), sampled across the full width (every ALONG_STRIP_STRIDE-th column). */
+/** Average luminance of a horizontal strip [y0,y1), sampled across the full width (every ALONG_STRIP_STRIDE-th column). See columnStripAverage's bug-fix comment -- same fix applied here. */
 function rowStripAverage(imageData, width, height, y0, y1) {
-    const y = Math.min(y1 - 1, y0);
     let sum = 0;
     let count = 0;
     for (let x = 0; x < width; x += ALONG_STRIP_STRIDE) {
-        sum += luminanceAt(imageData, width, x, y);
-        count++;
+        for (let y = y0; y < y1; y++) {
+            sum += luminanceAt(imageData, width, x, y);
+            count++;
+        }
     }
     return count > 0 ? sum / count : 0;
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -9,6 +9,7 @@ import { confirmDialog } from '../utils/confirm';
 import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosave';
 import { firstError } from '../validation/schemaRegistry';
 import { useTypingIndicator } from '../realtime/useTypingIndicator';
+import { getLocalDateString } from '../utils/dateOnly';
 
 /**
  * COMPONENT: ContributionsView
@@ -68,7 +69,10 @@ const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fet
         for (const u of allUsers) map.set(String(u.id), u);
         return map;
     }, [allUsers]);
-    const getUserName = (id) => usersById.get(String(id))?.name || t('contributions.unknownUser');
+    // 🟩 useCallback so filteredThreads's own memoization below (which
+    // depends on this function) doesn't recompute every render just
+    // because a plain function literal gets a new identity each time.
+    const getUserName = useCallback((id) => usersById.get(String(id))?.name || t('contributions.unknownUser'), [usersById, t]);
     const getUserRole = (id) => usersById.get(String(id))?.role || 'employee';
 
     // =========================================================================
@@ -97,7 +101,7 @@ const handleCreateThread = async () => {
 
             const { error } = await supabase.from('contributions').insert({
                 employee_id: userProfile.id,
-                date: new Date().toISOString().split('T')[0],
+                date: getLocalDateString(),
                 title: newTitle.trim() ? sanitizeUserInput(newTitle, { maxLength: 150 }) : null,
                 contribution: sanitizeUserInput(newPost, { maxLength: 2000 }),
                 category: category
@@ -198,17 +202,28 @@ const handleCreateThread = async () => {
     // =========================================================================
     // Help Request / Urgent Blocker now live exclusively in the Helpdesk
     // menu — excluded here so the general forum stays general-discussion-only.
-    const generalThreads = contributions.filter(post =>
-        !(post.category || '').includes('Help') && !(post.category || '').includes('Blocker')
+    // 🟩 PERFORMANCE: unmemoized, these re-filtered the full contributions
+    // array on every render -- typing in the new-thread composer, typing in
+    // any post's reply box, toggling edit mode, or the shared typing-
+    // indicator broadcast, not just when searchTerm/selectedCategory
+    // actually change.
+    const generalThreads = useMemo(
+        () => contributions.filter(post =>
+            !(post.category || '').includes('Help') && !(post.category || '').includes('Blocker')
+        ),
+        [contributions]
     );
 
-    const filteredThreads = generalThreads.filter(post => {
-        const matchesSearch = post.contribution.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                             (post.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                             getUserName(post.employee_id).toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesCategory = selectedCategory === 'all' || post.category === selectedCategory;
-        return matchesSearch && matchesCategory;
-    });
+    const filteredThreads = useMemo(
+        () => generalThreads.filter(post => {
+            const matchesSearch = post.contribution.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                 (post.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                 getUserName(post.employee_id).toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesCategory = selectedCategory === 'all' || post.category === selectedCategory;
+            return matchesSearch && matchesCategory;
+        }),
+        [generalThreads, searchTerm, selectedCategory, getUserName]
+    );
 
     return (
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">

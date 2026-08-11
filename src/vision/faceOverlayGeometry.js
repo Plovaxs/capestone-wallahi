@@ -32,14 +32,23 @@ export function calculateFaceOverlayStyle({ box, videoEl }) {
     let offsetX = 0;
     let offsetY = 0;
 
+    // 🟩 BUG FIX: this used to letterbox (contain semantics -- fit the
+    // whole image inside the box, gaps on the shorter axis) instead of
+    // cropping to fill (true `object-cover` semantics, what every caller's
+    // CSS actually uses). Cover scales up by whichever axis is the
+    // TIGHTER fit so the box is fully covered, cropping the other axis.
     if (viewportRatio > naturalRatio) {
-        displayedHeight = viewportHeight;
-        displayedWidth = viewportHeight * naturalRatio;
-        offsetX = (viewportWidth - displayedWidth) / 2;
-    } else {
+        // Viewport is relatively WIDER than the source -- fill by width,
+        // let height overflow/crop top and bottom.
         displayedWidth = viewportWidth;
         displayedHeight = viewportWidth / naturalRatio;
         offsetY = (viewportHeight - displayedHeight) / 2;
+    } else {
+        // Viewport is relatively TALLER than the source -- fill by height,
+        // let width overflow/crop left and right.
+        displayedHeight = viewportHeight;
+        displayedWidth = viewportHeight * naturalRatio;
+        offsetX = (viewportWidth - displayedWidth) / 2;
     }
 
     const scaleX = displayedWidth / naturalWidth;

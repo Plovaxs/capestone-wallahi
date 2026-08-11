@@ -67,8 +67,17 @@ export class OfflineMutationQueue {
             const remaining = [];
             for (const item of queue) {
                 const handler = this.handlers.get(item.type);
+                // 🟩 BUG FIX: no handler registered (e.g. flush() runs before
+                // App.jsx's mount effect has called registerHandler() for
+                // every type yet) used to fall through silently -- the item
+                // was never applied but still got dropped from the queue
+                // below as if it had succeeded. Keep it queued instead.
+                if (!handler) {
+                    remaining.push(item);
+                    continue;
+                }
                 try {
-                    if (handler) await handler(item.payload);
+                    await handler(item.payload);
                 } catch {
                     remaining.push(item); // couldn't apply yet — keep it queued and retry next flush
                 }

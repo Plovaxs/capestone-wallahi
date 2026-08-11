@@ -1,3 +1,5 @@
+import { luminanceAtIndex } from './colorMath';
+
 /**
  * Best-effort, heuristic-only signal for "this might be a phone/tablet
  * screen held up to the camera instead of a real face" — NOT a reliable
@@ -14,7 +16,7 @@ export function calculateLuminanceStdDev(imageData) {
 
     const luminances = [];
     for (let i = 0; i < imageData.length; i += 4) {
-        luminances.push(0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2]);
+        luminances.push(luminanceAtIndex(imageData, i));
     }
     const mean = luminances.reduce((sum, v) => sum + v, 0) / luminances.length;
     const variance = luminances.reduce((sum, v) => sum + (v - mean) ** 2, 0) / luminances.length;

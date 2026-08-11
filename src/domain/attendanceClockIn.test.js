@@ -64,10 +64,17 @@ describe('performClockIn', () => {
     });
 
     it('surfaces a db error from the existence check without inserting', async () => {
+        // 🟩 Routed through attendanceRepository/apiClient (for timeout +
+        // circuit-breaker protection -- see the module's own comment), so
+        // the raw db error now arrives wrapped in a normalized ApiError
+        // (same as every other repository-routed call) -- assert on
+        // `.cause`/`.message`, not identity with the raw error.
         const dbError = new Error('connection lost');
         maybeSingleMock.mockResolvedValue({ data: null, error: dbError });
         const result = await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01' });
-        expect(result).toEqual({ success: false, reason: 'db-error', error: dbError });
+        expect(result.success).toBe(false);
+        expect(result.reason).toBe('db-error');
+        expect(result.error.cause).toBe(dbError);
         expect(insertMock).not.toHaveBeenCalled();
     });
 
@@ -75,7 +82,9 @@ describe('performClockIn', () => {
         const dbError = new Error('write failed');
         insertMock.mockResolvedValue({ error: dbError });
         const result = await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01' });
-        expect(result).toEqual({ success: false, reason: 'db-error', error: dbError });
+        expect(result.success).toBe(false);
+        expect(result.reason).toBe('db-error');
+        expect(result.error.cause).toBe(dbError);
     });
 
     it('inserts a clock-in row using the server clock, not the device clock', async () => {
@@ -124,6 +133,8 @@ describe('performClockOut', () => {
         const dbError = new Error('write failed');
         updateEqMock.mockResolvedValue({ error: dbError });
         const result = await performClockOut({ attendanceRowId: 'row-1' });
-        expect(result).toEqual({ success: false, reason: 'db-error', error: dbError });
+        expect(result.success).toBe(false);
+        expect(result.reason).toBe('db-error');
+        expect(result.error.cause).toBe(dbError);
     });
 });

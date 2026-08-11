@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { openFeatureFlagPanel } from '../feature-flags/panelOpener';
 
@@ -20,7 +20,16 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
     const containerRef = useRef(null);
     const triggerElementRef = useRef(null);
 
-    const getUserName = (id) => allUsers.find(u => String(u.id) === String(id))?.name || '';
+    // 🟩 PERFORMANCE: was an O(n) allUsers.find() per task/post/leave-
+    // request result per keystroke -- a Map built once per allUsers change
+    // turns every lookup into O(1), matching the fix already applied to
+    // this identical pattern in TasksView/ContributionsView/AuditLogView.
+    const usersById = useMemo(() => {
+        const map = new Map();
+        for (const u of allUsers) map.set(String(u.id), u);
+        return map;
+    }, [allUsers]);
+    const getUserName = useCallback((id) => usersById.get(String(id))?.name || '', [usersById]);
 
     const staticCommands = useMemo(() => {
         const nav = (view, label) => ({ id: `nav-${view}`, label, action: () => setActiveView(view), group: t('palette.navigation') });
@@ -71,10 +80,10 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
     }, [setActiveView, userProfile, isDarkMode, toggleDarkMode, t]);
 
     const q = query.trim().toLowerCase();
-    const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
 
     const recordResults = useMemo(() => {
         if (q.length < 2) return [];
+        const matchesQuery = (...fields) => fields.some(f => (f || '').toLowerCase().includes(q));
         const results = [];
         tasks.filter(task => matchesQuery(task.title, task.description)).slice(0, 4).forEach(task => {
             results.push({ id: `task-${task.id}`, label: task.title, group: t('search.tasksGroup'), action: () => setActiveView('tasks') });
@@ -86,8 +95,7 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
             results.push({ id: `leave-${req.id}`, label: `${req.type} — ${getUserName(req.employee_id)}`, group: t('search.leaveGroup'), action: () => setActiveView('leave') });
         });
         return results;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [q, tasks, contributions, leaveRequests]);
+    }, [q, tasks, contributions, leaveRequests, getUserName, setActiveView, t]);
 
     const filteredCommands = q.length >= 1
         ? staticCommands.filter(c => c.label.toLowerCase().includes(q))

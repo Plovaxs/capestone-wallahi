@@ -1,3 +1,5 @@
+import { parseLocalDateOnly } from '../utils/dateOnly';
+
 /**
  * Pure business rule, framework-free: given a task's due date and status,
  * decide its deadline urgency bucket. Lives outside React so it's testable
@@ -12,8 +14,11 @@ export class TaskDeadlinePolicy {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const due = new Date(dueDate);
-        due.setHours(0, 0, 0, 0);
+        // 🟩 TIMEZONE FIX: `new Date(dueDate)` parses a plain "YYYY-MM-DD"
+        // string as UTC midnight, which silently shifts the effective date
+        // back a day for any user west of UTC. parseLocalDateOnly reads it
+        // as LOCAL midnight directly, matching `today` above.
+        const due = parseLocalDateOnly(dueDate);
 
         const diffDays = Math.ceil((due - today) / (1000 * 60 * 60 * 24));
 

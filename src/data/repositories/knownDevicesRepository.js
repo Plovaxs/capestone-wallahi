@@ -2,7 +2,11 @@ import { supabase } from '../../supabaseClient';
 import { runQuery, runMutation } from './apiClient';
 
 export const knownDevicesRepository = {
-    findByFingerprint: (userId, fingerprint) => runQuery('knownDevices.findByFingerprint', () =>
+    // 🟩 SECURITY: label includes userId+fingerprint -- see
+    // profilesRepository.getById's comment for why (runQuery's in-flight
+    // dedup would otherwise hand one user's device-trust verdict to a
+    // different user's concurrent check on a shared-device login switch).
+    findByFingerprint: (userId, fingerprint) => runQuery(`knownDevices.findByFingerprint:${userId}:${fingerprint}`, () =>
         supabase.from('known_devices').select('id').eq('user_id', userId).eq('fingerprint', fingerprint).maybeSingle()
     ),
 

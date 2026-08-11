@@ -1,3 +1,5 @@
+import { luminanceAtIndex } from './colorMath';
+
 /**
  * Local edge-energy (gradient magnitude) texture check — complementary to
  * the color-domain texture check in colorLivenessHeuristic.js. Real skin
@@ -21,8 +23,7 @@ export function calculateEdgeEnergyGrid(imageData, width, height, gridSize = GRI
     const luminanceAt = (x, y) => {
         const cx = Math.min(width - 1, Math.max(0, x));
         const cy = Math.min(height - 1, Math.max(0, y));
-        const idx = (cy * width + cx) * 4;
-        return 0.299 * imageData[idx] + 0.587 * imageData[idx + 1] + 0.114 * imageData[idx + 2];
+        return luminanceAtIndex(imageData, (cy * width + cx) * 4);
     };
 
     const energies = [];

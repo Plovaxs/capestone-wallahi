@@ -6,6 +6,7 @@ import { clientErrorLogsRepository } from '../data/repositories/clientErrorLogsR
 import { subscribeToTable } from '../realtime/subscribeToTable';
 import { confirmDialog } from '../utils/confirm';
 import { showUserError } from '../utils/errorHandling';
+import { getLocalDateString } from '../utils/dateOnly';
 import Modal from '../components/Modal';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -66,11 +67,11 @@ const ErrorMonitorView = ({ userProfile }) => {
         for (let i = TREND_DAYS - 1; i >= 0; i--) {
             const d = new Date(now);
             d.setDate(d.getDate() - i);
-            const key = d.toISOString().slice(0, 10);
+            const key = getLocalDateString(d);
             buckets.set(key, 0);
         }
         for (const err of errors) {
-            const key = new Date(err.created_at).toISOString().slice(0, 10);
+            const key = getLocalDateString(new Date(err.created_at));
             if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1);
         }
         return Array.from(buckets, ([date, count]) => ({ date: date.slice(5), count }));

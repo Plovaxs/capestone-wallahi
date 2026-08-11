@@ -1,3 +1,5 @@
+import { luminanceAtIndex } from './colorMath';
+
 /**
  * Pure, framework-free quality gates run on each scan frame before a match
  * attempt is trusted. All of them return { ok, reason } instead of
@@ -29,8 +31,7 @@ export function checkBrightness(imageData) {
     let total = 0;
     const pixelCount = imageData.length / 4;
     for (let i = 0; i < imageData.length; i += 4) {
-        // Standard relative-luminance weighting.
-        total += 0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2];
+        total += luminanceAtIndex(imageData, i);
     }
     const avg = total / pixelCount;
 
@@ -61,7 +62,7 @@ export function checkOcclusion(detectionScore, minScore = 0.25) {
 export function checkLensObstruction(imageData, width, height, { minSharpness = 6, sampleStride = 4 } = {}) {
     if (!imageData || !width || !height) return { ok: true, reason: null };
 
-    const luminance = (i) => 0.299 * imageData[i] + 0.587 * imageData[i + 1] + 0.114 * imageData[i + 2];
+    const luminance = (i) => luminanceAtIndex(imageData, i);
 
     let gradientSum = 0;
     let sampleCount = 0;

@@ -15,6 +15,18 @@ const FIELD_MAP = {
     contract_end: 'contract_end_date',
 };
 
+// 🟩 SECURITY: every other work_mode check in the app treats it as one of
+// exactly 'WFO'/'WFH' (falling back to 'WFO' when missing) -- a raw CSV
+// value like "Onsite" written straight through used to silently disable
+// the geofence access-denied check for that employee (see AttendanceView.jsx),
+// since only an exact 'WFO' string was ever treated as requiring it.
+// Case/whitespace-insensitive so a human-typed roster CSV ("wfo", " WFH ")
+// still matches; anything else is dropped rather than written unvalidated.
+function normalizeWorkMode(value) {
+    const normalized = value.trim().toUpperCase();
+    return normalized === 'WFO' || normalized === 'WFH' ? normalized : null;
+}
+
 /**
  * Matches CSV rows (expects an "email" column plus any of the
  * assignment fields above) against already-registered employee profiles.
@@ -48,7 +60,13 @@ export function bulkImportAssignments(csvText, employeeUsers) {
         const patch = {};
         Object.entries(row).forEach(([key, value]) => {
             const field = FIELD_MAP[key];
-            if (field && value !== '') patch[field] = value;
+            if (!field || value === '') return;
+            if (field === 'work_mode') {
+                const normalized = normalizeWorkMode(value);
+                if (normalized) patch[field] = normalized;
+                return;
+            }
+            patch[field] = value;
         });
 
         if (Object.keys(patch).length > 0) {

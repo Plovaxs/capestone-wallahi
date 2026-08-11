@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     calculateEAR, calculateHeadTurnRatio, calculatePitchRatio,
     calculateMouthWidthRatio, calculateMouthOpenRatio,
-    LivenessDetector, RandomLivenessChallenge, CHALLENGE_TYPES,
+    RandomLivenessChallenge, CHALLENGE_TYPES,
 } from './livenessDetector';
 
 // A synthetic "open eye" shape: roughly rectangular, taller than a closed slit.
@@ -126,21 +126,6 @@ describe('calculateMouthOpenRatio', () => {
     });
 });
 
-describe('LivenessDetector (legacy blink-only)', () => {
-    it('confirms a blink after an open -> closed -> open sequence', () => {
-        const detector = new LivenessDetector();
-        expect(detector.registerFrame(makeLandmarks(openEye))).toBe(false);
-        expect(detector.registerFrame(makeLandmarks(closedEye))).toBe(false);
-        expect(detector.registerFrame(makeLandmarks(openEye))).toBe(true);
-    });
-
-    it('gracefully returns false when landmarks are missing getLeftEye', () => {
-        const detector = new LivenessDetector();
-        expect(detector.registerFrame({})).toBe(false);
-        expect(detector.registerFrame(null)).toBe(false);
-    });
-});
-
 describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-step logic)', () => {
     it('confirms a blink challenge as soon as a single tick catches the closed->open transition', () => {
         // 2026-08-11b: a single-frame crossing is now enough (see
@@ -225,6 +210,32 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
 
         challenge.reset(CHALLENGE_TYPES.BLINK);
         expect(challenge.confirmed).toBe(false);
+    });
+
+    it('a bare reset() (no arguments) reuses the type(s) forced at construction, not a random pick', () => {
+        // Regression test: every real call site in the app calls .reset()
+        // with no arguments (on expiry/passive-suspicion/face-mismatch),
+        // so a constructor-forced type MUST survive a parameterless reset
+        // -- this used to silently fall back to picking randomly again.
+        for (let i = 0; i < 20; i++) {
+            const challenge = new RandomLivenessChallenge({
+                challengeType: CHALLENGE_TYPES.BLINK,
+                secondChallengeType: CHALLENGE_TYPES.BLINK,
+            });
+            challenge.reset();
+            expect(challenge.challengeType).toBe(CHALLENGE_TYPES.BLINK);
+        }
+    });
+
+    it('a bare reset() still picks randomly again when no type was forced at construction', () => {
+        const challenge = new RandomLivenessChallenge();
+        const seen = new Set();
+        for (let i = 0; i < 40; i++) {
+            challenge.reset();
+            seen.add(challenge.challengeType);
+        }
+        const validTypes = Object.values(CHALLENGE_TYPES);
+        expect([...seen].every((t) => validTypes.includes(t))).toBe(true);
     });
 
     it('picks a random challenge type from all 3 when none is forced', () => {

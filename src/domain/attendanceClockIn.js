@@ -1,7 +1,6 @@
-import { supabase } from '../supabaseClient';
+import { attendanceRepository } from '../data/repositories/attendanceRepository';
 import { getServerNow } from '../utils/serverTime';
 
-export const ATTENDANCE_TABLE = 'attendance';
 export const WORK_START_TIME = '08:00:00';
 
 /**
@@ -37,48 +36,44 @@ export async function performClockIn({ userProfile, coords, isInRange, today, so
     }
 
     const runInsert = async () => {
-        // 🟩 DOUBLE CLOCK-IN GUARD: a fresh existence check right before the
-        // insert closes most of the cross-device/cross-tab race window (the
-        // Web Locks wrapper below serializes concurrent attempts *within
-        // this browser*; it can't fully close the window without a DB
-        // unique constraint, which is out of scope here).
-        const { data: existing, error: existingCheckError } = await supabase
-            .from(ATTENDANCE_TABLE)
-            .select('id')
-            .eq('employee_id', userProfile.id)
-            .eq('date', today)
-            .maybeSingle();
+        try {
+            // 🟩 DOUBLE CLOCK-IN GUARD: a fresh existence check right before
+            // the insert closes most of the cross-device/cross-tab race
+            // window (the Web Locks wrapper below serializes concurrent
+            // attempts *within this browser*; it can't fully close the
+            // window without a DB unique constraint, which is out of scope
+            // here). Routed through attendanceRepository (not a raw
+            // supabase call) so this -- the single highest-frequency write
+            // in the app -- gets the same timeout/circuit-breaker
+            // protection every other repository call already gets, instead
+            // of being able to hang indefinitely on a weak connection.
+            const existing = await attendanceRepository.findByEmployeeAndDate(userProfile.id, today);
+            if (existing) {
+                return { success: false, reason: 'already-clocked-in' };
+            }
 
-        if (existingCheckError) {
-            return { success: false, reason: 'db-error', error: existingCheckError };
-        }
-        if (existing) {
-            return { success: false, reason: 'already-clocked-in' };
-        }
+            // 🟩 Uses the Supabase server's clock (via its response `Date`
+            // header), not the device's -- otherwise punctuality is decided
+            // by a value the user's own OS clock controls, trivially
+            // spoofable by winding the system time back before clocking in.
+            const now = await getServerNow();
+            const time = now.toLocaleTimeString('en-GB', { hour12: false });
+            const status = time > WORK_START_TIME ? 'Late' : 'Present';
 
-        // 🟩 Uses the Supabase server's clock (via its response `Date`
-        // header), not the device's -- otherwise punctuality is decided by
-        // a value the user's own OS clock controls, trivially spoofable by
-        // winding the system time back before clocking in.
-        const now = await getServerNow();
-        const time = now.toLocaleTimeString('en-GB', { hour12: false });
-        const status = time > WORK_START_TIME ? 'Late' : 'Present';
+            await attendanceRepository.insert([{
+                employee_id: userProfile.id,
+                date: today,
+                status,
+                clock_in: time,
+                latitude: coords ? coords.latitude : null,
+                longitude: coords ? coords.longitude : null,
+                clock_method: source,
+            }]);
 
-        const { error } = await supabase.from(ATTENDANCE_TABLE).insert([{
-            employee_id: userProfile.id,
-            date: today,
-            status,
-            clock_in: time,
-            latitude: coords ? coords.latitude : null,
-            longitude: coords ? coords.longitude : null,
-            clock_method: source,
-        }]);
-
-        if (error) {
+            return { success: true, time, status, source };
+        } catch (error) {
             return { success: false, reason: 'db-error', error };
         }
-
-        return { success: true, time, status, source };
     };
 
     if (navigator.locks?.request) {
@@ -104,14 +99,10 @@ export async function performClockOut({ attendanceRowId, source = 'manual' }) {
     const now = await getServerNow();
     const time = now.toLocaleTimeString('en-GB', { hour12: false });
 
-    const { error } = await supabase
-        .from(ATTENDANCE_TABLE)
-        .update({ clock_out: time, clock_method: source })
-        .eq('id', attendanceRowId);
-
-    if (error) {
+    try {
+        await attendanceRepository.update(attendanceRowId, { clock_out: time, clock_method: source });
+        return { success: true, time, source };
+    } catch (error) {
         return { success: false, reason: 'db-error', error };
     }
-
-    return { success: true, time, source };
 }

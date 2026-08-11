@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import { directMessagesRepository } from '../data/repositories/directMessagesRepository';
 import { subscribeToTable } from '../realtime/subscribeToTable';
 import { showUserError } from '../utils/errorHandling';
+import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
+import { sanitizeUserInput } from '../utils/sanitize';
 
 /**
  * VIEW: DirectMessagesView
@@ -87,7 +90,16 @@ const DirectMessagesView = ({ userProfile, allUsers = [] }) => {
         if (!body || !activeContactId || isSending) return;
         setIsSending(true);
         try {
-            await directMessagesRepository.send(userProfile.id, activeContactId, body);
+            // 🟩 SECURITY: every other free-text submission in the app
+            // (contributions, forum replies, helpdesk tickets/replies, leave
+            // reasons, task descriptions) is rate-limited and sanitized
+            // before insert -- DMs were the one path skipping both.
+            const rateLimit = await checkRateLimit('direct-message', { maxRequests: 20, windowSeconds: 60 });
+            if (!rateLimit.allowed) {
+                toast.error(formatRateLimitMessage(rateLimit.retryAfterMs));
+                return;
+            }
+            await directMessagesRepository.send(userProfile.id, activeContactId, sanitizeUserInput(body, { maxLength: 2000 }));
             setDraft('');
             fetchMessages();
         } catch (err) {

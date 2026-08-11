@@ -9,6 +9,7 @@ import { generateReviewPdf } from '../utils/generateReviewPdf';
 import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
 import { selfAssessmentsRepository } from '../data/repositories/selfAssessmentsRepository';
+import { getLocalDateString } from '../utils/dateOnly';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -25,7 +26,6 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     const [scores, setScores] = useState({}); // Dictionary map tracking scores per item ID (e.g., { A1: 3, B2: 2 })
     const [comments, setComments] = useState(''); // Supervisor feedback summary text
     const [isSubmitting, setIsSubmitting] = useState(false); // Controls network submission loading indicators
-    const [telemetrySummary, setTelemetrySummary] = useState(null); // Local mirror object for background activity metrics
 
     // --- HISTORICAL APPRAISAL STORAGE CONTROLS ---
     const [evaluations, setEvaluations] = useState([]); // Array containing loaded historic review records
@@ -222,19 +222,18 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
      * - Task Bottlenecks: Scans unapproved card items where the current calendar date exceeds due deadlines
      * - Forum Engagement: Aggregates published platform threads and nested array reply counts combined
      */
-    useEffect(() => {
-        if (!selectedUserId) {
-            setTelemetrySummary(null);
-            return;
-        }
-        
+    const telemetrySummary = useMemo(() => {
+        if (!selectedUserId) return null;
+
         // 1. Calculate punctuality percentages
         const empAttendance = attendance.filter(a => a.employee_id === selectedUserId);
         const punctuality = PunctualityPolicy.calculate(empAttendance);
 
         // 2. Scan overdue task counts
         const empTasks = tasks.filter(t => (t.assigned_to || []).includes(selectedUserId));
-        const todayStr = new Date().toISOString().split('T')[0];
+        // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date,
+        // which is still YESTERDAY for a WIB (UTC+7) user before 7am local.
+        const todayStr = getLocalDateString();
         const overdueCount = empTasks.filter(t => !['Approved', 'Completed'].includes(t.status) && t.due_date < todayStr).length;
 
         // 3. Measure workspace interaction densities
@@ -242,8 +241,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
         const commentActivity = contributions.filter(c => (c.replies || []).some(r => r.author_id === selectedUserId)).length;
         const totalForumEngagement = forumActivity + commentActivity;
 
-        // Apply background changes into local view contexts
-        setTelemetrySummary({ punctuality, overdueCount, totalForumEngagement });
+        return { punctuality, overdueCount, totalForumEngagement };
     }, [selectedUserId, attendance, tasks, contributions]);
 
     // Esc closes the read-only transcript overlay, matching the shared Modal component's behavior.

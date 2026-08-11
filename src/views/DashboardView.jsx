@@ -153,33 +153,40 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // --- 2. SYNCHRONIZED METRICS ---
     
     // PENDING TASKS (Active Workload)
-    const activeWorkload = tasks.filter(t => {
+    // 🟩 PERFORMANCE: these were plain filter/reduce chains re-run on every
+    // render (including unrelated ones -- the widget-order effect, the
+    // employee dropdown, every keystroke while inline-editing a row via
+    // useStaffAssignmentEditor) -- memoized like the sibling attData/
+    // taskData calculations elsewhere in this file already are.
+    const activeWorkload = useMemo(() => tasks.filter(t => {
         const isActive = t.status === 'To Do' || t.status === 'In Progress' || t.status === 'Revision Needed';
-        if (userProfile.role === 'supervisor') return isActive; 
+        if (userProfile.role === 'supervisor') return isActive;
         return isActive && (t.assigned_to || []).includes(userProfile.id);
-    }).length;
+    }).length, [tasks, userProfile.role, userProfile.id]);
 
     // PENDING APPROVALS (Action Items)
-    let approvalCount = 0;
-    let approvalLabel = t('dashboard.systemOperationsClean');
-
-    if (userProfile.role === 'supervisor') {
-        const pendingLeaves = leaveRequests.filter(r => r.status === 'Pending').length;
-        const pendingTaskReviews = tasks.filter(t => t.status === 'Completed').length;
-
-        approvalCount = pendingLeaves + pendingTaskReviews;
-        if (approvalCount > 0) {
-            approvalLabel = t('dashboard.leaveFormsTasksPending', { leaves: pendingLeaves, tasks: pendingTaskReviews });
+    const { approvalCount, approvalLabel } = useMemo(() => {
+        if (userProfile.role === 'supervisor') {
+            const pendingLeaves = leaveRequests.filter(r => r.status === 'Pending').length;
+            const pendingTaskReviews = tasks.filter(t => t.status === 'Completed').length;
+            const count = pendingLeaves + pendingTaskReviews;
+            return {
+                approvalCount: count,
+                approvalLabel: count > 0
+                    ? t('dashboard.leaveFormsTasksPending', { leaves: pendingLeaves, tasks: pendingTaskReviews })
+                    : t('dashboard.systemOperationsClean'),
+            };
         }
-    } else {
         const myPendingLeaves = leaveRequests.filter(r => r.employee_id === userProfile.id && r.status === 'Pending').length;
         const myPendingTasks = tasks.filter(t =>
             (t.assigned_to || []).includes(userProfile.id) && t.status === 'Completed'
         ).length;
-
-        approvalCount = myPendingLeaves + myPendingTasks;
-        if (approvalCount > 0) approvalLabel = t('dashboard.awaitingSupervisorFeedback');
-    }
+        const count = myPendingLeaves + myPendingTasks;
+        return {
+            approvalCount: count,
+            approvalLabel: count > 0 ? t('dashboard.awaitingSupervisorFeedback') : t('dashboard.systemOperationsClean'),
+        };
+    }, [tasks, leaveRequests, userProfile.role, userProfile.id, t]);
 
     // Leave Days Taken Calculator
     const getDaysDiff = (start, end) => {
@@ -188,9 +195,12 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
         return Math.ceil(Math.abs(date2 - date1) / (1000 * 60 * 60 * 24)) + 1;
     };
 
-    const leaveDaysTaken = leaveRequests
-        .filter(req => req.employee_id === userProfile.id && req.status === "Approved")
-        .reduce((total, req) => total + getDaysDiff(req.start_date, req.end_date), 0);
+    const leaveDaysTaken = useMemo(
+        () => leaveRequests
+            .filter(req => req.employee_id === userProfile.id && req.status === "Approved")
+            .reduce((total, req) => total + getDaysDiff(req.start_date, req.end_date), 0),
+        [leaveRequests, userProfile.id]
+    );
 
     const getUserName = (id) => {
         if (!allUsers || !id) return t('dashboard.unknownOfficer');

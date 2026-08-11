@@ -21,6 +21,7 @@ import { performClockIn } from './domain/attendanceClockIn';
 import { consumeFaceVerifiedLoginFlag } from './domain/faceLoginClockInFlag';
 import { computeDeviceFingerprint, deriveDeviceLabel } from './utils/deviceFingerprint';
 import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from './geo/officeGeofence';
+import { getLocalDateString } from './utils/dateOnly';
 import { notificationDispatcher } from './patterns/notificationChannels/NotificationDispatcher';
 import { subscribeToTable } from './realtime/subscribeToTable';
 import { usePresence } from './realtime/usePresence';
@@ -264,9 +265,18 @@ export default function App() {
         contributionsRepository.listPosts(),
         contributionsRepository.listReplies(),
       ]);
+      // 🟩 PERFORMANCE: was an O(posts x replies) nested filter per post;
+      // grouping into a Map once is O(posts + replies) instead. Re-runs on
+      // every initial load AND every realtime event for either table, so
+      // this scales with total forum history, not just what changed.
+      const repliesByPostId = new Map();
+      for (const r of (replies || [])) {
+        if (!repliesByPostId.has(r.post_id)) repliesByPostId.set(r.post_id, []);
+        repliesByPostId.get(r.post_id).push(r);
+      }
       const merged = (data || []).map(post => ({
         ...post,
-        replies: (replies || []).filter(r => r.post_id === post.id),
+        replies: repliesByPostId.get(post.id) || [],
       }));
       dispatchAppData({ type: 'SET_CONTRIBUTIONS', payload: merged });
       idbSet('contributions', merged);
@@ -283,9 +293,15 @@ export default function App() {
         helpdeskRepository.listTickets(),
         helpdeskRepository.listReplies(),
       ]);
+      // 🟩 PERFORMANCE: same O(n^2) -> O(n) fix as fetchContributions above.
+      const repliesByTicketId = new Map();
+      for (const r of (replies || [])) {
+        if (!repliesByTicketId.has(r.ticket_id)) repliesByTicketId.set(r.ticket_id, []);
+        repliesByTicketId.get(r.ticket_id).push(r);
+      }
       const merged = (data || []).map(ticket => ({
         ...ticket,
-        replies: (replies || []).filter(r => r.ticket_id === ticket.id),
+        replies: repliesByTicketId.get(ticket.id) || [],
       }));
       dispatchAppData({ type: 'SET_HELPDESK_TICKETS', payload: merged });
       idbSet('helpdeskTickets', merged);
@@ -406,7 +422,11 @@ export default function App() {
     if (!profile || profile.role !== 'employee') return;
     if (!consumeFaceVerifiedLoginFlag()) return;
 
-    const today = new Date().toISOString().split('T')[0];
+    // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date, which
+    // is still YESTERDAY for a WIB (UTC+7) user clocking in before 7am
+    // local -- exactly the early-morning window this app's attendance
+    // check matters most for. getLocalDateString() uses local calendar fields.
+    const today = getLocalDateString();
 
     try {
       // Cheap pre-check before touching geolocation at all -- avoids an
@@ -461,6 +481,14 @@ export default function App() {
       await leaveRepository.insert(payload);
       if (userProfile) fetchLeaveRequests(userProfile);
     });
+    // 🟩 BUG FIX: the queue used to only ever flush on a live 'online' DOM
+    // event -- a tab that queued a mutation while offline, then was closed
+    // and reopened already-connected, never fired that event and left the
+    // mutation stuck in IndexedDB forever. Flushing once here (after the
+    // handler above is registered, so a leftover item from a previous
+    // session has something to run against) covers exactly that case; it's
+    // a no-op if the queue is empty or the browser is still offline.
+    offlineMutationQueue.flush();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 

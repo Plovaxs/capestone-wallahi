@@ -1,14 +1,12 @@
 import { checkBrightness } from './faceQuality';
+import { luminanceAtIndex } from './colorMath';
 
 /** RGBA canvas pixel buffer -> single-channel grayscale values (perceptual luminance). */
 export function toGrayscale(imageDataRGBA) {
     const pixelCount = imageDataRGBA.length / 4;
     const gray = new Float64Array(pixelCount);
     for (let i = 0; i < pixelCount; i++) {
-        const r = imageDataRGBA[i * 4];
-        const g = imageDataRGBA[i * 4 + 1];
-        const b = imageDataRGBA[i * 4 + 2];
-        gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+        gray[i] = luminanceAtIndex(imageDataRGBA, i * 4);
     }
     return gray;
 }

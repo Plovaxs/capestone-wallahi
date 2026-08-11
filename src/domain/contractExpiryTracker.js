@@ -1,3 +1,5 @@
+import { parseLocalDateOnly } from '../utils/dateOnly';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -26,8 +28,11 @@ export function analyzeContractExpiry(employees, { today = new Date(), warningDa
     return employees
         .filter((e) => e && e.contract_end_date)
         .map((e) => {
-            const end = new Date(e.contract_end_date);
-            const endMidnight = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+            // 🟩 TIMEZONE FIX: `new Date(e.contract_end_date)` parses the
+            // plain "YYYY-MM-DD" string as UTC midnight, which silently
+            // shifted the effective date back a day for any user west of
+            // UTC. parseLocalDateOnly reads it as LOCAL midnight directly.
+            const endMidnight = parseLocalDateOnly(e.contract_end_date);
             const daysRemaining = Math.round((endMidnight - todayMidnight) / DAY_MS);
 
             let urgency;
