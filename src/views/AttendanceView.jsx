@@ -1150,7 +1150,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                                     if (!livenessSuspicious) {
                                         if (livenessChallengeRef.current.isExpired()) {
-                                            livenessChallengeRef.current.reset();
+                                            livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
                                         }
                                         challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
                                     }
@@ -1164,7 +1164,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // two as the rolling window updates; a genuine static
                                     // replay stays flagged indefinitely instead of ever
                                     // sneaking through.
-                                    livenessChallengeRef.current.reset();
+                                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
                                     setChallengeGlyph(null);
                                     setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
@@ -1186,7 +1186,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     setBiometricStatus(t('attendance.statusAwaitingPulse'));
                                 } else {
                                     guardRef.current = true;
-                                    livenessChallengeRef.current.reset();
+                                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
                                     pulseDetectorRef.current.reset();
                                     setChallengeGlyph(null);
                                     clearInterval(timer);
@@ -1211,7 +1211,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 }
                             }
                         } else {
-                            livenessChallengeRef.current.reset(); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
+                            livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK); // not the enrolled face -- don't let a stray blink count toward a different person's clock-in
                             pulseDetectorRef.current.reset(); // don't mix pulse samples across different faces either
                             setChallengeGlyph(null);
                             const bucketExhausted = !mismatchBucketRef.current.tryConsume();
@@ -1225,7 +1225,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     latestColorLivenessRef.current = { suspicious: false };
-                    livenessChallengeRef.current.reset();
+                    livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
                     pulseDetectorRef.current.reset();
                     setChallengeGlyph(null);
                     setBiometricStatus(t('attendance.statusScanning'));
@@ -1973,7 +1973,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     type="button"
                                     onClick={() => {
                                         clockOutGuardRef.current = false;
-                                        livenessChallengeRef.current.reset();
+                                        livenessChallengeRef.current.reset(CHALLENGE_TYPES.BLINK, CHALLENGE_TYPES.BLINK);
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady}
