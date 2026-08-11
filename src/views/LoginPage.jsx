@@ -310,6 +310,132 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelsLoaded]);
 
+  // 🟩 BUG FIX: these two must be declared BEFORE the detectTick effect
+  // below, which lists both in its dependency array -- they used to live
+  // much further down the file (after that effect), which is a genuine
+  // temporal-dead-zone violation (`const` isn't hoisted the way `function`
+  // declarations are). It didn't always surface in dev, but broke outright
+  // under production minification: "Cannot access '...' before
+  // initialization" as soon as LoginPage rendered.
+  // 🟩 useCallback so the detectTick effect below can correctly list this
+  // (and executeBiometricLogin, which calls it) as a dependency without
+  // tearing down/rebuilding its setInterval on every render -- this
+  // function only ever reads/writes refs and calls the stable
+  // supabase.functions.invoke, so it has no real reactive dependencies.
+  const refreshLoginNonce = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
+      if (error) {
+        // 🟩 DIAGNOSTIC: supabase-js resolves (not rejects) on a non-2xx
+        // response, so this previously failed completely silently --
+        // loginNonceRef just stayed null/stale with no console trace at
+        // all, making "every login attempt gets rejected" hard to
+        // distinguish from an actual liveness/match failure.
+        console.error('[login] challenge request returned an error:', error);
+        return;
+      }
+      if (data?.nonce) {
+        loginNonceRef.current = data.nonce;
+        loginNonceIssuedAtRef.current = Date.now();
+      }
+    } catch (err) {
+      // Non-fatal: executeBiometricLogin will just get rejected server-side
+      // (missing/invalid nonce) and fall into the existing retry path below.
+      console.error('[login] failed to fetch a fresh login nonce:', err);
+    }
+  }, []);
+
+  // 🟩 useCallback for the same reason as refreshLoginNonce above -- its
+  // only reactive dependency is `t` (for the status/error messages it
+  // sets), so wrapping it lets detectTick's effect list it correctly
+  // without restarting its setInterval on every unrelated render.
+  const executeBiometricLogin = useCallback(async (liveDescriptor) => {
+   isRedirectingRef.current = true;
+   setBiometricStatus(t('login.statusVerifyingServer'));
+
+   // The nonce proves SOME real time elapsed since it was issued (the
+   // server enforces a minimum) -- fetching a replacement right here,
+   // an instant before submitting, would defeat that entirely. Only
+   // refresh proactively if the current one is getting old enough to
+   // risk server-side expiry while the user was still mid-challenge.
+   if (!loginNonceRef.current || Date.now() - loginNonceIssuedAtRef.current > NONCE_REFRESH_MARGIN_MS * 2.5) {
+     await refreshLoginNonce();
+   }
+
+   const { data, error } = await supabase.functions.invoke('biometric-login', {
+     body: { descriptor: Array.from(liveDescriptor), nonce: loginNonceRef.current },
+   });
+
+   if (error || !data?.token_hash) {
+     isRedirectingRef.current = false;
+
+     // 🟩 MITIGATION: previously every failure mode here -- an actual "no
+     // match found", a 429 rate-limit, and a network/server error where the
+     // request never even reached the matching logic -- all showed the
+     // exact same "face not recognized" message and counted the same
+     // toward the password-fallback threshold. That's actively misleading
+     // when the real cause is "your connection dropped" or "you've hit the
+     // server's rate limit", neither of which the user can fix by
+     // re-scanning their face. Reads the edge function's actual JSON error
+     // body (Supabase wraps a non-2xx response in a FunctionsHttpError
+     // whose .context is the raw Response) to tell them apart.
+     let reason = null;
+     if (error?.context?.json) {
+       try {
+         const body = await error.context.json();
+         reason = body?.error ?? null;
+       } catch (_parseErr) {
+         // Response wasn't JSON (or was already consumed) -- fall through to the generic network/server message below.
+       }
+     }
+
+     if (reason === 'no_match') {
+       setError(t('login.errorFaceNotRecognized'));
+       setBiometricFailCount((prev) => prev + 1);
+     } else if (reason === 'rate_limited') {
+       setError(t('login.errorRateLimited'));
+       // Doesn't count toward biometricFailCount -- being rate-limited says
+       // nothing about whether this user's face actually matches, so it
+       // shouldn't push them toward "give up and use a password" any faster.
+     } else if (reason === 'invalid_or_expired_challenge' || reason === 'challenge_too_fast') {
+       // 🟩 A legitimate timing edge case (nonce expired while lighting/
+       // positioning took a while, or a clock skew quirk), not a real
+       // failure of the user's face -- silently line up a fresh nonce and
+       // let the next completed challenge retry, no scary message, no
+       // count toward the password-fallback threshold.
+       refreshLoginNonce();
+     } else {
+       // Network failure (offline, DNS, CORS) or an unexpected 5xx -- the
+       // request may not have reached the matching logic at all.
+       console.error('[login] biometric-login request failed:', error);
+       setError(t('login.errorNetworkOrServer'));
+     }
+     return;
+   }
+
+   // Exchange the server-issued token for a real, verified session.
+   const { error: verifyError } = await supabase.auth.verifyOtp({
+     token_hash: data.token_hash,
+     type: 'magiclink',
+   });
+
+   if (verifyError) {
+     isRedirectingRef.current = false;
+     console.error('[login] session verification failed:', verifyError);
+     setError(t('login.errorSessionVerification'));
+     setBiometricFailCount((prev) => prev + 1);
+     return;
+   }
+   // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
+
+   // 🟩 CLOCK-IN-ON-LOGIN: signals to App.jsx that this session came from a
+   // live, just-verified face scan (not a restored session or a password
+   // login), so it can auto clock the employee in for today without a
+   // separate trip to Attendance -- see domain/faceLoginClockInFlag.js and
+   // App.jsx's attemptAutoClockInAfterLogin.
+   markFaceVerifiedLogin();
+  }, [t, refreshLoginNonce]);
+
   useEffect(() => {
     let intervalId = null;
     let cancelled = false;
@@ -640,125 +766,6 @@ export default function LoginPage() {
   // via CSS -- shared with AttendanceView (vision/faceOverlayGeometry.js)
   // instead of each page keeping its own copy of the same math.
   const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: videoRef.current });
-
-  // 🟩 useCallback so the detectTick effect below can correctly list this
-  // (and executeBiometricLogin, which calls it) as a dependency without
-  // tearing down/rebuilding its setInterval on every render -- this
-  // function only ever reads/writes refs and calls the stable
-  // supabase.functions.invoke, so it has no real reactive dependencies.
-  const refreshLoginNonce = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
-      if (error) {
-        // 🟩 DIAGNOSTIC: supabase-js resolves (not rejects) on a non-2xx
-        // response, so this previously failed completely silently --
-        // loginNonceRef just stayed null/stale with no console trace at
-        // all, making "every login attempt gets rejected" hard to
-        // distinguish from an actual liveness/match failure.
-        console.error('[login] challenge request returned an error:', error);
-        return;
-      }
-      if (data?.nonce) {
-        loginNonceRef.current = data.nonce;
-        loginNonceIssuedAtRef.current = Date.now();
-      }
-    } catch (err) {
-      // Non-fatal: executeBiometricLogin will just get rejected server-side
-      // (missing/invalid nonce) and fall into the existing retry path below.
-      console.error('[login] failed to fetch a fresh login nonce:', err);
-    }
-  }, []);
-
-  // 🟩 useCallback for the same reason as refreshLoginNonce above -- its
-  // only reactive dependency is `t` (for the status/error messages it
-  // sets), so wrapping it lets detectTick's effect list it correctly
-  // without restarting its setInterval on every unrelated render.
-  const executeBiometricLogin = useCallback(async (liveDescriptor) => {
-   isRedirectingRef.current = true;
-   setBiometricStatus(t('login.statusVerifyingServer'));
-
-   // The nonce proves SOME real time elapsed since it was issued (the
-   // server enforces a minimum) -- fetching a replacement right here,
-   // an instant before submitting, would defeat that entirely. Only
-   // refresh proactively if the current one is getting old enough to
-   // risk server-side expiry while the user was still mid-challenge.
-   if (!loginNonceRef.current || Date.now() - loginNonceIssuedAtRef.current > NONCE_REFRESH_MARGIN_MS * 2.5) {
-     await refreshLoginNonce();
-   }
-
-   const { data, error } = await supabase.functions.invoke('biometric-login', {
-     body: { descriptor: Array.from(liveDescriptor), nonce: loginNonceRef.current },
-   });
-
-   if (error || !data?.token_hash) {
-     isRedirectingRef.current = false;
-
-     // 🟩 MITIGATION: previously every failure mode here -- an actual "no
-     // match found", a 429 rate-limit, and a network/server error where the
-     // request never even reached the matching logic -- all showed the
-     // exact same "face not recognized" message and counted the same
-     // toward the password-fallback threshold. That's actively misleading
-     // when the real cause is "your connection dropped" or "you've hit the
-     // server's rate limit", neither of which the user can fix by
-     // re-scanning their face. Reads the edge function's actual JSON error
-     // body (Supabase wraps a non-2xx response in a FunctionsHttpError
-     // whose .context is the raw Response) to tell them apart.
-     let reason = null;
-     if (error?.context?.json) {
-       try {
-         const body = await error.context.json();
-         reason = body?.error ?? null;
-       } catch (_parseErr) {
-         // Response wasn't JSON (or was already consumed) -- fall through to the generic network/server message below.
-       }
-     }
-
-     if (reason === 'no_match') {
-       setError(t('login.errorFaceNotRecognized'));
-       setBiometricFailCount((prev) => prev + 1);
-     } else if (reason === 'rate_limited') {
-       setError(t('login.errorRateLimited'));
-       // Doesn't count toward biometricFailCount -- being rate-limited says
-       // nothing about whether this user's face actually matches, so it
-       // shouldn't push them toward "give up and use a password" any faster.
-     } else if (reason === 'invalid_or_expired_challenge' || reason === 'challenge_too_fast') {
-       // 🟩 A legitimate timing edge case (nonce expired while lighting/
-       // positioning took a while, or a clock skew quirk), not a real
-       // failure of the user's face -- silently line up a fresh nonce and
-       // let the next completed challenge retry, no scary message, no
-       // count toward the password-fallback threshold.
-       refreshLoginNonce();
-     } else {
-       // Network failure (offline, DNS, CORS) or an unexpected 5xx -- the
-       // request may not have reached the matching logic at all.
-       console.error('[login] biometric-login request failed:', error);
-       setError(t('login.errorNetworkOrServer'));
-     }
-     return;
-   }
-
-   // Exchange the server-issued token for a real, verified session.
-   const { error: verifyError } = await supabase.auth.verifyOtp({
-     token_hash: data.token_hash,
-     type: 'magiclink',
-   });
-
-   if (verifyError) {
-     isRedirectingRef.current = false;
-     console.error('[login] session verification failed:', verifyError);
-     setError(t('login.errorSessionVerification'));
-     setBiometricFailCount((prev) => prev + 1);
-     return;
-   }
-   // supabase.auth.onAuthStateChange in App.jsx now picks this up naturally.
-
-   // 🟩 CLOCK-IN-ON-LOGIN: signals to App.jsx that this session came from a
-   // live, just-verified face scan (not a restored session or a password
-   // login), so it can auto clock the employee in for today without a
-   // separate trip to Attendance -- see domain/faceLoginClockInFlag.js and
-   // App.jsx's attemptAutoClockInAfterLogin.
-   markFaceVerifiedLogin();
-  }, [t, refreshLoginNonce]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
