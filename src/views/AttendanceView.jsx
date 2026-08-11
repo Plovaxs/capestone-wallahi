@@ -882,6 +882,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             }
         }
         loadModels();
+        // 🟩 `t` deliberately omitted -- this effect downloads the face-api.js
+        // model weights (several MB), a one-time cost per mount that must
+        // NOT re-run just because the user toggles the app language mid-load
+        // (i18next's `t` reference changes on every language switch).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userProfile, disableYolo, FACE_MODEL_URL, modelLoadAttempt]);
 
     // ==========================================

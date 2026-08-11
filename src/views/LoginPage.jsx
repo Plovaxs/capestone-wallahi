@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -313,6 +313,13 @@ export default function LoginPage() {
   useEffect(() => {
     let intervalId = null;
     let cancelled = false;
+    // 🟩 these ref objects are created once via useRef(...) and never
+    // reassigned anywhere in this component -- copying them to locals here
+    // just satisfies the "ref value may have changed by cleanup time" lint
+    // rule; the object identity is stable for the component's whole lifetime.
+    const microMotionTracker = microMotionTrackerRef.current;
+    const livenessChallenge = livenessChallengeRef.current;
+    const pulseDetector = pulseDetectorRef.current;
 
     // 🟩 PERFORMANCE: this used to run full face detection + landmarks +
     // descriptor inference on every requestAnimationFrame -- up to ~60
@@ -580,11 +587,11 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
-      microMotionTrackerRef.current.reset();
-      livenessChallengeRef.current.reset();
-      pulseDetectorRef.current.reset();
+      microMotionTracker.reset();
+      livenessChallenge.reset();
+      pulseDetector.reset();
     };
-  }, [authMode, modelsLoaded, suggestPasswordFallback]);
+  }, [authMode, modelsLoaded, suggestPasswordFallback, executeBiometricLogin, refreshLoginNonce, t]);
 
   // Keeps latestFaceBoxRef in sync with the box the detectTick loop above
   // just computed, so the fast pulse sampling loop below always reads a
@@ -634,7 +641,12 @@ export default function LoginPage() {
   // instead of each page keeping its own copy of the same math.
   const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: videoRef.current });
 
-  const refreshLoginNonce = async () => {
+  // 🟩 useCallback so the detectTick effect below can correctly list this
+  // (and executeBiometricLogin, which calls it) as a dependency without
+  // tearing down/rebuilding its setInterval on every render -- this
+  // function only ever reads/writes refs and calls the stable
+  // supabase.functions.invoke, so it has no real reactive dependencies.
+  const refreshLoginNonce = useCallback(async () => {
     try {
       const { data, error } = await supabase.functions.invoke('biometric-login', { body: { action: 'challenge' } });
       if (error) {
@@ -655,9 +667,13 @@ export default function LoginPage() {
       // (missing/invalid nonce) and fall into the existing retry path below.
       console.error('[login] failed to fetch a fresh login nonce:', err);
     }
-  };
+  }, []);
 
-  const executeBiometricLogin = async (liveDescriptor) => {
+  // 🟩 useCallback for the same reason as refreshLoginNonce above -- its
+  // only reactive dependency is `t` (for the status/error messages it
+  // sets), so wrapping it lets detectTick's effect list it correctly
+  // without restarting its setInterval on every unrelated render.
+  const executeBiometricLogin = useCallback(async (liveDescriptor) => {
    isRedirectingRef.current = true;
    setBiometricStatus(t('login.statusVerifyingServer'));
 
@@ -742,7 +758,7 @@ export default function LoginPage() {
    // separate trip to Attendance -- see domain/faceLoginClockInFlag.js and
    // App.jsx's attemptAutoClockInAfterLogin.
    markFaceVerifiedLogin();
-  };
+  }, [t, refreshLoginNonce]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
