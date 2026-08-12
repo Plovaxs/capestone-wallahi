@@ -927,6 +927,7 @@
     "errorFaceNotRecognized": "Wajah tidak dikenali oleh server. Silakan coba lagi.",
     "errorRateLimited": "Terlalu banyak percobaan dalam waktu singkat — mohon tunggu semenit lalu coba lagi.",
     "errorNetworkOrServer": "Tidak bisa terhubung ke server. Cek koneksi internet kamu dan coba lagi.",
+    "errorChallengeSyncFailing": "Server terus menolak tantangan login — biasanya ini berarti server dan perangkat kamu tidak sinkron. Reload halaman, atau masuk pakai email dan kata sandi di bawah.",
     "statusScanRepeatedlyFailing": "Pemindaian wajah terus gagal — reload halaman, atau masuk pakai email dan kata sandi di bawah.",
     "errorSessionVerification": "Verifikasi sesi gagal. Silakan coba lagi.",
     "faceRegisteredMessage": "Registrasi wajah tersimpan. Gunakan kata sandi Anda untuk masuk.",

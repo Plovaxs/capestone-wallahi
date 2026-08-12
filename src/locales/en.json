@@ -927,6 +927,7 @@
     "errorFaceNotRecognized": "Face not recognized on server. Please try again.",
     "errorRateLimited": "Too many attempts in a short time — please wait a minute and try again.",
     "errorNetworkOrServer": "Couldn't reach the server. Check your connection and try again.",
+    "errorChallengeSyncFailing": "The server keeps rejecting the login challenge — this usually means the server and your device are out of sync. Reload the page, or sign in with your email and password below.",
     "statusScanRepeatedlyFailing": "Face scanning keeps failing — reload the page, or sign in with your email and password below.",
     "errorSessionVerification": "Session verification failed. Please try again.",
     "faceRegisteredMessage": "Face registration saved. Use your password to sign in.",

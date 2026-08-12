@@ -113,6 +113,7 @@ export default function LoginPage() {
   const ATTEMPT_COOLDOWN_MS = 4000;
   const scanBusyRef = useRef(false); // 🟩 NEW: guards against an interval tick overlapping a still-running detection (throttled loop, see below)
   const detectionFailureStreakRef = useRef(0); // 🟩 NEW: consecutive detectTick exceptions (WebGL context lost, out-of-memory, etc.) -- previously only ever logged to console with zero user-facing feedback
+  const nonceFailureStreakRef = useRef(0); // 🟩 BUG FIX: see executeBiometricLogin's invalid_or_expired_challenge branch -- was silently retried forever with zero visible feedback if the server keeps rejecting every nonce
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't wipe blink progress
@@ -399,23 +400,37 @@ export default function LoginPage() {
      if (reason === 'no_match') {
        setError(t('login.errorFaceNotRecognized'));
        setBiometricFailCount((prev) => prev + 1);
+       nonceFailureStreakRef.current = 0;
      } else if (reason === 'rate_limited') {
        setError(t('login.errorRateLimited'));
        // Doesn't count toward biometricFailCount -- being rate-limited says
        // nothing about whether this user's face actually matches, so it
        // shouldn't push them toward "give up and use a password" any faster.
+       nonceFailureStreakRef.current = 0;
      } else if (reason === 'invalid_or_expired_challenge' || reason === 'challenge_too_fast') {
        // 🟩 A legitimate timing edge case (nonce expired while lighting/
-       // positioning took a while, or a clock skew quirk), not a real
-       // failure of the user's face -- silently line up a fresh nonce and
-       // let the next completed challenge retry, no scary message, no
-       // count toward the password-fallback threshold.
+       // positioning took a while, or a clock skew quirk) was the original
+       // assumption here -- silently line up a fresh nonce and let the
+       // next completed challenge retry, no scary message. But if the
+       // SERVER keeps rejecting every nonce (a real deployment/clock-skew
+       // problem, not a one-off timing fluke), that silence meant the
+       // user just watched the challenge reset forever with zero
+       // indication anything was actually wrong -- reported as "sudah
+       // kedip 2x hijau tapi nggak masuk-masuk." Still silent for the
+       // first couple of occurrences (the original rare-fluke case), but
+       // surfaces a real, actionable message once it's clearly not a fluke.
+       console.error('[login] biometric-login rejected the nonce:', reason);
+       nonceFailureStreakRef.current += 1;
+       if (nonceFailureStreakRef.current >= 3) {
+         setError(t('login.errorChallengeSyncFailing'));
+       }
        refreshLoginNonce();
      } else {
        // Network failure (offline, DNS, CORS) or an unexpected 5xx -- the
        // request may not have reached the matching logic at all.
        console.error('[login] biometric-login request failed:', error);
        setError(t('login.errorNetworkOrServer'));
+       nonceFailureStreakRef.current = 0;
      }
      return;
    }
