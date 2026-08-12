@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { auditLogRepository } from '../data/repositories/auditLogRepository';
 import { subscribeToTable } from '../realtime/subscribeToTable';
 import { showUserError } from '../utils/errorHandling';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
+import { Icons } from '../components/Icons';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -176,9 +179,9 @@ const AuditLogView = ({ userProfile, allUsers = [] }) => {
                     </select>
                 </div>
                 {isLoading ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500">{t('auditLog.loading')}</p>
+                    <SkeletonList count={5} />
                 ) : filteredEntries.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('auditLog.noEntries')}</p>
+                    <EmptyState icon={Icons.ClipboardCheck} title={t('auditLog.noEntries')} />
                 ) : (
                     <div className="divide-y divide-gray-50 dark:divide-gray-700/40 max-h-[560px] overflow-y-auto">
                         {filteredEntries.map((entry) => (

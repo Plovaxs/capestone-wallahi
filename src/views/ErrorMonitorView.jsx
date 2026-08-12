@@ -8,6 +8,9 @@ import { confirmDialog } from '../utils/confirm';
 import { showUserError } from '../utils/errorHandling';
 import { getLocalDateString } from '../utils/dateOnly';
 import Modal from '../components/Modal';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
+import { Icons } from '../components/Icons';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -181,9 +184,9 @@ const ErrorMonitorView = ({ userProfile }) => {
                     />
                 </div>
                 {isLoading ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500">{t('errorMonitor.loading')}</p>
+                    <SkeletonList count={5} />
                 ) : filteredErrors.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('errorMonitor.noErrors')}</p>
+                    <EmptyState icon={Icons.CheckCircle} title={t('errorMonitor.noErrors')} />
                 ) : (
                     <div className="divide-y divide-gray-50 dark:divide-gray-700/40 max-h-[480px] overflow-y-auto">
                         {filteredErrors.map((err) => (

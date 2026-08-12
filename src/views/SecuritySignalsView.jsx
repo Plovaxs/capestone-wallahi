@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { detectImpossibleTravel } from '../domain/impossibleTravelDetector';
 import { knownDevicesRepository } from '../data/repositories/knownDevicesRepository';
 import { showUserError } from '../utils/errorHandling';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
+import { Icons } from '../components/Icons';
 
 const NEW_DEVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -73,7 +76,7 @@ const SecuritySignalsView = ({ userProfile, allUsers = [], attendance = [] }) =>
                         <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">{t('securitySignals.travelDescription')}</p>
                     </div>
                     {travelFlags.length === 0 ? (
-                        <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('securitySignals.noTravelFlags')}</p>
+                        <EmptyState icon={Icons.ShieldCheck} title={t('securitySignals.noTravelFlags')} />
                     ) : (
                         <div className="divide-y divide-gray-50 dark:divide-gray-700/40 max-h-96 overflow-y-auto">
                             {travelFlags.map((flag, idx) => (
@@ -101,9 +104,9 @@ const SecuritySignalsView = ({ userProfile, allUsers = [], attendance = [] }) =>
                         <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">{t('securitySignals.devicesDescription')}</p>
                     </div>
                     {isLoadingDevices ? (
-                        <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500">{t('securitySignals.loading')}</p>
+                        <SkeletonList count={3} />
                     ) : recentNewDevices.length === 0 ? (
-                        <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('securitySignals.noNewDevices')}</p>
+                        <EmptyState icon={Icons.Smartphone} title={t('securitySignals.noNewDevices')} />
                     ) : (
                         <div className="divide-y divide-gray-50 dark:divide-gray-700/40 max-h-96 overflow-y-auto">
                             {recentNewDevices.map((d) => (

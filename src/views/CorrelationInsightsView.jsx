@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis } from 'recharts';
 import { computeCorrelationInsights } from '../domain/correlationInsights';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 const PAIRS = [
     { key: 'punctualityVsTaskCompletion', xKey: 'punctuality', yKey: 'taskCompletionRate', color: '#2563eb' },
@@ -74,7 +76,7 @@ const CorrelationInsightsView = ({ userProfile, allUsers = [], tasks = [], atten
                                     </ScatterChart>
                                 </ResponsiveContainer>
                             ) : (
-                                <p className="text-center text-[11px] text-gray-400 italic py-10">{t('correlationInsights.notEnoughData')}</p>
+                                <EmptyState icon={Icons.ScatterChart} title={t('correlationInsights.notEnoughData')} className="py-6" />
                             )}
                         </div>
                     );

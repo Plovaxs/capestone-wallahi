@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { analyzeContractExpiry } from '../domain/contractExpiryTracker';
 import { showUserError } from '../utils/errorHandling';
 import { supabase } from '../supabaseClient';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 const URGENCY_STYLES = {
     expired: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50',
@@ -130,7 +132,7 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
                     <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('contractExpiry.listTitle')}</h2>
                 </div>
                 {entries.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('contractExpiry.noContracts')}</p>
+                    <EmptyState icon={Icons.FileClock} title={t('contractExpiry.noContracts')} />
                 ) : (
                     <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
                         {entries.map((entry) => (

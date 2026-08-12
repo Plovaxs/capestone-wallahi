@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { analyzeOnboardingCompletion } from '../domain/onboardingCompletionTracker';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 const CHECKLIST_LABELS = {
     position: 'checklistPosition',
@@ -57,7 +59,7 @@ const OnboardingTrackerView = ({ userProfile, allUsers = [], attendance = [] }) 
                     <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('onboardingTracker.listTitle')}</h2>
                 </div>
                 {entries.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('onboardingTracker.noEmployees')}</p>
+                    <EmptyState icon={Icons.ListChecks} title={t('onboardingTracker.noEmployees')} />
                 ) : (
                     <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
                         {entries.map((entry) => (

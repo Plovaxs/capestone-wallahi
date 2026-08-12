@@ -549,14 +549,15 @@ const SettingsView = ({
                             />
                         </div>
 
-                        <button
-                            type="button"
+                        <Button
                             onClick={handlePasswordChange}
-                            disabled={!password || !confirmPassword || isSavingPassword}
-                            className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all mt-4 text-xs shadow-sm shadow-blue-500/10"
+                            disabled={!password || !confirmPassword}
+                            loading={isSavingPassword}
+                            size="sm"
+                            className="w-full mt-4"
                         >
-                            {isSavingPassword ? t('settings.saving') : t('settings.updatePassword')}
-                        </button>
+                            {t('settings.updatePassword')}
+                        </Button>
                     </div>
                 </div>
 
@@ -601,14 +602,15 @@ const SettingsView = ({
                                 />
                             </div>
                             <div className="flex gap-2">
-                                <button
-                                    type="button"
+                                <Button
                                     onClick={handleSetPin}
-                                    disabled={!newPin || !confirmPin || isSavingPin}
-                                    className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-xs"
+                                    disabled={!newPin || !confirmPin}
+                                    loading={isSavingPin}
+                                    size="sm"
+                                    className="flex-1"
                                 >
-                                    {isSavingPin ? t('settings.saving') : t('settings.savePin')}
-                                </button>
+                                    {t('settings.savePin')}
+                                </Button>
                                 {hasClockPin && (
                                     <button
                                         type="button"

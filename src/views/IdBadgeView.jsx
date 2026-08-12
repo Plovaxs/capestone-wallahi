@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { encodeBadgePayload } from '../utils/employeeBadge';
+import Skeleton from '../components/Skeleton';
 
 /**
  * VIEW: IdBadgeView
@@ -60,7 +61,7 @@ const IdBadgeView = ({ userProfile }) => {
                 ) : dataUrl ? (
                     <img src={dataUrl} alt={t('idBadge.title')} className="rounded-xl border border-gray-100 dark:border-gray-700" />
                 ) : (
-                    <div className="w-[280px] h-[280px] rounded-xl bg-gray-100 dark:bg-gray-900/40 animate-pulse" />
+                    <Skeleton className="w-[280px] h-[280px] rounded-xl" />
                 )}
 
                 <button

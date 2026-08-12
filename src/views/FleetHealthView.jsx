@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
 import { subscribeToTable } from '../realtime/subscribeToTable';
 import { showUserError } from '../utils/errorHandling';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
+import { Icons } from '../components/Icons';
 
 /**
  * VIEW: FleetHealthView
@@ -110,9 +113,9 @@ const FleetHealthView = ({ userProfile, allUsers = [] }) => {
                     <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('fleetHealth.recentTitle')}</h2>
                 </div>
                 {isLoading ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500">{t('fleetHealth.loading')}</p>
+                    <SkeletonList count={5} />
                 ) : snapshots.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('fleetHealth.noSnapshots')}</p>
+                    <EmptyState icon={Icons.CpuChip} title={t('fleetHealth.noSnapshots')} />
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-xs">
