@@ -16,7 +16,7 @@ import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
-import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
+import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
@@ -182,6 +182,11 @@ export default function LoginPage() {
   const [virtualCameraDetected, setVirtualCameraDetected] = useState(false);
   const [scanReadiness, setScanReadiness] = useState(0); // 🟩 NEW: 0-100 "how close to a good capture" score driving the readiness bar
   const [faceOverlayBox, setFaceOverlayBox] = useState(null); // 🟩 NEW: bounding box drawn around the detected face, same visual language as AttendanceView
+  // 🟩 NEW: per-eye boxes + closed/open read, so a blink is visibly
+  // confirmed on screen (the box flashes) instead of only being inferred
+  // from the status text -- real-user feedback that blinking felt
+  // undetectable even when it was actually registering correctly.
+  const [eyeBoxes, setEyeBoxes] = useState(null); // { left: {x,y,width,height}, right: {...}, leftClosed, rightClosed } | null
 
   useEffect(() => {
     let isCurrent = true;
@@ -521,6 +526,7 @@ export default function LoginPage() {
         if (!primary) {
           setScanReadiness(0);
           setFaceOverlayBox(null);
+          setEyeBoxes(null);
           microMotionTrackerRef.current.reset();
           livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
@@ -560,6 +566,22 @@ export default function LoginPage() {
           occlusion: occlusion.ok,
         }));
         setFaceOverlayBox({ x: box.x, y: box.y, width: box.width, height: box.height, imageWidth: width, imageHeight: height });
+
+        // 🟩 NEW: eye boxes update every tick regardless of the quality/
+        // liveness gates below -- the point is to show the user their
+        // blink is being SEEN in real time, not just once the challenge
+        // logic has already accepted it.
+        const eyeGeometry = calculateEyeBoxes(detection.landmarks);
+        if (eyeGeometry) {
+          setEyeBoxes({
+            left: { ...eyeGeometry.left, imageWidth: width, imageHeight: height },
+            right: { ...eyeGeometry.right, imageWidth: width, imageHeight: height },
+            leftClosed: isEyeClosed(detection.landmarks.getLeftEye()),
+            rightClosed: isEyeClosed(detection.landmarks.getRightEye()),
+          });
+        } else {
+          setEyeBoxes(null);
+        }
 
         const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
         // 🟩 BUG FIX: closing your eyes mid-blink is itself a transient
@@ -803,6 +825,7 @@ export default function LoginPage() {
   // via CSS -- shared with AttendanceView (vision/faceOverlayGeometry.js)
   // instead of each page keeping its own copy of the same math.
   const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: videoRef.current });
+  const getEyeOverlayStyle = (eyeBox) => calculateFaceOverlayStyle({ box: eyeBox, videoEl: videoRef.current });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1174,6 +1197,29 @@ export default function LoginPage() {
               }`}
               style={getFaceOverlayStyle() || { display: 'none' }}
             />
+          )}
+
+          {/* 🟩 NEW: a box drawn around each eye that lights up the moment
+              a blink closes it -- real-time visual proof the scan is
+              actually reading your eyes, not just a status message the
+              user has to trust. */}
+          {eyeBoxes && (
+            <>
+              <div
+                aria-hidden="true"
+                className={`absolute border-2 rounded-md z-[16] pointer-events-none transition-all duration-75 ${
+                  eyeBoxes.leftClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                }`}
+                style={getEyeOverlayStyle(eyeBoxes.left) || { display: 'none' }}
+              />
+              <div
+                aria-hidden="true"
+                className={`absolute border-2 rounded-md z-[16] pointer-events-none transition-all duration-75 ${
+                  eyeBoxes.rightClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                }`}
+                style={getEyeOverlayStyle(eyeBoxes.right) || { display: 'none' }}
+              />
+            </>
           )}
         </div>
 

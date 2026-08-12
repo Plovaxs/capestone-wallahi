@@ -17,6 +17,48 @@ export function calculateEAR(eyePoints) {
 }
 
 /**
+ * Tight bounding box (in the video's own native pixel coordinates, same
+ * space as a face-api detection box) around a single eye's 6 landmark
+ * points, padded a bit so the drawn box doesn't hug the eyelid line
+ * exactly. Shared by whichever view wants to render "boxes around the
+ * eyes" -- feed the result through faceOverlayGeometry.js's
+ * calculateFaceOverlayStyle (it already accepts any {x,y,width,height}
+ * box, not just a face box) to get mirrored/scaled CSS position.
+ */
+function eyeBoundingBox(eyePoints) {
+    const xs = eyePoints.map((p) => p.x);
+    const ys = eyePoints.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const width = maxX - minX;
+    const height = maxY - minY;
+    // Eyes are wide and flat -- padding purely by their own height would
+    // give a near-invisible sliver of a box, so pad vertically by a
+    // fraction of the WIDTH instead, plus a smaller horizontal margin.
+    const padX = width * 0.25;
+    const padY = width * 0.35;
+    return { x: minX - padX, y: minY - padY, width: width + padX * 2, height: height + padY * 2 };
+}
+
+/**
+ * Both eyes' bounding boxes for a detection's landmarks, or null if the
+ * landmarks object doesn't expose eye points (e.g. a stale/malformed read).
+ */
+export function calculateEyeBoxes(landmarks) {
+    const leftEye = landmarks?.getLeftEye?.();
+    const rightEye = landmarks?.getRightEye?.();
+    if (!leftEye?.length || !rightEye?.length) return null;
+    return { left: eyeBoundingBox(leftEye), right: eyeBoundingBox(rightEye) };
+}
+
+/** Whether a single eye's own landmark points currently read as closed -- same threshold RandomLivenessChallenge's blink step uses, so the visual feedback always agrees with what's actually being counted. */
+export function isEyeClosed(eyePoints) {
+    return calculateEAR(eyePoints) < EAR_CLOSED_THRESHOLD;
+}
+
+/**
  * Head-turn ratio: horizontal offset of the nose tip from the midpoint
  * between the two jaw-outline endpoints, normalized by face width. Near 0
  * when facing the camera; grows in magnitude (sign indicates direction)

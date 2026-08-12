@@ -12,7 +12,7 @@ import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { isWeekend } from '../domain/attendanceDayPolicy';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
-import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { getLocalDateString } from '../utils/dateOnly';
@@ -212,6 +212,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // run the scan loop this feeds.
     const { disableYolo, networkBatteryDiagnostics } = useNetworkBatteryAdaptive(!!userProfile && userProfile.role !== 'supervisor');
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
+    // 🟩 NEW: per-eye boxes + closed/open read for the main clock-in scan
+    // loop, so a blink is visibly confirmed on screen instead of only
+    // being inferred from the status text.
+    const [eyeBoxes, setEyeBoxes] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
     const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
     const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
@@ -946,6 +950,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         });
                     }
 
+                    // 🟩 NEW: eye boxes update every tick regardless of the
+                    // quality/liveness gates below -- shows the blink is
+                    // being SEEN in real time, not just once the challenge
+                    // logic has already accepted it.
+                    const eyeGeometry = liveDet.landmarks ? calculateEyeBoxes(liveDet.landmarks) : null;
+                    if (eyeGeometry) {
+                        setEyeBoxes({
+                            left: { ...eyeGeometry.left, imageWidth, imageHeight },
+                            right: { ...eyeGeometry.right, imageWidth, imageHeight },
+                            leftClosed: isEyeClosed(liveDet.landmarks.getLeftEye()),
+                            rightClosed: isEyeClosed(liveDet.landmarks.getRightEye()),
+                        });
+                    } else {
+                        setEyeBoxes(null);
+                    }
+
                     // 🟩 QUALITY GATES: framing/size, single-face, lighting, and
                     // detector-confidence (occlusion proxy) are all checked BEFORE
                     // trusting a match — a low-quality read shouldn't silently
@@ -1303,6 +1323,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     }
                 } else {
                     setFaceOverlayBox(null);
+                    setEyeBoxes(null);
                     setFaceMatchDistance(null);
                     setIsFaceVerified(false);
                     setScanReadiness(0);
@@ -1332,6 +1353,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         return () => {
             clearInterval(timer);
             setFaceOverlayBox(null);
+            setEyeBoxes(null);
         };
         // Intentional: detectFaceFromImage and handleClockIn are redefined every
         // render (not memoized), so listing them here would tear down and
@@ -1472,6 +1494,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // MATHEMATICAL MATRIX POSITION CALCULATOR
     // ==========================================
     const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: faceOverlayBox, videoEl: webcamVideoRef.current });
+    const getEyeOverlayStyle = (eyeBox) => calculateFaceOverlayStyle({ box: eyeBox, videoEl: webcamVideoRef.current });
 
     // 🟩 FLEET HEALTH: reports one snapshot of this session's already-
     // computed local diagnostics (see EdgeDiagnosticsPanel.jsx -- nothing
@@ -2197,6 +2220,31 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             {faceOverlayBox.source === 'yolo' ? '⚡ YOLOv8 FACE' : '🔍 FACE-API'}
                                         </div>
                                     </div>
+                                )}
+
+                                {/* 🟩 NEW: a box drawn around each eye that lights up the
+                                    moment a blink closes it -- real-time visual proof the
+                                    scan is actually reading your eyes, not just a status
+                                    message the user has to trust. Only meaningful during
+                                    the main clock-in scan (not the enrollment wizard,
+                                    which doesn't run the liveness challenge at all). */}
+                                {eyeBoxes && isCameraReady && enrollmentStepIndex < 0 && (
+                                    <>
+                                        <div
+                                            aria-hidden="true"
+                                            className={`absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 ${
+                                                eyeBoxes.leftClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                                            }`}
+                                            style={getEyeOverlayStyle(eyeBoxes.left) || { display: 'none' }}
+                                        />
+                                        <div
+                                            aria-hidden="true"
+                                            className={`absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 ${
+                                                eyeBoxes.rightClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                                            }`}
+                                            style={getEyeOverlayStyle(eyeBoxes.right) || { display: 'none' }}
+                                        />
+                                    </>
                                 )}
 
                             </div>

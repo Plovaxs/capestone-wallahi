@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     calculateEAR, calculateHeadTurnRatio, calculatePitchRatio,
     calculateMouthWidthRatio, calculateMouthOpenRatio,
+    calculateEyeBoxes, isEyeClosed,
     RandomLivenessChallenge, CHALLENGE_TYPES,
 } from './livenessDetector';
 
@@ -82,6 +83,50 @@ describe('calculateEAR', () => {
 
     it('a soft/partial blink lands around 0.25 EAR', () => {
         expect(calculateEAR(softBlinkEye)).toBeCloseTo(0.25, 2);
+    });
+});
+
+describe('isEyeClosed', () => {
+    it('reads an open eye as not closed', () => {
+        expect(isEyeClosed(openEye)).toBe(false);
+    });
+
+    it('reads a closed eye as closed', () => {
+        expect(isEyeClosed(closedEye)).toBe(true);
+    });
+
+    it('agrees with the same EAR_CLOSED_THRESHOLD RandomLivenessChallenge uses', () => {
+        // Not a hardcoded duplicate of the threshold -- this just asserts
+        // isEyeClosed and the challenge's own blink-step logic reach the
+        // same verdict on the same landmarks, so the eye-box visual
+        // feedback can never show "open" while the challenge itself is
+        // silently counting it as "closed" (or vice versa).
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        challenge.registerFrame(makeLandmarks(openEye));
+        expect(isEyeClosed(openEye)).toBe(challenge.hasBeenClosed);
+        challenge.registerFrame(makeLandmarks(closedEye));
+        expect(isEyeClosed(closedEye)).toBe(challenge.hasBeenClosed);
+    });
+});
+
+describe('calculateEyeBoxes', () => {
+    it('returns a left and right box that both contain their own eye points', () => {
+        const landmarks = makeLandmarks(openEye);
+        const boxes = calculateEyeBoxes(landmarks);
+        expect(boxes).not.toBeNull();
+        for (const box of [boxes.left, boxes.right]) {
+            for (const p of openEye) {
+                expect(p.x).toBeGreaterThanOrEqual(box.x);
+                expect(p.x).toBeLessThanOrEqual(box.x + box.width);
+                expect(p.y).toBeGreaterThanOrEqual(box.y);
+                expect(p.y).toBeLessThanOrEqual(box.y + box.height);
+            }
+        }
+    });
+
+    it('returns null when landmarks are missing eye accessors', () => {
+        expect(calculateEyeBoxes({})).toBeNull();
+        expect(calculateEyeBoxes(null)).toBeNull();
     });
 });
 
