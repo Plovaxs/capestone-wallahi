@@ -26,23 +26,37 @@ html.high-contrast * {
   border-color: currentColor !important;
 }
 
-/* Applied to .app-content-shell (Header + the active view), NOT body/html —
-   a CSS `filter` on any ancestor becomes the containing block for its
-   `position: fixed` descendants, which used to break the fixed Sidebar and
-   every fixed overlay (Modal, CommandPalette, toasts, FeatureFlagPanel):
-   they'd stop tracking the viewport and appear to vanish/misplace whenever
-   high-contrast or a colorblind mode was toggled. Scoping the filter to the
-   content shell keeps those fixed elements outside it, so they're unaffected. */
-html.high-contrast .app-content-shell {
+/* Applied to .app-content-shell (Header + the active view) AND
+   .sidebar-shell (Sidebar.jsx's own <aside>) -- NOT body/html, and NOT as
+   a single rule covering both via a shared ancestor. A CSS `filter` on any
+   ANCESTOR of a `position: fixed` element becomes that element's new
+   containing block, which used to break the fixed Sidebar and every fixed
+   overlay (Modal, CommandPalette, toasts, FeatureFlagPanel): they'd stop
+   tracking the viewport and appear to vanish/misplace whenever high-
+   contrast or a colorblind mode was toggled. The Sidebar itself is
+   `position: fixed`, so it's given the SAME filter directly (a filter on
+   the fixed element itself doesn't have this problem -- only a filter
+   somewhere ABOVE it in the tree does) instead of being wrapped inside a
+   filtered ancestor. Modal/CommandPalette/toasts portal straight to
+   <body> (see Modal.jsx's own comment), so they're never a descendant of
+   either shell and stay unaffected either way. 🟩 BUG FIX (2026-08-12):
+   the sidebar previously had no filter rule at all -- toggling colorblind
+   mode visibly changed the content area but left the sidebar's own icons/
+   text un-corrected, reported as the whole page not really being covered. */
+html.high-contrast .app-content-shell,
+html.high-contrast .sidebar-shell {
   filter: contrast(1.2);
 }
 
 /* Heuristic assistive filters: shift hues away from the confusable pair for
    each deficiency type so adjacent UI colors (e.g. status badges) read as
    more distinct. Not a mathematically precise daltonization transform. */
-html.colorblind-protanopia .app-content-shell { filter: saturate(1.35) hue-rotate(-12deg) contrast(1.1); }
-html.colorblind-deuteranopia .app-content-shell { filter: saturate(1.35) hue-rotate(12deg) contrast(1.1); }
-html.colorblind-tritanopia .app-content-shell { filter: saturate(1.2) hue-rotate(-28deg) contrast(1.05); }
+html.colorblind-protanopia .app-content-shell,
+html.colorblind-protanopia .sidebar-shell { filter: saturate(1.35) hue-rotate(-12deg) contrast(1.1); }
+html.colorblind-deuteranopia .app-content-shell,
+html.colorblind-deuteranopia .sidebar-shell { filter: saturate(1.35) hue-rotate(12deg) contrast(1.1); }
+html.colorblind-tritanopia .app-content-shell,
+html.colorblind-tritanopia .sidebar-shell { filter: saturate(1.2) hue-rotate(-28deg) contrast(1.05); }
 
 /* ===========================================================================
    PRINT STYLESHEET: hides chrome (sidebar, header, chatbot, toasts, modals,

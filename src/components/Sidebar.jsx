@@ -55,13 +55,25 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
       )}
 
       {/* SIDEBAR - Fixed Position Fix */}
-      <aside 
+      {/* 🟩 BUG FIX: high-contrast/colorblind filters previously only
+          applied to .app-content-shell (Header + active view), not the
+          sidebar -- deliberately, since a `filter` on any ANCESTOR of a
+          `position: fixed` element breaks its fixed positioning (a real
+          CSS spec quirk, see index.css's comment). But applying the
+          filter directly ON this fixed element itself (not on an
+          ancestor OF it) doesn't have that problem -- only a filter
+          somewhere ABOVE a fixed element in the tree creates a new
+          containing block for it. `sidebar-shell` gets its own matching
+          filter rule in index.css so the whole app is covered, per
+          real-user feedback expecting the sidebar to be included too. */}
+      <aside
         className={`
+          sidebar-shell
           fixed inset-y-0 left-0 z-50
           w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700
           transform transition-transform duration-300 ease-in-out
-          ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'} 
-          md:translate-x-0 
+          ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0
           flex flex-col shadow-2xl md:shadow-none
         `}
       >
