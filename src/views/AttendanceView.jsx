@@ -225,6 +225,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // brightness/contrast on the capture canvas before running detection.
     const lowLightStreakRef = useRef(0);
     const isLowLightRef = useRef(false);
+    const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't swallow the one frame a blink transition needed
     const [torchActive, setTorchActive] = useState(false);
     // 🟩 Throttles the expensive full-frame lens-obstruction scan (see below)
     // to once every 5 ticks instead of every scan tick.
@@ -1045,10 +1046,28 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     }));
 
                     if (qualityIssue) {
-                        setIsFaceVerified(false);
-                        setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'attendance.statusScanning'));
-                        faceScanBusyRef.current = false;
-                        return;
+                        // 🟩 BUG FIX: closing your eyes mid-blink is itself a
+                        // transient partial-occlusion pattern -- the detector's
+                        // confidence score can dip below checkOcclusion's
+                        // threshold for exactly the one frame a blink
+                        // transition needed to be seen. Bailing out on that
+                        // single tick meant the state machine below never
+                        // even got a chance to register "eyes closed," so a
+                        // real blink could look completely invisible to it.
+                        // Debounced like the low-light streak above -- only
+                        // this specific reason gets tolerance (a genuinely
+                        // absent/badly-framed/multi-face frame should still
+                        // stop processing immediately, same as before).
+                        if (qualityIssue.reason === 'low-confidence' && qualityIssueStreakRef.current < 2) {
+                            qualityIssueStreakRef.current += 1;
+                        } else {
+                            setIsFaceVerified(false);
+                            setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'attendance.statusScanning'));
+                            faceScanBusyRef.current = false;
+                            return;
+                        }
+                    } else {
+                        qualityIssueStreakRef.current = 0;
                     }
 
                     if (referenceDescriptorRef.current && referenceDescriptorRef.current.length > 0) {

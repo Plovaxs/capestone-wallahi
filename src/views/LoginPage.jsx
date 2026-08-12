@@ -115,6 +115,7 @@ export default function LoginPage() {
   const detectionFailureStreakRef = useRef(0); // 🟩 NEW: consecutive detectTick exceptions (WebGL context lost, out-of-memory, etc.) -- previously only ever logged to console with zero user-facing feedback
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
+  const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't wipe blink progress
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
   // 🟩 SECURITY: active liveness challenge, reinstated after a printed photo
   // defeated the previous passive-only liveness check during the capstone
@@ -560,14 +561,31 @@ export default function LoginPage() {
         setFaceOverlayBox({ x: box.x, y: box.y, width: box.width, height: box.height, imageWidth: width, imageHeight: height });
 
         const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
+        // 🟩 BUG FIX: closing your eyes mid-blink is itself a transient
+        // partial-occlusion pattern -- face-api's detection confidence
+        // score can dip below checkOcclusion's threshold for exactly the
+        // one frame that matters, right as the closed-eye state would
+        // otherwise register. Wiping the whole liveness challenge (and
+        // micro-motion/pulse buffers) on a SINGLE bad-quality tick meant a
+        // real blink could reset its own progress before it ever counted,
+        // producing an endless "reset, retry, reset" loop that never
+        // advances. Debounced like the low-light streak just above --
+        // a genuine "face is really gone/badly framed" condition still
+        // resets after a few consecutive bad ticks, but one blink-shaped
+        // blip doesn't undo everything.
+        const QUALITY_ISSUE_STREAK_THRESHOLD = 3;
         if (qualityIssue) {
-          microMotionTrackerRef.current.reset();
-          livenessChallengeRef.current.reset();
-          pulseDetectorRef.current.reset();
-          setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
-          setChallengeGlyph(null);
+          qualityIssueStreakRef.current += 1;
+          if (qualityIssueStreakRef.current >= QUALITY_ISSUE_STREAK_THRESHOLD) {
+            microMotionTrackerRef.current.reset();
+            livenessChallengeRef.current.reset();
+            pulseDetectorRef.current.reset();
+            setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'login.statusPositionFace'));
+            setChallengeGlyph(null);
+          }
           return;
         }
+        qualityIssueStreakRef.current = 0;
 
         microMotionTrackerRef.current.addFrame(region.data, region.width, region.height);
         const colorLiveness = checkColorLiveness(region.data, region.width, region.height);
