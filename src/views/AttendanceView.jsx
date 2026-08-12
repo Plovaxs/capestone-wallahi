@@ -1251,18 +1251,32 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 // brief, real luminance edge right in the border region this
                                 // samples -- easily mistaken for deviceEdgeSuspicious (or
                                 // nudging color/texture past their own thresholds) for
-                                // exactly the one frame a blink transition needed. Debounced
-                                // UNLESS the mandatory rPPG pulse check itself is what
-                                // flagged it -- that's a multi-second signal completely
-                                // unrelated to any single frame, so it stays an immediate,
-                                // non-debounced block. `treatAsSuspicious` (not the raw
-                                // `livenessSuspicious`) drives every branch below so a
-                                // tolerated blink-shaped blip can't fall through into the
-                                // clock-in branch by accident.
+                                // exactly the one frame a blink transition needed.
+                                // 🟩 LOOSENED FURTHER (2026-08-12, real-user report): holding
+                                // still to blink deliberately on request reads as
+                                // "suspiciously static" to the pixel-motion/border-uniformity
+                                // checks, which want incidental fidgety motion as their OWN
+                                // liveness signal -- directly in tension with "hold still and
+                                // blink on cue." Since the deliberate blink challenge is
+                                // already the PRIMARY liveness proof (a photo literally cannot
+                                // blink twice on request), a much longer tolerance here costs
+                                // little real security -- a genuine photo/replay still can
+                                // never blink at all, so it can never progress past step 1
+                                // regardless of how long this tolerates. `treatAsSuspicious`
+                                // (not the raw `livenessSuspicious`) drives every branch below
+                                // so a tolerated blink-shaped blip can't fall through into the
+                                // clock-in branch by accident. Still immediate/non-debounced
+                                // when the mandatory rPPG pulse check itself is what flagged
+                                // it -- a multi-second signal unrelated to any single frame or
+                                // to "holding still," and a photo/screen genuinely can't fake it.
                                 let treatAsSuspicious = false;
                                 if (livenessSuspicious) {
                                     const pulseIsAuthoritative = pulseStats.ready && !pulseStats.hasPlausiblePulse;
-                                    if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
+                                    // 🟩 Lower raw tick count than LoginPage's equivalent (8) --
+                                    // this view's scan interval (FACE_SCAN_INTERVAL_MS, 1.8s) is
+                                    // already ~5x slower per tick than Login's (350ms), so the
+                                    // same wall-clock tolerance needs proportionally fewer ticks.
+                                    if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 3) {
                                         passiveSuspicionStreakRef.current += 1;
                                     } else {
                                         passiveSuspicionStreakRef.current = 0;

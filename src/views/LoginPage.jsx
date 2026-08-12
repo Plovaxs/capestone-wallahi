@@ -726,15 +726,27 @@ export default function LoginPage() {
             // real luminance edge right in the border region this samples --
             // easily mistaken for deviceEdgeSuspicious (or nudging color/
             // texture past their own thresholds) for exactly the one frame a
-            // blink transition needed. Debounced the same way as the
-            // occlusion fix above, UNLESS the mandatory rPPG pulse check
-            // itself is what flagged it -- that's a multi-second signal
-            // completely unrelated to any single frame, so it stays an
-            // immediate, non-debounced reset (a photo/screen genuinely can't
-            // fake a pulse, so there's no legitimate blink-shaped explanation
-            // for it to misfire on).
+            // blink transition needed.
+            // 🟩 LOOSENED FURTHER (2026-08-12, real-user report): holding
+            // still to blink deliberately on request -- the exact thing this
+            // challenge asks for -- reads as "suspiciously static" to the
+            // pixel-motion/border-uniformity checks, which want to see
+            // incidental fidgety motion as their own liveness signal. Those
+            // two asks are in direct tension for a real person concentrating
+            // on blinking on cue, and it kept getting reported as "diam
+            // sebentar buat kedip malah dituduh foto." Since the deliberate
+            // blink challenge is already the PRIMARY liveness proof (a photo
+            // literally cannot blink twice on request), a much longer
+            // tolerance window here costs little real security -- a genuine
+            // photo/replay still can never blink at all regardless of how
+            // long this tolerates, so it can never progress past step 1
+            // anyway. UNLESS the mandatory rPPG pulse check itself is what
+            // flagged it -- that's a multi-second signal completely
+            // unrelated to any single frame or to "holding still," so it
+            // stays an immediate, non-debounced reset (a photo/screen
+            // genuinely can't fake a pulse).
             const pulseIsAuthoritative = pulseStatsForVote.ready && !pulseStatsForVote.hasPlausiblePulse;
-            if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
+            if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 8) {
               passiveSuspicionStreakRef.current += 1;
             } else {
               passiveSuspicionStreakRef.current = 0;
