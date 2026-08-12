@@ -31,6 +31,7 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from '../geo/officeGeofence';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
+import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
@@ -247,17 +248,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // 🟩 SECURITY: active liveness challenge, reinstated as a mandatory gate
     // on top of the passive signals above (see vision/livenessFusion.js)
     // after a printed photo defeated the previous passive-only design for
-    // BOTH this page and Login during the capstone defense. 🟩 REDESIGN
-    // (2026-08-11): fixed to a double-blink requirement instead of a random
-    // blink/smile/mouth-open mix -- see LoginPage.jsx's identical change for
-    // the rationale (the separate screen-color-flash check, removed below,
-    // was reported as a seizure-risk visual and dropped; a forced double
-    // blink already needs the same two-independent-sustained-cycles
-    // behavior a still photo or short loop can't fake).
+    // BOTH this page and Login during the capstone defense.
+    // 🟩 SIMPLIFIED (2026-08-12): single blink instead of double, per
+    // explicit design call -- see LoginPage.jsx's identical change for the
+    // full rationale. The mandatory rPPG pulse gate that used to be the
+    // other hard backstop is now advisory-only; mandatory frame-to-frame
+    // face-box motion (vision/boxMotionHeuristic.js) takes its place as
+    // the second backstop alongside the blink.
     const livenessChallengeRef = useRef(new RandomLivenessChallenge({
         challengeType: CHALLENGE_TYPES.BLINK,
-        secondChallengeType: CHALLENGE_TYPES.BLINK,
+        steps: 1,
     }));
+    const boxMotionTrackerRef = useRef(createBoxMotionTracker());
+    const prevFaceBoxForMotionRef = useRef(null);
     // 🟩 rPPG PULSE LIVENESS: an additional, independent biometric vote --
     // see vision/pulseDetector.js for the full rationale. Deliberately
     // decoupled from the main ~1.2s scan tick below (a pulse needs ~20Hz
@@ -948,6 +951,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             imageHeight,
                             source: liveDet.source
                         });
+
+                        // 🟩 NEW: mandatory frame-to-frame face-box motion
+                        // signal -- see vision/boxMotionHeuristic.js for the
+                        // full rationale and its documented limitation.
+                        boxMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevFaceBoxForMotionRef.current, liveDet.box));
+                        prevFaceBoxForMotionRef.current = liveDet.box;
                     }
 
                     // 🟩 NEW: eye boxes update every tick regardless of the
@@ -1259,24 +1268,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 // liveness signal -- directly in tension with "hold still and
                                 // blink on cue." Since the deliberate blink challenge is
                                 // already the PRIMARY liveness proof (a photo literally cannot
-                                // blink twice on request), a much longer tolerance here costs
-                                // little real security -- a genuine photo/replay still can
-                                // never blink at all, so it can never progress past step 1
+                                // blink on request), a much longer tolerance here costs little
+                                // real security -- a genuine photo/replay still can never blink
+                                // at all, so it can never progress past the challenge
                                 // regardless of how long this tolerates. `treatAsSuspicious`
                                 // (not the raw `livenessSuspicious`) drives every branch below
                                 // so a tolerated blink-shaped blip can't fall through into the
-                                // clock-in branch by accident. Still immediate/non-debounced
-                                // when the mandatory rPPG pulse check itself is what flagged
-                                // it -- a multi-second signal unrelated to any single frame or
-                                // to "holding still," and a photo/screen genuinely can't fake it.
+                                // clock-in branch by accident. Pulse is no longer authoritative
+                                // here either (see livenessFusion.js) -- every vote, including
+                                // pulse, now shares the same debounce tolerance.
                                 let treatAsSuspicious = false;
                                 if (livenessSuspicious) {
-                                    const pulseIsAuthoritative = pulseStats.ready && !pulseStats.hasPlausiblePulse;
                                     // 🟩 Lower raw tick count than LoginPage's equivalent (8) --
                                     // this view's scan interval (FACE_SCAN_INTERVAL_MS, 1.8s) is
                                     // already ~5x slower per tick than Login's (350ms), so the
                                     // same wall-clock tolerance needs proportionally fewer ticks.
-                                    if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 3) {
+                                    if (passiveSuspicionStreakRef.current < 3) {
                                         passiveSuspicionStreakRef.current += 1;
                                     } else {
                                         passiveSuspicionStreakRef.current = 0;
@@ -1285,6 +1292,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 } else {
                                     passiveSuspicionStreakRef.current = 0;
                                 }
+
+                                const motionStats = boxMotionTrackerRef.current.getStats();
+                                const motionOk = motionStats.ready && motionStats.hasNaturalMovement && !motionStats.isErratic;
 
                                 if (treatAsSuspicious) {
                                     // Don't lock in or clock in this tick -- keep scanning. A
@@ -1306,19 +1316,22 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         step: livenessChallengeRef.current.stepIndex + 1,
                                         totalSteps: livenessChallengeRef.current.totalSteps,
                                     }));
-                                } else if (!pulseStats.ready) {
-                                    // 🟩 SECURITY: rPPG pulse is now a MANDATORY gate, not just an
-                                    // authoritative-when-ready vote above -- a photo/screen genuinely
-                                    // cannot produce a periodic blood-flow signal, so this is one of
-                                    // the hardest signals here to fake. The expression challenge
-                                    // stays confirmed (registerFrame caches it, won't re-prompt) --
-                                    // this tick just waits for the pulse buffer to finish warming up
-                                    // (~2s) instead of clocking in before it has a chance to.
-                                    setBiometricStatus(t('attendance.statusAwaitingPulse'));
+                                } else if (!motionOk) {
+                                    // 🟩 SECURITY (2026-08-12): mandatory frame-to-frame face-box
+                                    // motion gate, replacing the old mandatory rPPG pulse gate --
+                                    // see vision/boxMotionHeuristic.js for the full rationale and
+                                    // its documented limitation (a hand-held photo also wobbles;
+                                    // this is a SUPPLEMENT to the blink challenge, not a
+                                    // replacement for it). The challenge stays confirmed
+                                    // (registerFrame caches it, won't re-prompt) -- this tick
+                                    // just waits for the motion window to fill/settle.
+                                    setBiometricStatus(t('attendance.statusAwaitingMotion'));
                                 } else {
                                     guardRef.current = true;
                                     livenessChallengeRef.current.reset();
                                     pulseDetectorRef.current.reset();
+                                    boxMotionTrackerRef.current.reset();
+                                    prevFaceBoxForMotionRef.current = null;
                                     setChallengeGlyph(null);
                                     clearInterval(timer);
 
@@ -1356,6 +1369,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     setIsFaceVerified(false);
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
+                    boxMotionTrackerRef.current.reset();
+                    prevFaceBoxForMotionRef.current = null;
                     latestColorLivenessRef.current = { suspicious: false };
                     livenessChallengeRef.current.reset();
                     pulseDetectorRef.current.reset();

@@ -44,9 +44,10 @@ describe('evaluatePassiveLiveness', () => {
         expect(result.suspicious).toBe(false);
     });
 
-    it('a confirmed absent pulse is authoritative -- overrides every other signal reading "not suspicious"', () => {
-        // The exact scenario a well-lit, sharp, hand-wobbled photo produces:
-        // border/pixel/color/texture all read fine, only pulse catches it.
+    it('2026-08-12: a confirmed absent pulse is now an ORDINARY vote, not authoritative -- alone it does not flag suspicious', () => {
+        // Pulse was demoted from its earlier authoritative-override design
+        // (see the module comment) once the blink challenge + mandatory
+        // box-motion check became the two hard-to-fake backstops instead.
         const result = evaluatePassiveLiveness({
             borderUniform: false,
             pixelFlat: false,
@@ -54,7 +55,18 @@ describe('evaluatePassiveLiveness', () => {
             textureFlat: false,
             pulseSuspicious: true,
         });
+        expect(result.suspicious).toBe(false);
+        expect(result.votes).toBe(1);
+    });
+
+    it('pulseSuspicious combines with one other signal to reach the required 2 votes, same as any other signal', () => {
+        const result = evaluatePassiveLiveness({
+            borderUniform: true,
+            pixelFlat: false,
+            pulseSuspicious: true,
+        });
         expect(result.suspicious).toBe(true);
+        expect(result.votes).toBe(2);
     });
 
     it('a confirmed present pulse does not by itself clear an otherwise-suspicious vote', () => {

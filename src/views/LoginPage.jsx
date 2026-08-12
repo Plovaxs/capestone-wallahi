@@ -14,6 +14,7 @@ import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
+import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
@@ -123,19 +124,22 @@ export default function LoginPage() {
   // defeated the previous passive-only liveness check during the capstone
   // defense — a static photo literally cannot blink or turn its head on
   // request, closing the gap that passive heuristics alone (even
-  // fixed/voted) can't fully close on their own. Randomly alternates
-  // 🟩 REDESIGN (2026-08-11): random smile/mouth-open challenge steps were
-  // replaced with a fixed double-blink requirement -- real-user feedback on
-  // the mixed-type version was fine, but the separate screen-color-flash
-  // check (removed below) was reported as visually uncomfortable /
-  // seizure-risk (rapid flashing colors), and a forced double blink alone
-  // already requires the same SUSTAINED, two-independent-cycles behavior a
-  // single still photo or short loop can't fake. See vision/livenessFusion.js
-  // for why the passive gate alone was insufficient.
+  // fixed/voted) can't fully close on their own.
+  // 🟩 SIMPLIFIED (2026-08-12): single blink instead of double, per explicit
+  // design call -- the mandatory rPPG pulse gate that used to be the other
+  // hard backstop is now advisory-only (see the passive-vote fold-in
+  // further down), so this app now leans on: 1) a live, deliberate blink
+  // (a static photo cannot produce), and 2) mandatory frame-to-frame face-
+  // box motion (vision/boxMotionHeuristic.js -- a rigidly mounted image
+  // cannot produce). Both together, not either alone -- see that module's
+  // own comment for the known "hand-held photo also wobbles" limitation
+  // and why box-motion is a SUPPLEMENT to the blink, never a replacement.
   const livenessChallengeRef = useRef(new RandomLivenessChallenge({
     challengeType: CHALLENGE_TYPES.BLINK,
-    secondChallengeType: CHALLENGE_TYPES.BLINK,
+    steps: 1,
   }));
+  const boxMotionTrackerRef = useRef(createBoxMotionTracker());
+  const prevFaceBoxForMotionRef = useRef(null);
   // 🟩 rPPG PULSE LIVENESS: same additional biometric vote as Attendance --
   // see vision/pulseDetector.js. Fed by a separate ~20Hz sampling loop
   // (decoupled from this page's 350ms detectTick, too slow by Nyquist for
@@ -485,6 +489,7 @@ export default function LoginPage() {
     const microMotionTracker = microMotionTrackerRef.current;
     const livenessChallenge = livenessChallengeRef.current;
     const pulseDetector = pulseDetectorRef.current;
+    const boxMotionTracker = boxMotionTrackerRef.current;
 
     // 🟩 PERFORMANCE: this used to run full face detection + landmarks +
     // descriptor inference on every requestAnimationFrame -- up to ~60
@@ -560,6 +565,8 @@ export default function LoginPage() {
           setFaceOverlayBox(null);
           setEyeBoxes(null);
           microMotionTrackerRef.current.reset();
+          boxMotionTrackerRef.current.reset();
+          prevFaceBoxForMotionRef.current = null;
           livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
@@ -623,6 +630,14 @@ export default function LoginPage() {
           occlusion: occlusion.ok || qualityIssueTolerated,
         }));
         setFaceOverlayBox({ x: box.x, y: box.y, width: box.width, height: box.height, imageWidth: width, imageHeight: height });
+
+        // 🟩 NEW: mandatory frame-to-frame face-box motion signal -- see
+        // vision/boxMotionHeuristic.js for the full rationale and its
+        // documented limitation. Updates every tick regardless of the
+        // quality/liveness gates below, same "always feed the tracker"
+        // pattern already used for eye boxes and micro-motion.
+        boxMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevFaceBoxForMotionRef.current, box));
+        prevFaceBoxForMotionRef.current = box;
 
         // 🟩 NEW: eye boxes update every tick regardless of the quality/
         // liveness gates below -- the point is to show the user their
@@ -693,20 +708,21 @@ export default function LoginPage() {
         // 🟩 SIMPLIFIED (2026-08-12): the deliberate, on-demand blink
         // challenge (now visibly confirmed on screen via the green eye
         // boxes) is evaluated FIRST and is the PRIMARY liveness signal --
-        // a static photo/screen literally cannot blink twice on request,
-        // which is a much stronger, more direct proof of life than any of
-        // the passive pixel-statistics votes below. Those passive checks
+        // a static photo/screen literally cannot blink on request, which
+        // is a much stronger, more direct proof of life than any of the
+        // passive pixel-statistics votes below. Those passive checks
         // (border uniformity, pixel motion, color/texture, device-edge,
-        // hand-in-frame) are still useful for catching a spoofing attempt
-        // BEFORE it ever blinks, but real-user reports showed them
+        // hand-in-frame, pulse) are still useful for catching a spoofing
+        // attempt BEFORE it ever blinks, but real-user reports showed them
         // repeatedly false-tripping mid-blink on completely genuine users
         // (occlusion, device-edge, and "suspiciously static" each
         // independently reported) -- once the deliberate challenge is
         // actually confirmed, they no longer gate the login attempt at
-        // all. The mandatory rPPG pulse check further below is
-        // unaffected and still required either way -- that one measures
-        // an actual blood-flow signal a photo genuinely cannot fake, so
-        // it isn't the source of these false positives.
+        // all. The second, still-mandatory backstop is
+        // vision/boxMotionHeuristic.js further below -- frame-to-frame
+        // face-box motion a rigidly mounted image can't produce -- not
+        // the rPPG pulse check, which is now advisory-only like the rest
+        // of the passive votes (see livenessFusion.js's own comment).
         const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
 
         if (!challengeConfirmed) {
@@ -753,17 +769,14 @@ export default function LoginPage() {
             // on blinking on cue, and it kept getting reported as "diam
             // sebentar buat kedip malah dituduh foto." Since the deliberate
             // blink challenge is already the PRIMARY liveness proof (a photo
-            // literally cannot blink twice on request), a much longer
-            // tolerance window here costs little real security -- a genuine
-            // photo/replay still can never blink at all regardless of how
-            // long this tolerates, so it can never progress past step 1
-            // anyway. UNLESS the mandatory rPPG pulse check itself is what
-            // flagged it -- that's a multi-second signal completely
-            // unrelated to any single frame or to "holding still," so it
-            // stays an immediate, non-debounced reset (a photo/screen
-            // genuinely can't fake a pulse).
-            const pulseIsAuthoritative = pulseStatsForVote.ready && !pulseStatsForVote.hasPlausiblePulse;
-            if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 8) {
+            // literally cannot blink on request), a much longer tolerance
+            // window here costs little real security -- a genuine photo/
+            // replay still can never blink at all regardless of how long
+            // this tolerates, so it can never progress past the challenge
+            // anyway. Pulse is no longer authoritative here either (see
+            // livenessFusion.js) -- every vote, including pulse, now shares
+            // the same debounce tolerance.
+            if (passiveSuspicionStreakRef.current < 8) {
               passiveSuspicionStreakRef.current += 1;
             } else {
               passiveSuspicionStreakRef.current = 0;
@@ -784,17 +797,17 @@ export default function LoginPage() {
           return;
         }
 
-        // 🟩 SECURITY: rPPG pulse is a MANDATORY gate regardless of the
-        // simplification above -- a photo/screen genuinely cannot produce
-        // a periodic blood-flow signal, so this is one of the hardest
-        // signals here to fake, and login shouldn't be able to complete
-        // purely on the blink challenge before the pulse buffer has even
-        // finished warming up (~2s). If it's not ready yet, the challenge
-        // stays confirmed (won't reset/re-prompt) and this tick just
-        // waits for the next one.
-        const pulseStats = pulseDetectorRef.current.getStats();
-        if (!pulseStats.ready) {
-          setBiometricStatus(t('login.statusAwaitingPulse'));
+        // 🟩 SECURITY (2026-08-12): mandatory frame-to-frame face-box motion
+        // gate, replacing the old mandatory rPPG pulse gate -- see
+        // vision/boxMotionHeuristic.js for the full rationale and its
+        // documented limitation (a hand-held photo also wobbles; this is a
+        // SUPPLEMENT to the blink challenge above, not a replacement for
+        // it). If the window hasn't filled yet or looks frozen/erratic,
+        // the challenge stays confirmed (won't reset/re-prompt) and this
+        // tick just waits for the next one.
+        const motionStats = boxMotionTrackerRef.current.getStats();
+        if (!motionStats.ready || !motionStats.hasNaturalMovement || motionStats.isErratic) {
+          setBiometricStatus(t('login.statusAwaitingMotion'));
           return;
         }
 
@@ -804,6 +817,8 @@ export default function LoginPage() {
         await executeBiometricLogin(detection.descriptor);
         livenessChallengeRef.current.reset();
         pulseDetectorRef.current.reset();
+        boxMotionTrackerRef.current.reset();
+        prevFaceBoxForMotionRef.current = null;
         refreshLoginNonce(); // the nonce just used is now consumed server-side either way -- line up a fresh one for the next attempt
       } catch (err) {
         console.error('Face detection error:', err);
@@ -834,6 +849,7 @@ export default function LoginPage() {
       microMotionTracker.reset();
       livenessChallenge.reset();
       pulseDetector.reset();
+      boxMotionTracker.reset();
     };
   }, [authMode, modelsLoaded, suggestPasswordFallback, executeBiometricLogin, refreshLoginNonce, t]);
 

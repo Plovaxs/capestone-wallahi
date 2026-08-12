@@ -23,13 +23,18 @@
  * pulse (pulseDetector.js) is qualitatively different from every other
  * signal here: it measures actual periodic blood-flow-driven light
  * reflectance, which a flat photo or screen genuinely cannot produce, no
- * matter how sharp/well-lit/well-wobbled it is. Once the pulse detector
- * has gathered enough samples to have an opinion (`pulseSuspicious` is
- * not null), that opinion is now authoritative -- a confirmed absence of
- * a plausible pulse marks the frame suspicious regardless of how the
- * other four (comparatively fakeable) signals vote. Before pulse data is
- * ready (the first few seconds of any session), the majority vote over
- * the remaining signals is still used as a reasonable fallback.
+ * matter how sharp/well-lit/well-wobbled it is. Made authoritative here
+ * for that reason -- a confirmed absence of a plausible pulse marked the
+ * frame suspicious regardless of how the other signals voted.
+ *
+ * 🟩 SIMPLIFIED (2026-08-12): pulse demoted back to an ordinary vote, per
+ * an explicit design call -- LoginPage.jsx/AttendanceView.jsx no longer
+ * treat it as a mandatory gate either (see their own comments). The
+ * blink challenge plus the new mandatory vision/boxMotionHeuristic.js
+ * check are now the two hard-to-fake backstops instead; pulse (like
+ * hand/device-edge/color/texture) is one more advisory signal that can
+ * contribute to a majority-vote flag but never single-handedly blocks
+ * progress on its own.
  */
 const REQUIRED_VOTES = 2;
 
@@ -40,21 +45,14 @@ const REQUIRED_VOTES = 2;
  *   on a desktop with no devicemotion support, or pulse before it has
  *   enough samples) so it isn't counted either way.
  */
-export function evaluatePassiveLiveness({ pulseSuspicious, ...otherSignals } = {}) {
-    const readings = Object.values(otherSignals).filter((s) => s === true || s === false);
+export function evaluatePassiveLiveness(signals = {}) {
+    const readings = Object.values(signals).filter((s) => s === true || s === false);
     const votes = readings.filter((s) => s === true).length;
     const total = readings.length;
 
-    if (pulseSuspicious === true) {
-        // Authoritative: a confirmed absence of a plausible pulse overrides
-        // however the other (individually fakeable) signals voted.
-        return { suspicious: true, votes: votes + 1, total: total + 1 };
-    }
-
-    const pulseCounted = pulseSuspicious === false;
     return {
         suspicious: total >= REQUIRED_VOTES && votes >= REQUIRED_VOTES,
         votes,
-        total: pulseCounted ? total + 1 : total,
+        total,
     };
 }
