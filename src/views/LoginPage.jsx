@@ -362,12 +362,29 @@ export default function LoginPage() {
    setBiometricStatus(t('login.statusVerifyingServer'));
 
    // The nonce proves SOME real time elapsed since it was issued (the
-   // server enforces a minimum) -- fetching a replacement right here,
-   // an instant before submitting, would defeat that entirely. Only
-   // refresh proactively if the current one is getting old enough to
-   // risk server-side expiry while the user was still mid-challenge.
+   // server enforces a minimum, MIN_CHALLENGE_ELAPSED_MS below) -- only
+   // refresh proactively if the current one is getting old enough to risk
+   // server-side expiry while the user was still mid-challenge.
    if (!loginNonceRef.current || Date.now() - loginNonceIssuedAtRef.current > NONCE_REFRESH_MARGIN_MS * 2.5) {
      await refreshLoginNonce();
+   }
+
+   // 🟩 BUG FIX: the comment above already warned "fetching a replacement
+   // right here, an instant before submitting, would defeat [the min-
+   // elapsed check] entirely" -- and then the code did exactly that
+   // anyway. If the challenge happened to take long enough for the
+   // proactive refresh just above to actually fire, the freshly-issued
+   // nonce gets consumed within milliseconds, reliably failing the
+   // server's own MIN_CHALLENGE_ELAPSED_MS (1500ms) floor as
+   // "challenge_too_fast" -- a real, reported server-visible failure that
+   // had nothing to do with the user's face or blink at all, just this
+   // race between two different nonce-freshness safeguards. Explicitly
+   // wait out whatever's left before sending, so a request is never sent
+   // with a nonce younger than the server will accept.
+   const MIN_CHALLENGE_ELAPSED_MS = 1500;
+   const nonceAgeMs = Date.now() - loginNonceIssuedAtRef.current;
+   if (nonceAgeMs < MIN_CHALLENGE_ELAPSED_MS) {
+     await new Promise((resolve) => setTimeout(resolve, MIN_CHALLENGE_ELAPSED_MS - nonceAgeMs));
    }
 
    const { data, error } = await supabase.functions.invoke('biometric-login', {
