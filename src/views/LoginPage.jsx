@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import LoginLogo from '../assets/customs-logo.jpg';
+import { Icons } from '../components/Icons';
 import { checkFraming, checkOcclusion, checkBrightness, checkSingleFace } from '../vision/faceQuality';
 import { validateLoaFile } from '../utils/validateMime';
 import { sanitizeLoaExtension } from '../utils/sanitize';
@@ -71,8 +72,24 @@ const CAMERA_ERROR_I18N_KEYS = {
 export default function LoginPage() {
   const { t } = useTranslation();
   const [authMode, setAuthMode] = useState('login');
-  const [email, setEmail] = useState('');
+  // 🟩 NEW: remembers the last-used email locally (never the password) so
+  // a returning user doesn't have to retype it every session -- purely a
+  // convenience, opt-out via the checkbox below the password field.
+  const [email, setEmail] = useState(() => localStorage.getItem('login_rememberedEmail') || '');
   const [password, setPassword] = useState('');
+  const [rememberEmail, setRememberEmail] = useState(() => localStorage.getItem('login_rememberedEmail') !== null);
+  const [showPassword, setShowPassword] = useState(false); // 🟩 NEW: password visibility toggle
+  const [capsLockOn, setCapsLockOn] = useState(false); // 🟩 NEW: warns before a mistyped-looking-right password fails silently
+  // 🟩 NEW: "forgot password" -- previously entirely absent; the only
+  // recovery path for a lost password was asking a supervisor to reset it
+  // manually via the Supabase dashboard. Deliberately a separate boolean
+  // (not a third authMode value) so it can't interact with any of the
+  // authMode-gated camera/liveness effects below -- this is purely a left-
+  // panel form swap, the camera side is completely unaffected either way.
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
+  const [forgotMessage, setForgotMessage] = useState('');
   const [name, setName] = useState('');
   const [initials, setInitials] = useState('');
   // 🟩 NEW: onboarding fields collected at self-registration -- previously
@@ -1032,6 +1049,9 @@ export default function LoginPage() {
       } else {
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
         if (loginError) throw loginError;
+        // 🟩 NEW: only ever stores the email, never the password.
+        if (rememberEmail) localStorage.setItem('login_rememberedEmail', email);
+        else localStorage.removeItem('login_rememberedEmail');
       }
     } catch (err) {
       // Our own `new Error(t('login.error...'))` throws are already safe,
@@ -1048,6 +1068,31 @@ export default function LoginPage() {
     }
   };
 
+  // 🟩 NEW: sends a real Supabase password-reset email -- the standard
+  // "generate a reset link, user follows it, sets a new password on
+  // Supabase's own hosted page" flow, no custom token handling needed on
+  // this app's side. Doesn't reveal whether the email actually matches an
+  // account (Supabase's own behavior) -- same "don't leak which emails
+  // are registered" principle as everywhere else auth-adjacent in this app.
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setForgotSubmitting(true);
+    setForgotMessage('');
+    setError('');
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+        redirectTo: window.location.origin,
+      });
+      if (resetError) throw resetError;
+      setForgotMessage(t('login.forgotPasswordSuccess'));
+    } catch (err) {
+      console.error('[login] password reset request failed:', err);
+      setError(t('login.forgotPasswordError'));
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
   return (
     <div className="relative min-h-screen w-full flex flex-col md:flex-row font-sans">
       <div className="w-full md:w-1/2 bg-slate-900 flex items-center justify-center p-6 sm:p-8">
@@ -1058,6 +1103,54 @@ export default function LoginPage() {
             <p className="text-blue-200 text-xs uppercase tracking-wider">{t('login.systemSubtitle')}</p>
           </div>
 
+          {showForgotPassword ? (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <p className="text-blue-200 text-xs">{t('login.forgotPasswordHint')}</p>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/40">{Icons.Mail}</span>
+                <input
+                  type="email"
+                  placeholder={t('login.officialEmail')}
+                  aria-label={t('login.officialEmail')}
+                  value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
+                  required
+                />
+              </div>
+
+              {forgotMessage && (
+                <div role="status" className="text-emerald-300 text-xs bg-emerald-500/20 p-2 rounded flex items-center gap-2">
+                  <span className="h-4 w-4 shrink-0 inline-flex">{Icons.CheckCircle}</span>
+                  {forgotMessage}
+                </div>
+              )}
+              {error && <div role="alert" className="text-red-300 text-xs bg-red-500/20 p-2 rounded">{error}</div>}
+
+              <button
+                type="submit"
+                disabled={forgotSubmitting}
+                className="w-full py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 text-slate-900 font-bold rounded-lg uppercase text-sm tracking-wider shadow-md disabled:opacity-50 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-slate-900"
+              >
+                {forgotSubmitting && <span className="animate-spin h-4 w-4 inline-flex">{Icons.Spinner}</span>}
+                {t('login.sendResetLink')}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForgotPassword(false);
+                  setForgotMessage('');
+                  setError('');
+                }}
+                className="w-full flex items-center justify-center gap-1.5 text-blue-200 text-sm hover:text-white bg-transparent border-none cursor-pointer"
+              >
+                <span className="h-4 w-4 inline-flex">{Icons.ArrowLeft}</span>
+                {t('login.backToLogin')}
+              </button>
+            </form>
+          ) : (
+          <>
           {authMode === 'login' && suggestPasswordFallback && (
             <div role="status" className="mb-4 text-xs bg-amber-500/15 border border-amber-500/30 text-amber-200 p-3 rounded-lg flex items-center justify-between gap-2">
               <span>{t('login.faceLoginStrugglingUsePassword')}</span>
@@ -1080,7 +1173,7 @@ export default function LoginPage() {
                   aria-label={t('login.fullName')}
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                   required
                 />
                 <input
@@ -1089,7 +1182,7 @@ export default function LoginPage() {
                   aria-label={t('login.initials')}
                   value={initials}
                   onChange={e => setInitials(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm uppercase focus:outline-none"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                   required
                   maxLength="2"
                 />
@@ -1099,7 +1192,7 @@ export default function LoginPage() {
                   aria-label={t('login.institution')}
                   value={institution}
                   onChange={e => setInstitution(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                   required
                 />
                 <input
@@ -1108,7 +1201,7 @@ export default function LoginPage() {
                   aria-label={t('login.position')}
                   value={position}
                   onChange={e => setPosition(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                   required
                 />
                 <input
@@ -1117,7 +1210,7 @@ export default function LoginPage() {
                   aria-label={t('login.department')}
                   value={department}
                   onChange={e => setDepartment(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
+                  className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                   required
                 />
                 <div className="grid grid-cols-2 gap-3">
@@ -1128,7 +1221,7 @@ export default function LoginPage() {
                       type="date"
                       value={contractStartDate}
                       onChange={e => setContractStartDate(e.target.value)}
-                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none"
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                       required
                     />
                   </div>
@@ -1139,7 +1232,7 @@ export default function LoginPage() {
                       type="date"
                       value={contractEndDate}
                       onChange={e => setContractEndDate(e.target.value)}
-                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none"
+                      className="w-full px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
                       required
                     />
                   </div>
@@ -1160,24 +1253,68 @@ export default function LoginPage() {
               </>
             )}
 
-            <input
-              type="email"
-              placeholder={t('login.officialEmail')}
-              aria-label={t('login.officialEmail')}
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
-              required
-            />
-            <input
-              type="password"
-              placeholder={t('login.password')}
-              aria-label={t('login.password')}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none"
-              required
-            />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/40">{Icons.Mail}</span>
+              <input
+                type="email"
+                placeholder={t('login.officialEmail')}
+                aria-label={t('login.officialEmail')}
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
+                required
+              />
+            </div>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/40">{Icons.Lock}</span>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder={t('login.password')}
+                aria-label={t('login.password')}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyUp={e => setCapsLockOn(e.getModifierState && e.getModifierState('CapsLock'))}
+                className="w-full pl-10 pr-10 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-500/70 focus:border-yellow-500/70 transition-colors"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                aria-label={showPassword ? t('login.hidePassword') : t('login.showPassword')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white bg-transparent border-none cursor-pointer p-0.5"
+              >
+                {showPassword ? Icons.EyeOff : Icons.Eye}
+              </button>
+            </div>
+            {capsLockOn && (
+              <p role="status" className="text-amber-300 text-xs -mt-2">{t('login.capsLockWarning')}</p>
+            )}
+
+            {authMode === 'login' && (
+              <div className="flex items-center justify-between -mt-1">
+                <label className="flex items-center gap-2 text-xs text-blue-200 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={rememberEmail}
+                    onChange={e => setRememberEmail(e.target.checked)}
+                    className="rounded border-white/30 bg-white/10 text-yellow-500 focus:ring-yellow-500/70 focus:ring-offset-0"
+                  />
+                  {t('login.rememberEmail')}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowForgotPassword(true);
+                    setForgotEmail(email);
+                    setForgotMessage('');
+                    setError('');
+                  }}
+                  className="text-xs text-blue-200 hover:text-white underline bg-transparent border-none cursor-pointer"
+                >
+                  {t('login.forgotPassword')}
+                </button>
+              </div>
+            )}
 
             {error && <div role="alert" className="text-red-300 text-xs bg-red-500/20 p-2 rounded">{error}</div>}
             {message && <div role="status" className="text-emerald-300 text-xs bg-emerald-500/20 p-2 rounded">{message}</div>}
@@ -1185,8 +1322,9 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 text-slate-900 font-bold rounded-lg uppercase text-sm tracking-wider shadow-md disabled:opacity-50"
+              className="w-full py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 text-slate-900 font-bold rounded-lg uppercase text-sm tracking-wider shadow-md disabled:opacity-50 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 focus:ring-offset-slate-900"
             >
+              {loading && <span className="animate-spin h-4 w-4 inline-flex">{Icons.Spinner}</span>}
               {loading ? t('login.processing') : authMode === 'register' ? t('login.registerAndScan') : t('login.signIn')}
             </button>
           </form>
@@ -1204,6 +1342,8 @@ export default function LoginPage() {
               {authMode === 'login' ? t('login.noAccountYet') : t('login.haveAccount')}
             </button>
           </div>
+          </>
+          )}
         </div>
       </div>
 
