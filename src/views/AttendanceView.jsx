@@ -1054,33 +1054,44 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const occlusion = checkOcclusion(liveDet.detection?.score);
                     const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !lensObstruction.ok ? lensObstruction : !occlusion.ok ? occlusion : null;
 
+                    // 🟩 BUG FIX: closing your eyes mid-blink is itself a
+                    // transient partial-occlusion pattern -- the detector's
+                    // confidence score can dip below checkOcclusion's
+                    // threshold for exactly the one frame a blink
+                    // transition needed to be seen. Bailing out on that
+                    // single tick meant the state machine below never
+                    // even got a chance to register "eyes closed," so a
+                    // real blink could look completely invisible to it.
+                    // Debounced like the low-light streak above -- only
+                    // this specific reason gets tolerance (a genuinely
+                    // absent/badly-framed/multi-face frame should still
+                    // stop processing immediately, same as before).
+                    let qualityIssueTolerated = false;
+                    if (qualityIssue) {
+                        if (qualityIssue.reason === 'low-confidence' && qualityIssueStreakRef.current < 2) {
+                            qualityIssueStreakRef.current += 1;
+                            qualityIssueTolerated = true;
+                        }
+                    }
+
                     // 🟩 READINESS BAR: same gates the pass/fail check above uses,
                     // just turned into a 0-100 score for the visual bar instead of
                     // a hard cutoff -- so the user sees themself approaching "green"
                     // rather than a flat "scanning..." message the whole time.
+                    // occlusion is smoothed by the same tolerance above so the bar
+                    // doesn't visibly jitter on a blink-shaped confidence dip that
+                    // nothing else is reacting to either.
                     setScanReadiness(calculateFrameReadiness({
                         singleFace: singleFace.ok,
                         framing: framing.ok,
                         brightness: brightness.ok,
                         lensObstruction: lensObstruction.ok,
-                        occlusion: occlusion.ok
+                        occlusion: occlusion.ok || qualityIssueTolerated
                     }));
 
                     if (qualityIssue) {
-                        // 🟩 BUG FIX: closing your eyes mid-blink is itself a
-                        // transient partial-occlusion pattern -- the detector's
-                        // confidence score can dip below checkOcclusion's
-                        // threshold for exactly the one frame a blink
-                        // transition needed to be seen. Bailing out on that
-                        // single tick meant the state machine below never
-                        // even got a chance to register "eyes closed," so a
-                        // real blink could look completely invisible to it.
-                        // Debounced like the low-light streak above -- only
-                        // this specific reason gets tolerance (a genuinely
-                        // absent/badly-framed/multi-face frame should still
-                        // stop processing immediately, same as before).
-                        if (qualityIssue.reason === 'low-confidence' && qualityIssueStreakRef.current < 2) {
-                            qualityIssueStreakRef.current += 1;
+                        if (qualityIssueTolerated) {
+                            // fall through -- tolerated, keep scanning below
                         } else {
                             setIsFaceVerified(false);
                             setBiometricStatus(t(QUALITY_HINT_KEYS[qualityIssue.reason] || 'attendance.statusScanning'));

@@ -559,11 +559,36 @@ export default function LoginPage() {
         const singleFace = checkSingleFace(allDetections.length, isAmbiguous);
         const occlusion = checkOcclusion(detection.detection.score);
 
+        const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
+        // 🟩 BUG FIX: closing your eyes mid-blink is itself a transient
+        // partial-occlusion pattern -- face-api's detection confidence
+        // score can dip below checkOcclusion's threshold for exactly the
+        // one frame that matters, right as the closed-eye state would
+        // otherwise register. Wiping the whole liveness challenge (and
+        // micro-motion/pulse buffers) on a SINGLE bad-quality tick meant a
+        // real blink could reset its own progress before it ever counted,
+        // producing an endless "reset, retry, reset" loop that never
+        // advances. Debounced like the low-light streak just above --
+        // a genuine "face is really gone/badly framed" condition still
+        // resets after a few consecutive bad ticks, but one blink-shaped
+        // blip doesn't undo everything.
+        const QUALITY_ISSUE_STREAK_THRESHOLD = 3;
+        let qualityIssueTolerated = false;
+        if (qualityIssue) {
+          qualityIssueStreakRef.current += 1;
+          qualityIssueTolerated = qualityIssue.reason === 'low-confidence' && qualityIssueStreakRef.current < QUALITY_ISSUE_STREAK_THRESHOLD;
+        }
+
+        // 🟩 BUG FIX: the readiness bar used to reflect raw occlusion.ok
+        // every single tick, so it visibly jittered on the exact same
+        // blink-shaped dip the tolerance above already exists to ignore --
+        // smoothed so the bar doesn't flicker for a blip nothing else
+        // reacts to either.
         setScanReadiness(calculateFrameReadiness({
           singleFace: singleFace.ok,
           framing: framing.ok,
           brightness: brightness.ok,
-          occlusion: occlusion.ok,
+          occlusion: occlusion.ok || qualityIssueTolerated,
         }));
         setFaceOverlayBox({ x: box.x, y: box.y, width: box.width, height: box.height, imageWidth: width, imageHeight: height });
 
@@ -583,23 +608,8 @@ export default function LoginPage() {
           setEyeBoxes(null);
         }
 
-        const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
-        // 🟩 BUG FIX: closing your eyes mid-blink is itself a transient
-        // partial-occlusion pattern -- face-api's detection confidence
-        // score can dip below checkOcclusion's threshold for exactly the
-        // one frame that matters, right as the closed-eye state would
-        // otherwise register. Wiping the whole liveness challenge (and
-        // micro-motion/pulse buffers) on a SINGLE bad-quality tick meant a
-        // real blink could reset its own progress before it ever counted,
-        // producing an endless "reset, retry, reset" loop that never
-        // advances. Debounced like the low-light streak just above --
-        // a genuine "face is really gone/badly framed" condition still
-        // resets after a few consecutive bad ticks, but one blink-shaped
-        // blip doesn't undo everything.
-        const QUALITY_ISSUE_STREAK_THRESHOLD = 3;
         if (qualityIssue) {
-          qualityIssueStreakRef.current += 1;
-          if (qualityIssueStreakRef.current >= QUALITY_ISSUE_STREAK_THRESHOLD) {
+          if (!qualityIssueTolerated) {
             microMotionTrackerRef.current.reset();
             livenessChallengeRef.current.reset();
             pulseDetectorRef.current.reset();
