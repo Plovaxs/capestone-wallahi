@@ -77,16 +77,22 @@ const DirectMessagesView = ({ userProfile, allUsers = [] }) => {
         threadEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [threadMessages]);
 
+    // 🟩 BUG FIX: was keyed on `threadMessages.length`, so a realtime update
+    // that swapped which messages were unread without changing the total
+    // count (e.g. one read elsewhere the same tick a new one arrived) never
+    // re-ran this effect -- the new unread message just silently never got
+    // marked read. Keying on the actual joined set of unread ids re-fires
+    // whenever that set changes, not just when its size happens to.
+    const unreadIdsInThread = useMemo(
+        () => threadMessages.filter((m) => m.recipient_id === userProfile.id && !m.read_at).map((m) => m.id),
+        [threadMessages, userProfile.id]
+    );
+    const unreadIdsKey = unreadIdsInThread.join(',');
     useEffect(() => {
-        if (!activeContactId) return;
-        const unreadIds = threadMessages
-            .filter((m) => m.recipient_id === userProfile.id && !m.read_at)
-            .map((m) => m.id);
-        if (unreadIds.length > 0) {
-            directMessagesRepository.markRead(unreadIds).catch(() => {});
-        }
+        if (!activeContactId || unreadIdsInThread.length === 0) return;
+        directMessagesRepository.markRead(unreadIdsInThread).catch(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeContactId, threadMessages.length]);
+    }, [activeContactId, unreadIdsKey]);
 
     const handleSend = async () => {
         const body = draft.trim();

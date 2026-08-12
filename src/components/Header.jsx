@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { Icons } from './Icons';
@@ -22,7 +22,11 @@ const Header = ({
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const notificationRef = useRef(null);
-    const unreadCount = notifications.filter(n => !n.read).length;
+    // 🟩 PERF: recomputed on every Header render before this (typing in
+    // GlobalSearch, toggling dark mode, any parent re-render) even though
+    // `notifications` itself rarely changes -- memoized so it only
+    // recomputes when the notifications list actually does.
+    const unreadCount = useMemo(() => notifications.filter(n => !n.read).length, [notifications]);
 
     const handleToggle = () => {
         setIsOpen(!isOpen);

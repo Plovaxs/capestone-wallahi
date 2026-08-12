@@ -516,10 +516,23 @@ export default function App() {
      if (session?.user) { setMfaGate('unknown'); fetchProfile(session.user.id); checkMfaGate(); }
    });
 
-   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+   // 🟩 BUG FIX: onAuthStateChange also fires on 'TOKEN_REFRESHED' (roughly
+   // hourly, for every logged-in user, not just 2FA ones) and 'USER_UPDATED'
+   // -- resetting mfaGate to 'unknown' on those too meant every user got
+   // silently kicked back to the full-screen "Synchronizing..." loader
+   // mid-session, once an hour, since that loader renders whenever mfaGate
+   // is 'unknown' (see the render gate below). AAL doesn't change on a
+   // routine refresh, so only re-derive it on an actual new sign-in.
+   const MFA_RECHECK_EVENTS = new Set(['SIGNED_IN', 'INITIAL_SESSION', 'MFA_CHALLENGE_VERIFIED']);
+   const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
      setSession(session);
-     if (session?.user) { setMfaGate('unknown'); fetchProfile(session.user.id); checkMfaGate(); }
-     else { setUserProfile(null); setMfaGate('satisfied'); }
+     if (session?.user) {
+       fetchProfile(session.user.id);
+       if (MFA_RECHECK_EVENTS.has(event)) { setMfaGate('unknown'); checkMfaGate(); }
+     } else {
+       setUserProfile(null);
+       setMfaGate('satisfied');
+     }
    });
 
    return () => subscription.unsubscribe();

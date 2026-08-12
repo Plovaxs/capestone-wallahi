@@ -79,7 +79,7 @@ const MfaChallengeGate = ({ onVerified, onSignOut }) => {
               onClick={onSignOut}
               className="w-full text-center text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 bg-transparent border-none cursor-pointer py-1"
             >
-              {t('nav.logout')}
+              {t('header.logout')}
             </button>
           </form>
         )}
