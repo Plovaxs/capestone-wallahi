@@ -38,6 +38,36 @@ function euclideanDistance(a: number[], b: number[]): number {
   return Math.sqrt(sum);
 }
 
+const DESCRIPTOR_LENGTH = 128;
+
+// 🟩 UPGRADE (2026-08-12): mirrors src/vision/multiTemplateMatcher.js's
+// normalizeStoredTemplates exactly. profiles.face_descriptor started out as
+// a single flat 128-number array (LoginPage.jsx's registration capture),
+// but AttendanceView.jsx's multi-angle enrollment wizard was added later
+// and stores an ARRAY of several 128-number templates instead (one per
+// captured angle) for better day-to-day match robustness. This server-side
+// matcher never got updated for that -- it kept assuming a single flat
+// array and running euclideanDistance(descriptor, storedArrayOfArrays)
+// directly, which silently produced NaN distances (comparing a number
+// against an inner array at each index) for every account that had
+// re-enrolled via the multi-angle wizard. NaN never satisfies `< lowestDistance`,
+// so those accounts could never match at all -- a real, previously-invisible
+// bypass of the app's own re-enrollment feature. Handles both shapes so
+// accounts enrolled before multi-angle capture existed keep working
+// unchanged, exactly like the client-side matcher already does.
+function normalizeStoredTemplates(parsed: unknown): number[][] {
+  if (!parsed) return [];
+  const raw = Array.isArray(parsed) ? parsed : (parsed as { data?: unknown })?.data;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+
+  const isMultiTemplate = Array.isArray(raw[0]);
+  const templates = isMultiTemplate ? raw : [raw];
+
+  return templates
+    .map((t: unknown) => (Array.isArray(t) ? t.map(Number) : null))
+    .filter((t): t is number[] => !!t && t.length === DESCRIPTOR_LENGTH && t.every(Number.isFinite));
+}
+
 const MATCH_THRESHOLD = 0.42;
 // A real, completed 2-step liveness challenge (see vision/livenessDetector.js)
 // takes at least a few seconds even at the fastest polling interval this app
@@ -119,7 +149,7 @@ Deno.serve(async (req) => {
     }
 
     const { descriptor, nonce } = body;
-    if (!Array.isArray(descriptor) || descriptor.length !== 128) {
+    if (!Array.isArray(descriptor) || descriptor.length !== DESCRIPTOR_LENGTH) {
       return new Response(JSON.stringify({ error: "Invalid descriptor" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -176,13 +206,32 @@ Deno.serve(async (req) => {
     let lowestDistance = MATCH_THRESHOLD;
 
     for (const profile of profiles) {
-      const stored = typeof profile.face_descriptor === "string"
-        ? JSON.parse(profile.face_descriptor)
-        : profile.face_descriptor;
-      const dist = euclideanDistance(descriptor, stored);
-      if (dist < lowestDistance) {
-        lowestDistance = dist;
-        bestMatch = profile;
+      // 🟩 ROBUSTNESS: one profile with malformed/corrupted JSON in
+      // face_descriptor used to throw here and abort the ENTIRE request
+      // (caught by the outer try/catch, returning "Internal error" for
+      // whoever happened to be logging in, regardless of whose row was
+      // actually broken). Skip just that one profile instead.
+      let parsed: unknown;
+      try {
+        parsed = typeof profile.face_descriptor === "string"
+          ? JSON.parse(profile.face_descriptor)
+          : profile.face_descriptor;
+      } catch (_parseErr) {
+        console.error(`biometric-login: unparseable face_descriptor for profile ${profile.id}`);
+        continue;
+      }
+
+      // 🟩 UPGRADE: matches against EVERY stored template (multi-angle
+      // enrollment) and keeps the best (lowest-distance) result across all
+      // of them, then across all profiles -- see normalizeStoredTemplates'
+      // comment above for why this replaced a single flat-array compare.
+      const templates = normalizeStoredTemplates(parsed);
+      for (const template of templates) {
+        const dist = euclideanDistance(descriptor, template);
+        if (dist < lowestDistance) {
+          lowestDistance = dist;
+          bestMatch = profile;
+        }
       }
     }
 
