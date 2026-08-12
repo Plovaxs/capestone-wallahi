@@ -226,6 +226,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const lowLightStreakRef = useRef(0);
     const isLowLightRef = useRef(false);
     const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't swallow the one frame a blink transition needed
+    const passiveSuspicionStreakRef = useRef(0); // 🟩 BUG FIX: see the livenessSuspicious block below -- a blink's eyelid/eyelash edge can trip deviceEdgeSuspicious for exactly one frame
     const [torchActive, setTorchActive] = useState(false);
     // 🟩 Throttles the expensive full-frame lens-obstruction scan (see below)
     // to once every 5 ticks instead of every scan tick.
@@ -1211,7 +1212,32 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
                                 }
 
+                                // 🟩 BUG FIX: a blink's closing eyelid/eyelash creates a
+                                // brief, real luminance edge right in the border region this
+                                // samples -- easily mistaken for deviceEdgeSuspicious (or
+                                // nudging color/texture past their own thresholds) for
+                                // exactly the one frame a blink transition needed. Debounced
+                                // UNLESS the mandatory rPPG pulse check itself is what
+                                // flagged it -- that's a multi-second signal completely
+                                // unrelated to any single frame, so it stays an immediate,
+                                // non-debounced block. `treatAsSuspicious` (not the raw
+                                // `livenessSuspicious`) drives every branch below so a
+                                // tolerated blink-shaped blip can't fall through into the
+                                // clock-in branch by accident.
+                                let treatAsSuspicious = false;
                                 if (livenessSuspicious) {
+                                    const pulseIsAuthoritative = pulseStats.ready && !pulseStats.hasPlausiblePulse;
+                                    if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
+                                        passiveSuspicionStreakRef.current += 1;
+                                    } else {
+                                        passiveSuspicionStreakRef.current = 0;
+                                        treatAsSuspicious = true;
+                                    }
+                                } else {
+                                    passiveSuspicionStreakRef.current = 0;
+                                }
+
+                                if (treatAsSuspicious) {
                                     // Don't lock in or clock in this tick -- keep scanning. A
                                     // live person's signals normally clear within a tick or
                                     // two as the rolling window updates; a genuine static
@@ -1221,6 +1247,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     setChallengeGlyph(null);
                                     setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
+                                } else if (livenessSuspicious) {
+                                    // Tolerated (within debounce) -- this tick's frame is
+                                    // skipped (registerFrame was never called above), but
+                                    // nothing is reset and no alarming message shown.
                                 } else if (!challengeConfirmed) {
                                     const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
                                     setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);

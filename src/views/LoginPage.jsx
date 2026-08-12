@@ -116,6 +116,7 @@ export default function LoginPage() {
   const isLowLightRef = useRef(false); // 🟩 NEW: sustained-dark-read streak flips this on to boost brightness/contrast on the capture canvas
   const lowLightStreakRef = useRef(0);
   const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't wipe blink progress
+  const passiveSuspicionStreakRef = useRef(0); // 🟩 BUG FIX: see the passiveVote block below -- a blink's eyelid/eyelash edge can trip deviceEdgeSuspicious for exactly one frame
   const microMotionTrackerRef = useRef(createMicroMotionTracker()); // 🟩 NEW: same pixel-variance liveness signal used on Attendance's clock-in scan
   // 🟩 SECURITY: active liveness challenge, reinstated after a printed photo
   // defeated the previous passive-only liveness check during the capstone
@@ -661,11 +662,29 @@ export default function LoginPage() {
         });
 
         if (passiveVote.suspicious) {
-          livenessChallengeRef.current.reset();
-          setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
-          setChallengeGlyph(null);
+          // 🟩 BUG FIX: a blink's closing eyelid/eyelash creates a brief,
+          // real luminance edge right in the border region this samples --
+          // easily mistaken for deviceEdgeSuspicious (or nudging color/
+          // texture past their own thresholds) for exactly the one frame a
+          // blink transition needed. Debounced the same way as the
+          // occlusion fix above, UNLESS the mandatory rPPG pulse check
+          // itself is what flagged it -- that's a multi-second signal
+          // completely unrelated to any single frame, so it stays an
+          // immediate, non-debounced reset (a photo/screen genuinely can't
+          // fake a pulse, so there's no legitimate blink-shaped explanation
+          // for it to misfire on).
+          const pulseIsAuthoritative = pulseStats.ready && !pulseStats.hasPlausiblePulse;
+          if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
+            passiveSuspicionStreakRef.current += 1;
+          } else {
+            passiveSuspicionStreakRef.current = 0;
+            livenessChallengeRef.current.reset();
+            setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
+            setChallengeGlyph(null);
+          }
           return;
         }
+        passiveSuspicionStreakRef.current = 0;
 
         if (livenessChallengeRef.current.isExpired()) {
           livenessChallengeRef.current.reset();
