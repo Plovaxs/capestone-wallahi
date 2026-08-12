@@ -631,20 +631,6 @@ export default function LoginPage() {
           return;
         }
 
-        // 🟩 LOGIN LIVENESS -- two independent layers, not one:
-        // 1) Passive, no-action signals (border-uniformity, pixel-motion,
-        //    color/texture plausibility, edge-sharpness) combined by
-        //    majority VOTE (vision/livenessFusion.js) rather than the old
-        //    AND-gate that required border-uniformity specifically to fire
-        //    before anything else counted -- that gate silently passed any
-        //    photo/screen held up with a normal, textured room visible
-        //    around it.
-        // 2) A mandatory blink challenge on top. Passive signals alone,
-        //    however combined, can still be fooled by a good enough
-        //    replay -- a flat printed photo or a paused video frame
-        //    literally cannot blink on request, which is the actual
-        //    hard-to-fake signal. Reinstated after a real photo defeated
-        //    the previous passive-only design during the capstone defense.
         if (suggestPasswordFallback) {
           setBiometricStatus(t('login.statusUsePasswordInstead'));
           return;
@@ -665,59 +651,6 @@ export default function LoginPage() {
           return;
         }
 
-        const marginX = Math.round(box.width * 0.15);
-        const marginY = Math.round(box.height * 0.15);
-        const borderRegion = ctx.getImageData(
-          Math.max(0, Math.round(box.x - marginX)),
-          Math.max(0, Math.round(box.y - marginY)),
-          Math.min(Math.round(box.width + marginX * 2), width),
-          Math.min(Math.round(box.height + marginY * 2), height)
-        );
-        const textureCheck = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height);
-        const pulseStats = pulseDetectorRef.current.getStats();
-        // 🟩 SECURITY: hand/device-edge checks -- see vision/handRegionHeuristic.js
-        // and vision/deviceEdgeHeuristic.js. deviceEdges reuses the already-
-        // computed borderRegion crop (a phone/photo edge held near the face
-        // shows up right at that margin); hand detection needs the FULL
-        // frame since fingers holding a device can extend well past it.
-        const deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
-        const fullFrame = ctx.getImageData(0, 0, width, height);
-        const handCheck = checkHandInFrame(fullFrame.data, width, height, box);
-        const passiveVote = evaluatePassiveLiveness({
-          borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
-          pixelFlat: microMotionStats.isSuspiciouslyFlat,
-          colorSuspicious: colorLiveness.suspicious,
-          textureFlat: textureCheck.suspicious,
-          deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
-          handSuspicious: handCheck.suspicious,
-          pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
-        });
-
-        if (passiveVote.suspicious) {
-          // 🟩 BUG FIX: a blink's closing eyelid/eyelash creates a brief,
-          // real luminance edge right in the border region this samples --
-          // easily mistaken for deviceEdgeSuspicious (or nudging color/
-          // texture past their own thresholds) for exactly the one frame a
-          // blink transition needed. Debounced the same way as the
-          // occlusion fix above, UNLESS the mandatory rPPG pulse check
-          // itself is what flagged it -- that's a multi-second signal
-          // completely unrelated to any single frame, so it stays an
-          // immediate, non-debounced reset (a photo/screen genuinely can't
-          // fake a pulse, so there's no legitimate blink-shaped explanation
-          // for it to misfire on).
-          const pulseIsAuthoritative = pulseStats.ready && !pulseStats.hasPlausiblePulse;
-          if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
-            passiveSuspicionStreakRef.current += 1;
-          } else {
-            passiveSuspicionStreakRef.current = 0;
-            livenessChallengeRef.current.reset();
-            setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
-            setChallengeGlyph(null);
-          }
-          return;
-        }
-        passiveSuspicionStreakRef.current = 0;
-
         if (livenessChallengeRef.current.isExpired()) {
           livenessChallengeRef.current.reset();
           setBiometricStatus(t('login.statusChallengeExpired'));
@@ -725,8 +658,79 @@ export default function LoginPage() {
           return;
         }
 
+        // 🟩 SIMPLIFIED (2026-08-12): the deliberate, on-demand blink
+        // challenge (now visibly confirmed on screen via the green eye
+        // boxes) is evaluated FIRST and is the PRIMARY liveness signal --
+        // a static photo/screen literally cannot blink twice on request,
+        // which is a much stronger, more direct proof of life than any of
+        // the passive pixel-statistics votes below. Those passive checks
+        // (border uniformity, pixel motion, color/texture, device-edge,
+        // hand-in-frame) are still useful for catching a spoofing attempt
+        // BEFORE it ever blinks, but real-user reports showed them
+        // repeatedly false-tripping mid-blink on completely genuine users
+        // (occlusion, device-edge, and "suspiciously static" each
+        // independently reported) -- once the deliberate challenge is
+        // actually confirmed, they no longer gate the login attempt at
+        // all. The mandatory rPPG pulse check further below is
+        // unaffected and still required either way -- that one measures
+        // an actual blood-flow signal a photo genuinely cannot fake, so
+        // it isn't the source of these false positives.
         const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
+
         if (!challengeConfirmed) {
+          const marginX = Math.round(box.width * 0.15);
+          const marginY = Math.round(box.height * 0.15);
+          const borderRegion = ctx.getImageData(
+            Math.max(0, Math.round(box.x - marginX)),
+            Math.max(0, Math.round(box.y - marginY)),
+            Math.min(Math.round(box.width + marginX * 2), width),
+            Math.min(Math.round(box.height + marginY * 2), height)
+          );
+          const textureCheck = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height);
+          const pulseStatsForVote = pulseDetectorRef.current.getStats();
+          // 🟩 SECURITY: hand/device-edge checks -- see vision/handRegionHeuristic.js
+          // and vision/deviceEdgeHeuristic.js. deviceEdges reuses the already-
+          // computed borderRegion crop (a phone/photo edge held near the face
+          // shows up right at that margin); hand detection needs the FULL
+          // frame since fingers holding a device can extend well past it.
+          const deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
+          const fullFrame = ctx.getImageData(0, 0, width, height);
+          const handCheck = checkHandInFrame(fullFrame.data, width, height, box);
+          const passiveVote = evaluatePassiveLiveness({
+            borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
+            pixelFlat: microMotionStats.isSuspiciouslyFlat,
+            colorSuspicious: colorLiveness.suspicious,
+            textureFlat: textureCheck.suspicious,
+            deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
+            handSuspicious: handCheck.suspicious,
+            pulseSuspicious: pulseStatsForVote.ready ? !pulseStatsForVote.hasPlausiblePulse : null,
+          });
+
+          if (passiveVote.suspicious) {
+            // 🟩 BUG FIX: a blink's closing eyelid/eyelash creates a brief,
+            // real luminance edge right in the border region this samples --
+            // easily mistaken for deviceEdgeSuspicious (or nudging color/
+            // texture past their own thresholds) for exactly the one frame a
+            // blink transition needed. Debounced the same way as the
+            // occlusion fix above, UNLESS the mandatory rPPG pulse check
+            // itself is what flagged it -- that's a multi-second signal
+            // completely unrelated to any single frame, so it stays an
+            // immediate, non-debounced reset (a photo/screen genuinely can't
+            // fake a pulse, so there's no legitimate blink-shaped explanation
+            // for it to misfire on).
+            const pulseIsAuthoritative = pulseStatsForVote.ready && !pulseStatsForVote.hasPlausiblePulse;
+            if (!pulseIsAuthoritative && passiveSuspicionStreakRef.current < 2) {
+              passiveSuspicionStreakRef.current += 1;
+            } else {
+              passiveSuspicionStreakRef.current = 0;
+              livenessChallengeRef.current.reset();
+              setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
+              setChallengeGlyph(null);
+            }
+            return;
+          }
+          passiveSuspicionStreakRef.current = 0;
+
           const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
           setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);
           setBiometricStatus(t(`login.statusAwaiting${suffix}`, {
@@ -736,14 +740,15 @@ export default function LoginPage() {
           return;
         }
 
-        // 🟩 SECURITY: rPPG pulse is now a MANDATORY gate, not just an
-        // authoritative-when-ready vote in passiveVote above -- a photo/
-        // screen genuinely cannot produce a periodic blood-flow signal, so
-        // this is one of the hardest signals here to fake, and login
-        // shouldn't be able to complete purely on a fast facial-expression
-        // challenge before the pulse buffer has even finished warming up
-        // (~2s). If it's not ready yet, the challenge stays confirmed
-        // (won't reset/re-prompt) and this tick just waits for the next one.
+        // 🟩 SECURITY: rPPG pulse is a MANDATORY gate regardless of the
+        // simplification above -- a photo/screen genuinely cannot produce
+        // a periodic blood-flow signal, so this is one of the hardest
+        // signals here to fake, and login shouldn't be able to complete
+        // purely on the blink challenge before the pulse buffer has even
+        // finished warming up (~2s). If it's not ready yet, the challenge
+        // stays confirmed (won't reset/re-prompt) and this tick just
+        // waits for the next one.
+        const pulseStats = pulseDetectorRef.current.getStats();
         if (!pulseStats.ready) {
           setBiometricStatus(t('login.statusAwaitingPulse'));
           return;

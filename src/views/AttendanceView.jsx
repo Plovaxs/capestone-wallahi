@@ -1140,29 +1140,25 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                         if (isMatch) {
                             // 🟩 LIVENESS: two independent layers, not one.
-                            // 1) Passive, no-action-required signals --
-                            //    border-texture uniformity (checkReplaySuspicion),
-                            //    the device accelerometer where available
+                            // 1) A mandatory, deliberate blink challenge -- the
+                            //    PRIMARY signal (see the reordering comment
+                            //    inside the try block below). A static photo
+                            //    literally cannot blink twice on request.
+                            // 2) Passive, no-action-required signals -- border-
+                            //    texture uniformity (checkReplaySuspicion), the
+                            //    device accelerometer where available
                             //    (motionTrackerRef -- phones/tablets only),
                             //    pixel-level micro-motion (microMotionTrackerRef
                             //    -- any camera), motion-INDEPENDENT color/
                             //    texture plausibility (colorLivenessHeuristic),
                             //    and edge-sharpness (textureSharpnessHeuristic)
                             //    -- combined by majority VOTE (vision/
-                            //    livenessFusion.js), not the old AND-gate that
-                            //    required border-uniformity specifically before
-                            //    anything else counted. That gate silently
-                            //    passed any photo/screen held up with a normal,
-                            //    textured room visible around it -- exactly how
-                            //    a plain photo defeated this check during the
-                            //    capstone defense.
-                            // 2) A mandatory blink challenge on top -- passive
-                            //    signals alone, however combined, can still be
-                            //    fooled by a good enough replay. Per the
-                            //    examiner's explicit request, a short blink
-                            //    pause is an accepted trade-off for real
-                            //    security here (previously removed for speed;
-                            //    reinstated after the defense incident).
+                            //    livenessFusion.js). Still runs WHILE the blink
+                            //    challenge is pending (catches a spoofing
+                            //    attempt before it ever blinks), but real-user
+                            //    reports of it false-tripping mid-blink meant
+                            //    it no longer gates the clock-in once the
+                            //    challenge is actually confirmed.
                             const guardRef = clockingOutNow ? clockOutGuardRef : autoClockInGuardRef;
                             // 🟩 BUG FIX: this was the one place in the file
                             // that checked `work_mode === 'WFO'` (exact
@@ -1183,61 +1179,69 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 let pulseStats = { ready: false };
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
-                                    const marginX = Math.round(liveDet.box.width * 0.15);
-                                    const marginY = Math.round(liveDet.box.height * 0.15);
-                                    const borderRegion = ctx.getImageData(
-                                        Math.max(0, liveDet.box.x - marginX),
-                                        Math.max(0, liveDet.box.y - marginY),
-                                        liveDet.box.width + marginX * 2,
-                                        liveDet.box.height + marginY * 2
-                                    );
-                                    const borderSuspicious = checkReplaySuspicion(borderRegion.data).suspicious;
-                                    const deviceMotionStats = motionTrackerRef.current.getStats();
-                                    const microMotionStats = microMotionTrackerRef.current.getStats();
-                                    const deviceFlat = deviceMotionStats.ready && deviceMotionStats.isSuspiciouslyFlat;
-                                    const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
-                                    const colorSuspicious = latestColorLivenessRef.current.suspicious;
-                                    const textureSuspicious = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious;
                                     // 🟩 rPPG: fed by the separate fast sampling loop above (see
                                     // "PULSE SAMPLING LOOP") -- only counts as a vote once its
                                     // buffer has actually accumulated enough of a window to make
                                     // a call either way (~2s), same "don't vote on an incomplete
-                                    // read" treatment as the device/pixel-motion trackers.
+                                    // read" treatment as the device/pixel-motion trackers. Always
+                                    // computed (cheap stat read, no canvas work) since the
+                                    // mandatory pulse gate further below needs it either way.
                                     pulseStats = pulseDetectorRef.current.getStats();
-                                    const pulseSuspicious = pulseStats.ready && !pulseStats.hasPlausiblePulse;
-                                    // 🟩 SECURITY: hand/device-edge checks -- see
-                                    // vision/handRegionHeuristic.js and vision/deviceEdgeHeuristic.js.
-                                    deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
-                                    const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
-                                    handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
 
-                                    setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
-                                        && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
-                                        ? prev
-                                        : {
-                                            ...prev,
-                                            motionReady: deviceMotionStats.ready,
-                                            motionStable: !deviceMotionStats.isSuspiciouslyFlat,
-                                            microMotionReady: microMotionStats.ready,
-                                            microMotionStable: !microMotionStats.isSuspiciouslyFlat,
-                                        }));
+                                    // 🟩 SIMPLIFIED (2026-08-12): same reordering as
+                                    // LoginPage.jsx -- the deliberate blink challenge is
+                                    // evaluated FIRST and is the PRIMARY liveness signal; the
+                                    // passive pixel-statistics vote below only runs (and can
+                                    // only block/reset) while the challenge is still pending.
+                                    if (livenessChallengeRef.current.isExpired()) {
+                                        livenessChallengeRef.current.reset();
+                                    }
+                                    challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
 
-                                    livenessSuspicious = evaluatePassiveLiveness({
-                                        borderUniform: borderSuspicious,
-                                        deviceFlat: deviceMotionStats.ready ? deviceFlat : null,
-                                        pixelFlat: microMotionStats.ready ? pixelFlat : null,
-                                        colorSuspicious,
-                                        textureFlat: textureSuspicious,
-                                        deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
-                                        handSuspicious: handCheck.suspicious,
-                                        pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
-                                    }).suspicious;
+                                    if (!challengeConfirmed) {
+                                        const marginX = Math.round(liveDet.box.width * 0.15);
+                                        const marginY = Math.round(liveDet.box.height * 0.15);
+                                        const borderRegion = ctx.getImageData(
+                                            Math.max(0, liveDet.box.x - marginX),
+                                            Math.max(0, liveDet.box.y - marginY),
+                                            liveDet.box.width + marginX * 2,
+                                            liveDet.box.height + marginY * 2
+                                        );
+                                        const borderSuspicious = checkReplaySuspicion(borderRegion.data).suspicious;
+                                        const deviceMotionStats = motionTrackerRef.current.getStats();
+                                        const microMotionStats = microMotionTrackerRef.current.getStats();
+                                        const deviceFlat = deviceMotionStats.ready && deviceMotionStats.isSuspiciouslyFlat;
+                                        const pixelFlat = microMotionStats.ready && microMotionStats.isSuspiciouslyFlat;
+                                        const colorSuspicious = latestColorLivenessRef.current.suspicious;
+                                        const textureSuspicious = checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious;
+                                        const pulseSuspicious = pulseStats.ready && !pulseStats.hasPlausiblePulse;
+                                        // 🟩 SECURITY: hand/device-edge checks -- see
+                                        // vision/handRegionHeuristic.js and vision/deviceEdgeHeuristic.js.
+                                        deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
+                                        const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                        handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
 
-                                    if (!livenessSuspicious) {
-                                        if (livenessChallengeRef.current.isExpired()) {
-                                            livenessChallengeRef.current.reset();
-                                        }
-                                        challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
+                                        setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
+                                            && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
+                                            ? prev
+                                            : {
+                                                ...prev,
+                                                motionReady: deviceMotionStats.ready,
+                                                motionStable: !deviceMotionStats.isSuspiciouslyFlat,
+                                                microMotionReady: microMotionStats.ready,
+                                                microMotionStable: !microMotionStats.isSuspiciouslyFlat,
+                                            }));
+
+                                        livenessSuspicious = evaluatePassiveLiveness({
+                                            borderUniform: borderSuspicious,
+                                            deviceFlat: deviceMotionStats.ready ? deviceFlat : null,
+                                            pixelFlat: microMotionStats.ready ? pixelFlat : null,
+                                            colorSuspicious,
+                                            textureFlat: textureSuspicious,
+                                            deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
+                                            handSuspicious: handCheck.suspicious,
+                                            pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
+                                        }).suspicious;
                                     }
                                 } catch (_err) {
                                     // Non-critical signal — a read failure (tainted canvas, out-of-bounds region) shouldn't block a real clock-in.
@@ -1279,9 +1283,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                 } else if (livenessSuspicious) {
-                                    // Tolerated (within debounce) -- this tick's frame is
-                                    // skipped (registerFrame was never called above), but
-                                    // nothing is reset and no alarming message shown.
+                                    // Tolerated (within debounce) -- nothing is reset and no
+                                    // alarming message shown; just wait for the next tick.
                                 } else if (!challengeConfirmed) {
                                     const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
                                     setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);
