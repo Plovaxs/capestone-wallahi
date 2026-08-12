@@ -681,7 +681,19 @@ export default function App() {
         <Sidebar userProfile={userProfile} activeView={activeView} setActiveView={setActiveView} isMobileOpen={isMobileOpen} setIsMobileOpen={setIsMobileOpen} openTicketCount={helpdeskTickets.filter(ticket => ticket.ticket_status === 'Open').length} />
       </div>
 
-      <div className="app-content-shell flex-1 flex flex-col md:ml-64 transition-all duration-300 relative w-full">
+      {/* 🟩 BUG FIX: "transition-all" (meant for the sidebar-collapse
+          margin-left animation) also animates "filter" -- and switching
+          the colorblind-mode select in SettingsView adds/changes the
+          filter this element gets from index.css's colorblind and
+          high-contrast rules. Some browsers don't promote an element to
+          its own composited layer for a transitioning filter change
+          until something else forces a fuller style recalc, so the new
+          filter silently never painted until an unrelated repaint (e.g.
+          toggling dark mode) happened to "kick" it -- reported as
+          "colorblind mode only works after switching to dark mode
+          first." Scoped to margin-left only; filter now applies
+          instantly, un-animated, same as dark mode already does. */}
+      <div className="app-content-shell flex-1 flex flex-col md:ml-64 transition-[margin-left] duration-300 relative w-full">
         <div className="no-print">
           <Header
             userProfile={userProfile}
