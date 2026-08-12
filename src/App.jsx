@@ -36,6 +36,8 @@ import PageSkeleton from './components/PageSkeleton';
 import FeatureFlagPanel from './components/FeatureFlagPanel';
 import NetworkStatusBanner from './components/NetworkStatusBanner';
 import MfaChallengeGate from './components/MfaChallengeGate';
+import KeyboardShortcutsPanel from './components/KeyboardShortcutsPanel';
+import { openShortcutsPanel } from './components/shortcutsPanelOpener';
 
 // 🟩 CODE-SPLITTING: each view (and its dependencies — AttendanceView alone
 // pulls in face-api.js + @huggingface/transformers, multiple MB) is its own
@@ -526,6 +528,25 @@ export default function App() {
    // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
 
+  // 🟩 FEATURE: global "?" shortcut opens the keyboard-shortcuts cheatsheet
+  // (Linear/GitHub/Notion pattern), mirroring CommandPalette's own Ctrl/
+  // Cmd+K listener. Unlike Ctrl+K, "?" is a printable character users type
+  // constantly (in messages, search boxes, forms) -- so, unlike the palette
+  // listener, this one explicitly bails while focus is inside any text
+  // input/textarea/contenteditable to avoid hijacking normal typing.
+  useEffect(() => {
+    const handleShortcutsKey = (e) => {
+      if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = document.activeElement?.tagName;
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable;
+      if (isEditable) return;
+      e.preventDefault();
+      openShortcutsPanel();
+    };
+    document.addEventListener('keydown', handleShortcutsKey);
+    return () => document.removeEventListener('keydown', handleShortcutsKey);
+  }, []);
+
   // 🟩 API WASTE FIX: this previously depended on the whole `userProfile`
   // object, not its id — but `fetchProfile` sets a brand-new object on
   // *every* auth event, including the silent TOKEN_REFRESHED Supabase
@@ -685,6 +706,7 @@ export default function App() {
         <AppToaster toastOptions={{ className: 'dark:bg-gray-700 dark:text-white' }} />
         <ConfirmDialogHost />
         <FeatureFlagPanel />
+        <KeyboardShortcutsPanel />
         <CommandPalette
           setActiveView={setActiveView}
           userProfile={userProfile}

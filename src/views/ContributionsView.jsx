@@ -10,6 +10,8 @@ import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosa
 import { firstError } from '../validation/schemaRegistry';
 import { useTypingIndicator } from '../realtime/useTypingIndicator';
 import { getLocalDateString } from '../utils/dateOnly';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 /**
  * COMPONENT: ContributionsView
@@ -486,9 +488,7 @@ const handleCreateThread = async () => {
 
                 {/* Empty State Result Block Sheet */}
                 {filteredThreads.length === 0 && (
-                    <div className="text-center p-12 text-gray-400 dark:text-gray-500 text-xs italic">
-                        {t('contributions.noThreadsMatch')}
-                    </div>
+                    <EmptyState icon={Icons.Trophy} title={t('contributions.noThreadsMatch')} />
                 )}
             </div>
         </div>

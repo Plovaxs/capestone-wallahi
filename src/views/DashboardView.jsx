@@ -11,6 +11,8 @@ import { detectAttendanceAnomalies } from '../domain/attendanceAnomalyDetector';
 import { computeEngagementScores } from '../domain/employeeEngagementScore';
 import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
 import { supabase } from '../supabaseClient';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -719,7 +721,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                     <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.attendanceAnomalies')}</h2>
                     <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.attendanceAnomaliesDescription')}</p>
                     {attendanceAnomalies.length === 0 ? (
-                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noAnomalies')}</p>
+                        <EmptyState icon={Icons.CheckCircle} title={t('dashboard.noAnomalies')} className="py-6" />
                     ) : (
                         <div className="space-y-2">
                             {attendanceAnomalies.slice(0, 10).map((a, idx) => (
@@ -750,7 +752,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                     <h2 className="text-sm font-bold text-gray-700 mb-1 dark:text-gray-100 uppercase tracking-wider">{t('dashboard.engagementSignal')}</h2>
                     <p className="text-[11px] text-gray-400 dark:text-gray-500 mb-4 font-medium">{t('dashboard.engagementSignalDescription')}</p>
                     {engagementScores.filter((s) => s.compositeScore !== null).length === 0 ? (
-                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noEngagementData')}</p>
+                        <EmptyState icon={Icons.ScatterChart} title={t('dashboard.noEngagementData')} className="py-6" />
                     ) : (
                         <div className="space-y-2">
                             {engagementScores.filter((s) => s.compositeScore !== null).slice(0, 8).map((s) => {

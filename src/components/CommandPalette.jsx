@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { openFeatureFlagPanel } from '../feature-flags/panelOpener';
+import { openShortcutsPanel } from './shortcutsPanelOpener';
 
 /**
  * COMPONENT: CommandPalette
@@ -74,6 +75,12 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
             id: 'feature-flags',
             label: t('palette.featureFlags'),
             action: openFeatureFlagPanel,
+            group: t('palette.actions'),
+        });
+        commands.push({
+            id: 'keyboard-shortcuts',
+            label: t('palette.keyboardShortcuts'),
+            action: openShortcutsPanel,
             group: t('palette.actions'),
         });
         commands.push({

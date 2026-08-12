@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getLocalDateString } from '../utils/dateOnly';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 /**
  * VIEW: TeamView ("My Team")
@@ -44,7 +46,7 @@ const TeamView = ({ userProfile, allUsers = [], attendance = [] }) => {
 
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 overflow-hidden">
                 {teammates.length === 0 ? (
-                    <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic">{t('team.noTeammates')}</p>
+                    <EmptyState icon={Icons.UsersGroup} title={t('team.noTeammates')} />
                 ) : (
                     <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
                         {teammates.map((mate) => {

@@ -10,6 +10,8 @@ import { PunctualityPolicy } from '../domain/PunctualityPolicy';
 import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
 import { selfAssessmentsRepository } from '../data/repositories/selfAssessmentsRepository';
 import { getLocalDateString } from '../utils/dateOnly';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -757,7 +759,7 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                             )}
                             {evaluations.length === 0 && !isLoadingHistory && (
                                 <tr>
-                                    <td colSpan="5" className="p-8 text-center text-xs text-gray-400 italic">{t('reviews.noEvaluations')}</td>
+                                    <td colSpan="5"><EmptyState icon={Icons.UserCircle} title={t('reviews.noEvaluations')} className="py-6" /></td>
                                 </tr>
                             )}
                         </tbody>

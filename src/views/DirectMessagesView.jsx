@@ -6,6 +6,9 @@ import { subscribeToTable } from '../realtime/subscribeToTable';
 import { showUserError } from '../utils/errorHandling';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { sanitizeUserInput } from '../utils/sanitize';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
+import { Icons } from '../components/Icons';
 
 /**
  * VIEW: DirectMessagesView
@@ -120,7 +123,7 @@ const DirectMessagesView = ({ userProfile, allUsers = [] }) => {
                 {/* Contact list */}
                 <div className="sm:col-span-1 border-r border-gray-100 dark:border-gray-700/60 overflow-y-auto">
                     {contacts.length === 0 ? (
-                        <p className="text-center text-xs text-gray-400 py-10 dark:text-gray-500 italic px-4">{t('messages.noContacts')}</p>
+                        <EmptyState icon={Icons.ChatBubble} title={t('messages.noContacts')} />
                     ) : contacts.map((c) => (
                         <button
                             key={c.id}
@@ -142,11 +145,11 @@ const DirectMessagesView = ({ userProfile, allUsers = [] }) => {
                 <div className="sm:col-span-2 flex flex-col">
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
                         {isLoading ? (
-                            <p className="text-center text-xs text-gray-400 py-10">{t('messages.loading')}</p>
+                            <SkeletonList count={4} />
                         ) : !activeContactId ? (
-                            <p className="text-center text-xs text-gray-400 py-10 italic">{t('messages.noContacts')}</p>
+                            <EmptyState icon={Icons.ChatBubble} title={t('messages.noContacts')} />
                         ) : threadMessages.length === 0 ? (
-                            <p className="text-center text-xs text-gray-400 py-10 italic">{t('messages.noMessagesYet')}</p>
+                            <EmptyState icon={Icons.ChatBubble} title={t('messages.noMessagesYet')} />
                         ) : threadMessages.map((m) => {
                             const isMine = m.sender_id === userProfile.id;
                             return (

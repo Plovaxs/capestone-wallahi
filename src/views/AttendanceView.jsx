@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 import EdgeDiagnosticsPanel from '../components/EdgeDiagnosticsPanel';
 import { generateTablePdf } from '../utils/generateTablePdf';
 import SortableTh from '../components/SortableTh';
@@ -2398,7 +2400,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 </div>
                             ))}
                             {filteredMyHistory.length === 0 && (
-                                <p className="col-span-full text-center text-xs text-gray-400 dark:text-slate-500 italic py-6">{t('attendance.noMatchingRecords')}</p>
+                                <div className="col-span-full">
+                                    <EmptyState icon={Icons.CalendarDays} title={t('attendance.noMatchingRecords')} className="py-6" />
+                                </div>
                             )}
                         </div>
                     </div>

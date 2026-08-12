@@ -103,10 +103,22 @@
     "featureFlags": "⚙️ Feature Flags",
     "securitySettings": "🔐 Pengaturan Keamanan",
     "signOut": "🚪 Keluar",
+    "keyboardShortcuts": "⌨️ Pintasan Keyboard",
     "toNavigate": "navigasi",
     "toSelect": "pilih",
     "toClose": "tutup",
     "hint": "Tekan {{keys}} untuk aksi cepat"
+  },
+  "shortcuts": {
+    "title": "Pintasan Keyboard",
+    "groupGeneral": "Umum",
+    "groupNavigation": "Navigasi",
+    "commandPalette": "Buka panel perintah",
+    "openThisPanel": "Buka panel ini",
+    "closeDialogs": "Tutup dialog & panel",
+    "navigateResults": "Pindah antar hasil",
+    "selectResult": "Pilih hasil yang disorot",
+    "moveFocus": "Pindahkan fokus ke kolom berikutnya"
   },
   "contributions": {
     "editPost": "Ubah Postingan",

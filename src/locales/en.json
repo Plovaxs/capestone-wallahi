@@ -103,10 +103,22 @@
     "featureFlags": "⚙️ Feature Flags",
     "securitySettings": "🔐 Security Settings",
     "signOut": "🚪 Sign Out",
+    "keyboardShortcuts": "⌨️ Keyboard Shortcuts",
     "toNavigate": "to navigate",
     "toSelect": "to select",
     "toClose": "to close",
     "hint": "Press {{keys}} for quick actions"
+  },
+  "shortcuts": {
+    "title": "Keyboard Shortcuts",
+    "groupGeneral": "General",
+    "groupNavigation": "Navigation",
+    "commandPalette": "Open command palette",
+    "openThisPanel": "Open this panel",
+    "closeDialogs": "Close dialogs & panels",
+    "navigateResults": "Move between results",
+    "selectResult": "Select the highlighted result",
+    "moveFocus": "Move focus to the next field"
   },
   "contributions": {
     "editPost": "Edit Post",

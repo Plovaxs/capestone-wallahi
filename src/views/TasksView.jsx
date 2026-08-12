@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import { confirmDialog } from '../utils/confirm';
 import Modal from '../components/Modal';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 import ExportButton from '../components/ExportButton';
 import { generateTablePdf } from '../utils/generateTablePdf';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
@@ -1260,7 +1262,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                                 </div>
                                 <div className="p-3 space-y-3 flex-1 overflow-y-auto max-h-[600px]">
                                     {columnTasks.map(task => <TaskCard key={task.id} task={task} />)}
-                                    {columnTasks.length === 0 && <div className="text-center text-gray-400 text-xs py-8 italic">{t('tasks.noTasksActive')}</div>}
+                                    {columnTasks.length === 0 && <EmptyState icon={Icons.ClipboardList} title={t('tasks.noTasksActive')} className="py-6" />}
                                 </div>
                             </div>
                         );

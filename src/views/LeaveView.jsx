@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
 import SortableTh from '../components/SortableTh';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 import { LeaveQuotaPolicy } from '../domain/LeaveQuotaPolicy';
 import { offlineMutationQueue } from '../offline/OfflineMutationQueue';
 import { showUserError } from '../utils/errorHandling';
@@ -897,7 +899,7 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                      </table>
                  </div>
                  {filteredLeaveRequests.length === 0 && (
-                    <p className="text-center text-gray-400 text-xs py-12 italic dark:text-gray-500">{t('leave.noRequestsMatch')}</p>
+                    <EmptyState icon={Icons.CalendarDays} title={t('leave.noRequestsMatch')} />
                  )}
             </div>
         </div>

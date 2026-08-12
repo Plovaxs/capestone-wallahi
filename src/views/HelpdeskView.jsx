@@ -6,6 +6,8 @@ import { useDraftAutosave, loadDraft, clearDraft } from '../hooks/useDraftAutosa
 import { sanitizeUserInput } from '../utils/sanitize';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import toast from 'react-hot-toast';
+import EmptyState from '../components/EmptyState';
+import { Icons } from '../components/Icons';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
@@ -286,9 +288,11 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
             {/* --- TICKET LIST --- */}
             <div className="space-y-4">
                 {visibleTickets.length === 0 && (
-                    <div className="text-center py-12 text-gray-400 text-sm italic">
-                        {t('helpdesk.noTickets')} {statusFilter === 'Open' && t('helpdesk.nothingUrgent')}
-                    </div>
+                    <EmptyState
+                        icon={Icons.LifeBuoy}
+                        title={t('helpdesk.noTickets')}
+                        description={statusFilter === 'Open' ? t('helpdesk.nothingUrgent') : undefined}
+                    />
                 )}
 
                 {visibleTickets.map(ticket => {
