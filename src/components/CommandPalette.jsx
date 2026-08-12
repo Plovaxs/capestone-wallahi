@@ -11,7 +11,7 @@ import { openFeatureFlagPanel } from '../feature-flags/panelOpener';
  */
 const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode, tasks = [], contributions = [], leaveRequests = [], allUsers = [] }) => {
+const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode, onLogout, tasks = [], contributions = [], leaveRequests = [], allUsers = [] }) => {
     const { t } = useTranslation();
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
@@ -76,8 +76,22 @@ const CommandPalette = ({ setActiveView, userProfile, isDarkMode, toggleDarkMode
             action: openFeatureFlagPanel,
             group: t('palette.actions'),
         });
+        commands.push({
+            id: 'security-settings',
+            label: t('palette.securitySettings'),
+            action: () => setActiveView('settings'),
+            group: t('palette.actions'),
+        });
+        if (onLogout) {
+            commands.push({
+                id: 'sign-out',
+                label: t('palette.signOut'),
+                action: onLogout,
+                group: t('palette.actions'),
+            });
+        }
         return commands;
-    }, [setActiveView, userProfile, isDarkMode, toggleDarkMode, t]);
+    }, [setActiveView, userProfile, isDarkMode, toggleDarkMode, onLogout, t]);
 
     const q = query.trim().toLowerCase();
 

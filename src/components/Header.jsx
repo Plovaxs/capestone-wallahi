@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { supabase } from '../supabaseClient';
 import { Icons } from './Icons';
 import GlobalSearch from './GlobalSearch';
+import EmptyState from './EmptyState';
 import CesdLogo from '../assets/LOGO ahh.png';
 
 const Header = ({
@@ -216,10 +217,7 @@ const Header = ({
                                         </div>
                                     );
                                 }) : (
-                                    <div className="px-4 py-12 flex flex-col items-center justify-center text-center space-y-2 opacity-60">
-                                        <span className="text-4xl grayscale">📭</span>
-                                        <p className="text-gray-500 dark:text-gray-400 text-xs font-bold tracking-wide">{t('header.noAlerts')}</p>
-                                    </div>
+                                    <EmptyState icon={Icons.Inbox} title={t('header.noAlerts')} />
                                 )}
                              </div>
                            </div>

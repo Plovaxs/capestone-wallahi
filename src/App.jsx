@@ -35,6 +35,7 @@ import CommandPalette from './components/CommandPalette';
 import PageSkeleton from './components/PageSkeleton';
 import FeatureFlagPanel from './components/FeatureFlagPanel';
 import NetworkStatusBanner from './components/NetworkStatusBanner';
+import MfaChallengeGate from './components/MfaChallengeGate';
 
 // 🟩 CODE-SPLITTING: each view (and its dependencies — AttendanceView alone
 // pulls in face-api.js + @huggingface/transformers, multiple MB) is its own
@@ -90,6 +91,7 @@ export default function App() {
   const { t } = useTranslation();
   const [session, setSession] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
+  const [mfaGate, setMfaGate] = useState('satisfied');
 
   // 🟩 REDUCER: the 8 "fetched from Supabase" entities used to be 8
   // independent useState/setter pairs; consolidated into one reducer since
@@ -492,16 +494,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile?.id]);
 
+   // 🟩 SECURITY: signInWithPassword() alone grants a valid (AAL1) session
+   // even for an account with a verified TOTP factor -- Supabase doesn't
+   // block the password step, it just marks that session as owing a
+   // step-up to AAL2. Without checking this, a user's "Enable 2FA" toggle
+   // in Settings would be purely cosmetic: this is what actually stops an
+   // AAL1-only session from reaching the app. Defaults to 'satisfied' so
+   // the (overwhelming majority) non-2FA users never see an extra loading
+   // state; only flips to 'required' once the check comes back positive.
+   const checkMfaGate = async () => {
+     const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+     if (error) { setMfaGate('satisfied'); return; }
+     setMfaGate(data.nextLevel === 'aal2' && data.currentLevel !== data.nextLevel ? 'required' : 'satisfied');
+   };
+
    useEffect(() => {
    supabase.auth.getSession().then(({ data: { session } }) => {
      setSession(session);
-     if (session?.user) fetchProfile(session.user.id);
+     if (session?.user) { setMfaGate('unknown'); fetchProfile(session.user.id); checkMfaGate(); }
    });
 
    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
      setSession(session);
-     if (session?.user) fetchProfile(session.user.id);
-     else setUserProfile(null);
+     if (session?.user) { setMfaGate('unknown'); fetchProfile(session.user.id); checkMfaGate(); }
+     else { setUserProfile(null); setMfaGate('satisfied'); }
    });
 
    return () => subscription.unsubscribe();
@@ -642,7 +658,11 @@ export default function App() {
     );
   }
 
-  if (!userProfile) {
+  if (mfaGate === 'required') {
+    return <MfaChallengeGate onVerified={() => setMfaGate('satisfied')} onSignOut={handleLogout} />;
+  }
+
+  if (mfaGate === 'unknown' || !userProfile) {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
         <div className="animate-pulse flex flex-col items-center gap-4">
@@ -670,6 +690,7 @@ export default function App() {
           userProfile={userProfile}
           isDarkMode={isDarkMode}
           toggleDarkMode={toggleDarkMode}
+          onLogout={handleLogout}
           tasks={tasks}
           contributions={contributions}
           leaveRequests={leaveRequests}

@@ -27,4 +27,20 @@ export const knownDevicesRepository = {
     listAll: () => runQuery('knownDevices.listAll', () =>
         supabase.from('known_devices').select('*').order('last_seen_at', { ascending: false })
     ),
+
+    // Self-service "Trusted Devices" list for Settings > Security -- same
+    // underlying table as listAll, but labeled/keyed per-caller so a
+    // supervisor viewing their OWN devices doesn't share a cache entry
+    // with the all-employees supervisor panel.
+    listForUser: (userId) => runQuery(`knownDevices.listForUser:${userId}`, () =>
+        supabase.from('known_devices').select('*').eq('user_id', userId).order('last_seen_at', { ascending: false })
+    ),
+
+    // Lets a user revoke a device's "known/trusted" status from their own
+    // Security settings (e.g. a shared/borrowed device they no longer use).
+    // Purely a trust-list removal -- it does NOT terminate that device's
+    // current session; see handleSignOutEverywhere's global signOut for that.
+    revoke: (id) => runMutation('knownDevices.revoke', () =>
+        supabase.from('known_devices').delete().eq('id', id)
+    ),
 };

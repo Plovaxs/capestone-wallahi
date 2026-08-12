@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { supabase } from '../supabaseClient';
@@ -10,6 +10,12 @@ import { confirmDialog } from '../utils/confirm';
 import { notificationDispatcher } from '../patterns/notificationChannels/NotificationDispatcher';
 import { BrowserPushChannel } from '../patterns/notificationChannels/BrowserPushChannel';
 import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
+import { knownDevicesRepository } from '../data/repositories/knownDevicesRepository';
+import { Icons } from '../components/Icons';
+import Button from '../components/Button';
+import Card from '../components/Card';
+import EmptyState from '../components/EmptyState';
+import { SkeletonList } from '../components/Skeleton';
 
 /**
  * COMPONENT: SettingsView
@@ -283,6 +289,131 @@ const SettingsView = ({
         localStorage.setItem('language', lang);
     };
 
+    // ============================================================
+    // TWO-FACTOR AUTHENTICATION (TOTP via Supabase Auth's built-in
+    // MFA API -- no custom crypto/secret-storage in this app, Supabase
+    // holds the shared secret server-side). Mirrors the Google/GitHub
+    // "Authenticator app" 2FA settings pattern: enroll -> scan QR ->
+    // confirm one code -> factor becomes 'verified'.
+    // ============================================================
+    const [mfaFactors, setMfaFactors] = useState([]);
+    const [mfaLoading, setMfaLoading] = useState(true);
+    const [mfaEnrollment, setMfaEnrollment] = useState(null); // { factorId, qrCode, secret }
+    const [mfaVerifyCode, setMfaVerifyCode] = useState('');
+    const [mfaBusy, setMfaBusy] = useState(false);
+
+    const refreshMfaFactors = useCallback(async () => {
+        const { data, error } = await supabase.auth.mfa.listFactors();
+        if (error) { showUserError('errors.loadSecuritySettings', error); return; }
+        setMfaFactors((data?.totp || []).filter(f => f.status === 'verified'));
+    }, []);
+
+    const handleStartMfaEnroll = async () => {
+        setMfaBusy(true);
+        try {
+            const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+            if (error) { showUserError('errors.enrollMfa', error); return; }
+            setMfaEnrollment({ factorId: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret });
+        } finally {
+            setMfaBusy(false);
+        }
+    };
+
+    const handleCancelMfaEnroll = async () => {
+        // An enroll() call already creates an 'unverified' factor row --
+        // walking away without confirming would otherwise leave an orphan
+        // factor behind (harmless but clutters listFactors for no reason).
+        if (mfaEnrollment) {
+            await supabase.auth.mfa.unenroll({ factorId: mfaEnrollment.factorId }).catch(() => {});
+        }
+        setMfaEnrollment(null);
+        setMfaVerifyCode('');
+    };
+
+    const handleVerifyMfaEnroll = async () => {
+        if (!mfaEnrollment || mfaVerifyCode.length < 6) return;
+        setMfaBusy(true);
+        try {
+            const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaEnrollment.factorId });
+            if (challengeError) { showUserError('errors.enrollMfa', challengeError); return; }
+            const { error: verifyError } = await supabase.auth.mfa.verify({
+                factorId: mfaEnrollment.factorId,
+                challengeId: challenge.id,
+                code: mfaVerifyCode,
+            });
+            if (verifyError) { showUserError('errors.mfaCodeInvalid', verifyError); return; }
+            toast.success(t('settings.mfaEnabled'));
+            setMfaEnrollment(null);
+            setMfaVerifyCode('');
+            refreshMfaFactors();
+        } finally {
+            setMfaBusy(false);
+        }
+    };
+
+    const handleUnenrollMfa = async (factorId) => {
+        if (!(await confirmDialog(t('settings.confirmDisableMfa')))) return;
+        const { error } = await supabase.auth.mfa.unenroll({ factorId });
+        if (error) { showUserError('errors.disableMfa', error); return; }
+        toast.success(t('settings.mfaDisabled'));
+        refreshMfaFactors();
+    };
+
+    // ============================================================
+    // TRUSTED DEVICES & SESSIONS (Settings > Security) -- built on the
+    // known_devices table that already powers the "new device" login
+    // alert (see knownDevicesRepository.js / migrations/20260810_add_
+    // device_trust.sql). "Sign out everywhere" uses Supabase Auth's own
+    // scope:'others' signOut, which revokes every refresh token except
+    // the one for this browser tab's current session.
+    // ============================================================
+    const [devices, setDevices] = useState([]);
+    const [devicesLoading, setDevicesLoading] = useState(true);
+    const [revokingDeviceId, setRevokingDeviceId] = useState(null);
+    const [signingOutEverywhere, setSigningOutEverywhere] = useState(false);
+
+    const refreshDevices = useCallback(async () => {
+        try {
+            const rows = await knownDevicesRepository.listForUser(userProfile.id);
+            setDevices(rows || []);
+        } catch (error) {
+            showUserError('errors.loadSecuritySettings', error);
+        }
+    }, [userProfile.id]);
+
+    useEffect(() => {
+        Promise.all([refreshMfaFactors(), refreshDevices()]).finally(() => {
+            setMfaLoading(false);
+            setDevicesLoading(false);
+        });
+    }, [refreshMfaFactors, refreshDevices]);
+
+    const handleRevokeDevice = async (device) => {
+        if (!(await confirmDialog(t('settings.confirmRevokeDevice', { label: device.label || t('settings.unknownDevice') })))) return;
+        setRevokingDeviceId(device.id);
+        try {
+            await knownDevicesRepository.revoke(device.id);
+            toast.success(t('settings.deviceRevoked'));
+            refreshDevices();
+        } catch (error) {
+            showUserError('errors.revokeDevice', error);
+        } finally {
+            setRevokingDeviceId(null);
+        }
+    };
+
+    const handleSignOutEverywhere = async () => {
+        if (!(await confirmDialog(t('settings.confirmSignOutEverywhere')))) return;
+        setSigningOutEverywhere(true);
+        try {
+            const { error } = await supabase.auth.signOut({ scope: 'others' });
+            if (error) { showUserError('errors.signOutEverywhere', error); return; }
+            toast.success(t('settings.signedOutEverywhere'));
+        } finally {
+            setSigningOutEverywhere(false);
+        }
+    };
+
     return (
         <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
             <div>
@@ -492,6 +623,123 @@ const SettingsView = ({
                         <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-3 italic">{t('settings.clockPinDisclaimer')}</p>
                     </div>
                 )}
+
+                {/* --- CONTAINER SECTION: TWO-FACTOR AUTHENTICATION --- */}
+                <Card className="p-6 md:col-span-2">
+                    <div className="flex items-start justify-between gap-4 mb-6">
+                        <div>
+                            <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.mfaTitle')}</h3>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">{t('settings.mfaDescription')}</p>
+                        </div>
+                        {mfaFactors.length > 0 && (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+                                <span className="h-3 w-3 inline-flex">{Icons.CheckCircle}</span>
+                                {t('settings.mfaActive')}
+                            </span>
+                        )}
+                    </div>
+
+                    {mfaLoading ? (
+                        <SkeletonList count={1} />
+                    ) : mfaEnrollment ? (
+                        <div className="flex flex-col sm:flex-row gap-6 items-start">
+                            <div className="shrink-0 bg-white p-3 rounded-xl border border-gray-200">
+                                <img src={mfaEnrollment.qrCode} alt={t('settings.mfaQrAlt')} className="w-36 h-36" />
+                            </div>
+                            <div className="flex-1 space-y-3 text-xs">
+                                <p className="text-gray-500 dark:text-gray-400 font-medium">{t('settings.mfaScanHint')}</p>
+                                <p className="font-mono text-[11px] bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 break-all text-gray-600 dark:text-gray-300">
+                                    {mfaEnrollment.secret}
+                                </p>
+                                <label className="block font-bold text-[10px] text-gray-400 uppercase tracking-wider">{t('settings.mfaEnterCode')}</label>
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    maxLength={6}
+                                    value={mfaVerifyCode}
+                                    onChange={e => setMfaVerifyCode(e.target.value.replace(/\D/g, ''))}
+                                    placeholder="000000"
+                                    className="w-full max-w-[10rem] p-3 border border-gray-200 rounded-xl dark:bg-gray-900/40 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono text-center tracking-widest text-sm"
+                                />
+                                <div className="flex gap-2 pt-1">
+                                    <Button size="sm" onClick={handleVerifyMfaEnroll} disabled={mfaVerifyCode.length < 6} loading={mfaBusy}>
+                                        {t('settings.mfaConfirmEnable')}
+                                    </Button>
+                                    <Button size="sm" variant="ghost" onClick={handleCancelMfaEnroll} disabled={mfaBusy}>
+                                        {t('common.cancel')}
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    ) : mfaFactors.length > 0 ? (
+                        <ul className="space-y-2">
+                            {mfaFactors.map(factor => (
+                                <li key={factor.id} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-gray-50 dark:bg-gray-900/30 border border-gray-100 dark:border-gray-700">
+                                    <div className="flex items-center gap-2 text-xs">
+                                        <span className="h-4 w-4 inline-flex text-emerald-600 dark:text-emerald-400">{Icons.ShieldCheck}</span>
+                                        <span className="font-bold text-gray-700 dark:text-gray-200">{t('settings.mfaAuthenticatorApp')}</span>
+                                    </div>
+                                    <Button size="sm" variant="ghost" onClick={() => handleUnenrollMfa(factor.id)} className="!text-red-600 hover:!bg-red-50 dark:hover:!bg-red-950/30">
+                                        {t('settings.mfaDisable')}
+                                    </Button>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : (
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                            <p className="text-xs text-gray-500 dark:text-gray-400 max-w-md">{t('settings.mfaNotEnabledHint')}</p>
+                            <Button size="sm" onClick={handleStartMfaEnroll} loading={mfaBusy}>
+                                {t('settings.mfaEnable')}
+                            </Button>
+                        </div>
+                    )}
+                </Card>
+
+                {/* --- CONTAINER SECTION: TRUSTED DEVICES & SESSIONS --- */}
+                <Card className="p-6 md:col-span-2">
+                    <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+                        <div>
+                            <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.devicesTitle')}</h3>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">{t('settings.devicesDescription')}</p>
+                        </div>
+                        <Button size="sm" variant="secondary" onClick={handleSignOutEverywhere} loading={signingOutEverywhere}>
+                            {t('settings.signOutEverywhere')}
+                        </Button>
+                    </div>
+
+                    {devicesLoading ? (
+                        <SkeletonList count={3} avatar />
+                    ) : devices.length === 0 ? (
+                        <EmptyState icon={Icons.Smartphone} title={t('settings.noDevicesTitle')} description={t('settings.noDevicesDescription')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                            {devices.map(device => (
+                                <li key={device.id} className="flex items-center justify-between gap-3 py-3">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <span className="h-9 w-9 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-400 shrink-0">
+                                            <span className="h-4 w-4 inline-flex">{Icons.Smartphone}</span>
+                                        </span>
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{device.label || t('settings.unknownDevice')}</p>
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                                                {t('settings.lastSeen', { date: new Date(device.last_seen_at).toLocaleString() })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRevokeDevice(device)}
+                                        disabled={revokingDeviceId === device.id}
+                                        aria-label={t('settings.revokeDevice')}
+                                        className="shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40 transition-colors"
+                                    >
+                                        <span className="h-4 w-4 inline-flex">{Icons.Trash}</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Card>
 
             </div>
 
