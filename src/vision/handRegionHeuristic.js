@@ -15,7 +15,20 @@ import { SKIN_R_MIN, SKIN_R_MAX, SKIN_G_MIN, SKIN_G_MAX } from './colorLivenessH
  * hand near their own face, etc. are all real false-positive risks for
  * a single frame).
  */
-const HAND_REGION_SKIN_FRACTION_THRESHOLD = 0.45;
+// 🟩 LOOSENED (2026-08-12, real-user report): "detected hand while not being
+// there" -- the sampled surround band extends 60% of the face box's own
+// size outward (SURROUND_MARGIN_RATIO below), which for a typical laptop-
+// webcam framing (face fills a good portion of the frame, tight face-only
+// bounding box) reaches straight into ordinary neck/collar/shoulder skin
+// for MOST people, not just someone holding something up. 0.45 meant that
+// alone was often enough to flag "hand" with zero hand ever in frame.
+// Raised so genuinely normal necklines stop tripping it; a real hand/
+// fingers filling most of that band (holding a phone or photo close to the
+// face) still comfortably clears this. Uncalibrated against a wide range
+// of real camera framings/skin tones -- if it's still misfiring, this
+// needs to go higher still, or SURROUND_MARGIN_RATIO needs to shrink so
+// the sampled band doesn't reach as far into the neck.
+const HAND_REGION_SKIN_FRACTION_THRESHOLD = 0.65;
 const MIN_SAMPLES = 20;
 const SAMPLE_STRIDE = 6;
 const SURROUND_MARGIN_RATIO = 0.6;
