@@ -13,6 +13,7 @@ import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
 import { supabase } from '../supabaseClient';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import { getChartTheme } from '../utils/chartTheme';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -47,7 +48,8 @@ const computeLeaderboard = memoizeWithLru(
  * PURPOSE: Executive Telemetry Dashboard Aggregator.
  * FIXED: Shifted month index processing from (Jul-Dec) to (Jan-Jun) to perfectly match active internship timeline data.
  */
-const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView, fetchAllUsers }) => {
+const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance = [], allUsers = [], reviews = [], setActiveView, fetchAllUsers, isDarkMode = false }) => {
+    const chartTheme = getChartTheme(isDarkMode);
     const { t } = useTranslation();
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
@@ -793,10 +795,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         <div style={{ width: '100%', height: 280, minHeight: 200 }} className="text-xs font-medium">
                             <ResponsiveContainer width="100%" height={280}>
                                 <LineChart data={attData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.1} />
-                                    <XAxis dataKey="name" stroke="#94a3b8" fontStyle="bold" />
-                                    <YAxis stroke="#94a3b8" />
-                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', color:'#fff', borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} />
+                                    <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} opacity={isDarkMode ? 0.6 : 0.4} />
+                                    <XAxis dataKey="name" stroke={chartTheme.axis} fontStyle="bold" />
+                                    <YAxis stroke={chartTheme.axis} />
+                                    <Tooltip contentStyle={{ backgroundColor: chartTheme.tooltipBg, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} />
                                     <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '11px', fontWeight: 'bold' }}/>
                                     {employeeUsers.map((emp, index) => {
                                         if (selectedEmployee === 'all' || selectedEmployee === emp.id) {
@@ -816,10 +818,10 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         <div style={{ width: '100%', height: 280, minHeight: 200 }} className="text-xs font-medium">
                             <ResponsiveContainer width="100%" height={280}>
                                 <BarChart data={taskData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.1} />
-                                    <XAxis dataKey="name" stroke="#94a3b8" fontStyle="bold" />
-                                    <YAxis stroke="#94a3b8" />
-                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', color:'#fff', borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} cursor={{fill: 'rgba(255,255,255,0.05)'}}/>
+                                    <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} opacity={isDarkMode ? 0.6 : 0.4} />
+                                    <XAxis dataKey="name" stroke={chartTheme.axis} fontStyle="bold" />
+                                    <YAxis stroke={chartTheme.axis} />
+                                    <Tooltip contentStyle={{ backgroundColor: chartTheme.tooltipBg, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} cursor={{fill: 'rgba(255,255,255,0.05)'}}/>
                                     <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '11px', fontWeight: 'bold' }}/>
                                     {employeeUsers.map((emp, index) => {
                                         if (selectedEmployee === 'all' || selectedEmployee === emp.id) {
@@ -842,16 +844,16 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                             <div style={{ width: '100%', height: 240 }} className="text-xs font-medium">
                                 <ResponsiveContainer width="100%" height={240}>
                                     <LineChart data={individualTrendData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.1} />
-                                        <XAxis dataKey="date" stroke="#94a3b8" fontStyle="bold" />
-                                        <YAxis stroke="#94a3b8" domain={[0, 100]} />
-                                        <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', color:'#fff', borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} />
+                                        <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} opacity={isDarkMode ? 0.6 : 0.4} />
+                                        <XAxis dataKey="date" stroke={chartTheme.axis} fontStyle="bold" />
+                                        <YAxis stroke={chartTheme.axis} domain={[0, 100]} />
+                                        <Tooltip contentStyle={{ backgroundColor: chartTheme.tooltipBg, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius:'12px', fontSize:'11px', fontWeight:'bold' }} />
                                         <Line type="monotone" dataKey="score" name={t('dashboard.scoreLabel')} stroke="#3b82f6" strokeWidth={3} dot={{r:4}} activeDot={{r:6}} />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </div>
                         ) : (
-                            <p className="text-center text-xs text-gray-400 py-8 dark:text-gray-500 italic">{t('dashboard.noTrendData')}</p>
+                            <EmptyState icon={Icons.ScatterChart} title={t('dashboard.noTrendData')} className="py-8" />
                         )}
                     </div>
                 )}

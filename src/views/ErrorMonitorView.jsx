@@ -11,6 +11,7 @@ import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
 import { SkeletonList } from '../components/Skeleton';
 import { Icons } from '../components/Icons';
+import { getChartTheme } from '../utils/chartTheme';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TREND_DAYS = 14;
@@ -25,7 +26,8 @@ const TREND_DAYS = 14;
  * themselves. This surfaces them in one place, no third-party account
  * needed.
  */
-const ErrorMonitorView = ({ userProfile }) => {
+const ErrorMonitorView = ({ userProfile, isDarkMode = false }) => {
+    const chartTheme = getChartTheme(isDarkMode);
     const { t } = useTranslation();
     const [errors, setErrors] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -163,10 +165,10 @@ const ErrorMonitorView = ({ userProfile }) => {
                 <div style={{ width: '100%', height: 220 }}>
                     <ResponsiveContainer width="100%" height={220}>
                         <BarChart data={trendData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.1} />
-                            <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
-                            <YAxis stroke="#94a3b8" allowDecimals={false} />
-                            <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none', color: '#fff', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
+                            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} opacity={isDarkMode ? 0.6 : 0.4} />
+                            <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
+                            <YAxis stroke={chartTheme.axis} allowDecimals={false} />
+                            <Tooltip contentStyle={{ backgroundColor: chartTheme.tooltipBg, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: '12px', fontSize: '11px', fontWeight: 'bold' }} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
                             <Bar dataKey="count" fill="#dc2626" radius={[4, 4, 0, 0]} maxBarSize={28} />
                         </BarChart>
                     </ResponsiveContainer>

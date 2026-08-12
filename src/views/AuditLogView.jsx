@@ -6,15 +6,9 @@ import { showUserError } from '../utils/errorHandling';
 import EmptyState from '../components/EmptyState';
 import { SkeletonList } from '../components/Skeleton';
 import { Icons } from '../components/Icons';
+import { ENTITY_ICONS, describeAuditEntry, explainAuditEntry } from '../utils/auditLogFormat';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-const ENTITY_ICONS = {
-    task: '📋',
-    leave_request: '🌴',
-    performance_evaluation: '⭐',
-    profile: '👤',
-};
 
 /**
  * VIEW: AuditLogView
@@ -59,53 +53,8 @@ const AuditLogView = ({ userProfile, allUsers = [] }) => {
         return unsubscribe;
     }, []);
 
-    /** Turns one entry's jsonb `details` into a plain-language summary -- shape varies by entity_type/action (see the 4 trigger functions in the migration). */
-    const describeEntry = (entry) => {
-        const d = entry.details || {};
-        switch (`${entry.entity_type}:${entry.action}`) {
-            case 'task:status_change':
-                return t('auditLog.descTaskStatusChange', { title: d.title || entry.entity_id, from: d.from, to: d.to });
-            case 'leave_request:status_change':
-                return t('auditLog.descLeaveStatusChange', { type: d.type, from: d.from, to: d.to });
-            case 'performance_evaluation:created':
-                return t('auditLog.descEvaluationCreated', { employee: getUserName(d.employee_id), score: d.final_score });
-            case 'performance_evaluation:updated':
-                return t('auditLog.descEvaluationUpdated', { employee: getUserName(d.employee_id), from: d.from_score, to: d.to_score });
-            case 'performance_evaluation:deleted':
-                return t('auditLog.descEvaluationDeleted', { employee: getUserName(d.employee_id), score: d.final_score });
-            case 'profile:role_change':
-                return t('auditLog.descRoleChange', { name: d.name, from: d.from, to: d.to });
-            default:
-                return `${entry.action} ${entry.entity_type}`;
-        }
-    };
-
-    /**
-     * "Why" line, shown BELOW the plain-language description -- rule/
-     * threshold context captured AT THE MOMENT of an automated-adjacent
-     * decision (see migrations/20260810_add_audit_explainability.sql),
-     * rather than making a supervisor cross-reference quota/deadline data
-     * that may since have changed. Returns null when there's nothing to
-     * explain (e.g. this entry predates the migration, or the context
-     * genuinely doesn't apply -- Unpaid Leave has no quota balance).
-     */
-    const explainEntry = (entry) => {
-        const d = entry.details || {};
-        if (entry.entity_type === 'leave_request' && entry.action === 'status_change') {
-            if (d.requested_days == null) return null;
-            if (d.quota_balance_at_decision != null) {
-                return t('auditLog.explainLeaveWithQuota', { days: d.requested_days, balance: d.quota_balance_at_decision });
-            }
-            return t('auditLog.explainLeaveNoQuota', { days: d.requested_days });
-        }
-        if (entry.entity_type === 'task' && entry.action === 'status_change') {
-            if (d.days_relative_to_deadline == null) return null;
-            if (d.days_relative_to_deadline > 0) return t('auditLog.explainTaskLate', { days: d.days_relative_to_deadline });
-            if (d.days_relative_to_deadline < 0) return t('auditLog.explainTaskEarly', { days: Math.abs(d.days_relative_to_deadline) });
-            return t('auditLog.explainTaskOnDeadline');
-        }
-        return null;
-    };
+    const describeEntry = (entry) => describeAuditEntry(entry, t, getUserName);
+    const explainEntry = (entry) => explainAuditEntry(entry, t);
 
     const stats = useMemo(() => {
         const now = Date.now();

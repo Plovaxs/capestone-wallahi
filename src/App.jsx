@@ -74,12 +74,12 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'leave': return <LeaveView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
     case 'reviews': return <PerformanceReviewView {...props} userProfile={userProfile} />;
     case 'settings': return <SettingsView {...props} userProfile={userProfile} fetchProfile={props.fetchProfile} />;
-    case 'errorMonitor': return <ErrorMonitorView userProfile={userProfile} />;
+    case 'errorMonitor': return <ErrorMonitorView userProfile={userProfile} isDarkMode={props.isDarkMode} />;
     case 'auditLog': return <AuditLogView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'contractExpiry': return <ContractExpiryView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'fleetHealth': return <FleetHealthView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'onboardingTracker': return <OnboardingTrackerView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
-    case 'correlationInsights': return <CorrelationInsightsView userProfile={userProfile} allUsers={props.allUsers} tasks={props.tasks} attendance={props.attendance} reviews={props.reviews} />;
+    case 'correlationInsights': return <CorrelationInsightsView userProfile={userProfile} allUsers={props.allUsers} tasks={props.tasks} attendance={props.attendance} reviews={props.reviews} isDarkMode={props.isDarkMode} />;
     case 'idBadge': return <IdBadgeView userProfile={userProfile} />;
     case 'badgeScanner': return <BadgeScannerView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'myTeam': return <TeamView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;

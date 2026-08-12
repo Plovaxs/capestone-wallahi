@@ -4,6 +4,7 @@ import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Responsive
 import { computeCorrelationInsights } from '../domain/correlationInsights';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import { getChartTheme } from '../utils/chartTheme';
 
 const PAIRS = [
     { key: 'punctualityVsTaskCompletion', xKey: 'punctuality', yKey: 'taskCompletionRate', color: '#2563eb' },
@@ -29,8 +30,9 @@ const describeStrength = (r) => {
  * (Pearson correlation over already-fetched data, see
  * domain/correlationInsights.js).
  */
-const CorrelationInsightsView = ({ userProfile, allUsers = [], tasks = [], attendance = [], reviews = [] }) => {
+const CorrelationInsightsView = ({ userProfile, allUsers = [], tasks = [], attendance = [], reviews = [], isDarkMode = false }) => {
     const { t } = useTranslation();
+    const chartTheme = getChartTheme(isDarkMode);
     const employeeUsers = useMemo(() => allUsers.filter((u) => u.role === 'employee'), [allUsers]);
     const insights = useMemo(
         () => computeCorrelationInsights(employeeUsers, { tasks, attendance, reviews }),
@@ -67,11 +69,15 @@ const CorrelationInsightsView = ({ userProfile, allUsers = [], tasks = [], atten
                             {points.length >= 2 ? (
                                 <ResponsiveContainer width="100%" height={200}>
                                     <ScatterChart margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
-                                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                                        <XAxis type="number" dataKey={xKey} name={xKey} domain={[0, 100]} tick={{ fontSize: 10 }} />
-                                        <YAxis type="number" dataKey={yKey} name={yKey} domain={[0, 100]} tick={{ fontSize: 10 }} />
+                                        <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} opacity={isDarkMode ? 0.7 : 0.5} />
+                                        <XAxis type="number" dataKey={xKey} name={xKey} domain={[0, 100]} tick={{ fontSize: 10, fill: chartTheme.axis }} />
+                                        <YAxis type="number" dataKey={yKey} name={yKey} domain={[0, 100]} tick={{ fontSize: 10, fill: chartTheme.axis }} />
                                         <ZAxis range={[60, 60]} />
-                                        <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(v) => Math.round(v)} />
+                                        <Tooltip
+                                            cursor={{ strokeDasharray: '3 3' }}
+                                            formatter={(v) => Math.round(v)}
+                                            contentStyle={{ backgroundColor: chartTheme.tooltipBg, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: '12px', fontSize: '11px' }}
+                                        />
                                         <Scatter data={points} fill={color} />
                                     </ScatterChart>
                                 </ResponsiveContainer>

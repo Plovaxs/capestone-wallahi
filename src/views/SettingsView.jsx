@@ -11,6 +11,8 @@ import { notificationDispatcher } from '../patterns/notificationChannels/Notific
 import { BrowserPushChannel } from '../patterns/notificationChannels/BrowserPushChannel';
 import { useStaffAssignmentEditor } from '../hooks/useStaffAssignmentEditor';
 import { knownDevicesRepository } from '../data/repositories/knownDevicesRepository';
+import { auditLogRepository } from '../data/repositories/auditLogRepository';
+import { ENTITY_ICONS, describeAuditEntry } from '../utils/auditLogFormat';
 import { Icons } from '../components/Icons';
 import Button from '../components/Button';
 import Card from '../components/Card';
@@ -388,6 +390,28 @@ const SettingsView = ({
         });
     }, [refreshMfaFactors, refreshDevices]);
 
+    // ============================================================
+    // RECENT ACTIVITY (Settings > Security) -- personal view onto the
+    // same audit_log table AuditLogView shows supervisors, filtered to
+    // rows where this user was the actor (see migrations/20260812_add_
+    // audit_log_own_activity.sql for the RLS policy this depends on).
+    // ============================================================
+    const [activity, setActivity] = useState([]);
+    const [activityLoading, setActivityLoading] = useState(true);
+    const usersById = React.useMemo(() => {
+        const map = new Map();
+        for (const u of allUsers) map.set(String(u.id), u);
+        return map;
+    }, [allUsers]);
+    const getUserName = useCallback((id) => (id ? usersById.get(String(id))?.name : null) || t('auditLog.unknownUser'), [usersById, t]);
+
+    useEffect(() => {
+        auditLogRepository.listForUser(userProfile.id)
+            .then((rows) => setActivity(rows || []))
+            .catch((error) => showUserError('errors.loadSecuritySettings', error))
+            .finally(() => setActivityLoading(false));
+    }, [userProfile.id]);
+
     const handleRevokeDevice = async (device) => {
         if (!(await confirmDialog(t('settings.confirmRevokeDevice', { label: device.label || t('settings.unknownDevice') })))) return;
         setRevokingDeviceId(device.id);
@@ -737,6 +761,32 @@ const SettingsView = ({
                                     >
                                         <span className="h-4 w-4 inline-flex">{Icons.Trash}</span>
                                     </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Card>
+
+                {/* --- CONTAINER SECTION: RECENT ACTIVITY --- */}
+                <Card className="p-6 md:col-span-2">
+                    <div className="mb-6">
+                        <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.activityTitle')}</h3>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">{t('settings.activityDescription')}</p>
+                    </div>
+
+                    {activityLoading ? (
+                        <SkeletonList count={3} />
+                    ) : activity.length === 0 ? (
+                        <EmptyState icon={Icons.ClipboardCheck} title={t('settings.noActivityTitle')} description={t('settings.noActivityDescription')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-100 dark:divide-gray-700">
+                            {activity.map((entry) => (
+                                <li key={entry.id} className="flex items-start gap-3 py-3">
+                                    <span className="text-lg shrink-0" aria-hidden="true">{ENTITY_ICONS[entry.entity_type] || '📄'}</span>
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-bold text-gray-700 dark:text-gray-200">{describeAuditEntry(entry, t, getUserName)}</p>
+                                        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{new Date(entry.created_at).toLocaleString()}</p>
+                                    </div>
                                 </li>
                             ))}
                         </ul>

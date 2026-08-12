@@ -30,6 +30,12 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submittingReplyId, setSubmittingReplyId] = useState(null);
     const [changingStatusId, setChangingStatusId] = useState(null);
+    // 🟩 BULK ACTIONS (supervisor only): mirrors LeaveView's bulk-approve
+    // pattern -- a Set of selected ticket ids + a bulk action bar, instead
+    // of clicking "mark status" one ticket at a time when clearing out a
+    // backlog of e.g. 20 stale "Open" tickets.
+    const [selectedTicketIds, setSelectedTicketIds] = useState(new Set());
+    const [isBulkUpdating, setIsBulkUpdating] = useState(false);
 
     // --- DRAFT AUTOSAVE (ticket composer only — replies are short-lived and not worth persisting) ---
     const draftKey = userProfile?.id ? `draft:helpdesk-ticket:${userProfile.id}` : null;
@@ -71,6 +77,12 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
         [helpdeskTickets, statusFilter]
     );
+
+    // Clear stale selections when the filter changes so the bulk bar never
+    // silently acts on tickets that are no longer even visible.
+    useEffect(() => {
+        setSelectedTicketIds(new Set());
+    }, [statusFilter]);
 
     const openCount = useMemo(
         () => helpdeskTickets.filter(t => t.ticket_status === 'Open').length,
@@ -155,6 +167,39 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
             }
         } finally {
             setChangingStatusId(null);
+        }
+    };
+
+    const toggleTicketSelection = (ticketId) => {
+        setSelectedTicketIds(prev => {
+            const next = new Set(prev);
+            if (next.has(ticketId)) next.delete(ticketId);
+            else next.add(ticketId);
+            return next;
+        });
+    };
+
+    // 🟩 Same in-a-loop-of-direct-supabase-calls shape as handleChangeStatus
+    // (and LeaveView's handleBulkApproveLeave) -- no batch-update RPC exists
+    // for this table, and each row is independent so a partial failure
+    // (network blip mid-loop) just leaves the remaining tickets un-updated
+    // rather than corrupting anything.
+    const handleBulkChangeStatus = async (newStatus) => {
+        if (isBulkUpdating || selectedTicketIds.size === 0) return;
+        setIsBulkUpdating(true);
+        let succeeded = 0;
+        let failed = 0;
+        try {
+            for (const ticketId of selectedTicketIds) {
+                const { error } = await supabase.from('helpdesk_tickets').update({ ticket_status: newStatus }).eq('id', ticketId);
+                if (error) failed++; else succeeded++;
+            }
+            if (succeeded > 0) toast.success(t('helpdesk.bulkStatusSuccess', { count: succeeded, status: getStatusLabel(newStatus) }));
+            if (failed > 0) toast.error(t('helpdesk.bulkStatusPartialFailure', { count: failed }));
+            setSelectedTicketIds(new Set());
+            fetchHelpdeskTickets();
+        } finally {
+            setIsBulkUpdating(false);
         }
     };
 
@@ -285,6 +330,36 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                 ))}
             </div>
 
+            {/* --- BULK ACTION BAR (supervisor only) --- */}
+            {userProfile.role === 'supervisor' && selectedTicketIds.size > 0 && (
+                <div className="flex items-center justify-between gap-3 flex-wrap bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 rounded-2xl px-4 py-3">
+                    <span className="text-xs font-bold text-blue-700 dark:text-blue-300">
+                        {t('helpdesk.selectedCount', { count: selectedTicketIds.size })}
+                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {STATUS_ORDER.map(s => (
+                            <button
+                                key={s}
+                                type="button"
+                                disabled={isBulkUpdating}
+                                onClick={() => handleBulkChangeStatus(s)}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white dark:bg-gray-800 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 disabled:opacity-50"
+                            >
+                                {t('helpdesk.markStatus', { status: getStatusLabel(s) })}
+                            </button>
+                        ))}
+                        <button
+                            type="button"
+                            onClick={() => setSelectedTicketIds(new Set())}
+                            disabled={isBulkUpdating}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 disabled:opacity-50"
+                        >
+                            {t('common.cancel')}
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* --- TICKET LIST --- */}
             <div className="space-y-4">
                 {visibleTickets.length === 0 && (
@@ -300,11 +375,22 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                     const tagStyle = TICKET_CATEGORIES.find(c => c.name === ticket.category)?.color || '';
 
                     return (
-                        <div key={ticket.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 p-5">
+                        <div key={ticket.id} className={`bg-white rounded-2xl shadow-sm border p-5 dark:bg-gray-800 ${selectedTicketIds.has(ticket.id) ? 'border-blue-300 dark:border-blue-700 ring-1 ring-blue-200 dark:ring-blue-800' : 'border-gray-100 dark:border-gray-700'}`}>
 
                             {/* Author + timestamp */}
                             <div className="flex items-start justify-between gap-3 mb-1">
-                                <span className="text-xs font-bold text-gray-500 dark:text-gray-400">{ticket.employee_name}</span>
+                                <div className="flex items-center gap-2">
+                                    {userProfile.role === 'supervisor' && (
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedTicketIds.has(ticket.id)}
+                                            onChange={() => toggleTicketSelection(ticket.id)}
+                                            aria-label={t('helpdesk.selectTicket')}
+                                            className="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                                        />
+                                    )}
+                                    <span className="text-xs font-bold text-gray-500 dark:text-gray-400">{ticket.employee_name}</span>
+                                </div>
                                 <span className="text-[10px] text-gray-400 whitespace-nowrap">
                                     {/* 🟩 FIX: was reading `ticket.date`, a column that's never
                                         actually set on insert (handleCreateTicket doesn't send
