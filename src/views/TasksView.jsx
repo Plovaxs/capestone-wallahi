@@ -746,7 +746,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                     teammates are still working. Supervisors get a link to
                     each individual file as it comes in, not just once
                     everyone's done. */}
-                {assigneeCount > 1 && task.status !== 'Approved' && (
+                {assigneeCount > 1 && (
                     <div className="text-[10px] bg-gray-50 dark:bg-gray-900/40 border border-gray-100 dark:border-gray-700 rounded-lg p-2 space-y-1">
                         <div className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
                             <span>{isSingularMode
@@ -818,6 +818,21 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                         {!mySubmission && task.submitted_file_path && (
                             <button onClick={() => handleViewSubmission(task.submitted_file_path)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>
                         )}
+
+                        {/* 🟩 NEW: supervisor-facing View File on single-assignee tasks --
+                            the block above only covers the submitter themselves or
+                            multi-assignee tasks; a supervisor reviewing a solo task in
+                            Ready for Review / Done otherwise had no way to open the file
+                            straight from the card. */}
+                        {userProfile.role === 'supervisor' && assigneeCount <= 1 && ['Completed', 'Approved'].includes(task.status) && (() => {
+                            const soleAssigneeId = (task.assigned_to || [])[0];
+                            const soleSubmission = taskSubmissionsList.find(s => s.employee_id === soleAssigneeId);
+                            const filePath = soleSubmission?.file_path || task.submitted_file_path;
+                            if (!filePath) return null;
+                            return (
+                                <button onClick={() => handleViewSubmission(filePath)} className="text-gray-600 hover:text-gray-900 dark:text-gray-300 font-semibold underline">{t('tasks.viewFile')}</button>
+                            );
+                        })()}
 
                         {/* Master Supervisor Action Controls Matrix */}
                         {userProfile.role === 'supervisor' && task.status === 'Completed' && (
