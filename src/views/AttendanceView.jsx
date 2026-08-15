@@ -109,36 +109,48 @@ const CAMERA_ERROR_I18N_KEYS = {
     unknown: { title: 'attendance.cameraErrorUnknownTitle', body: 'attendance.cameraErrorUnknownBody' },
 };
 
-const determineYoloVersion = () => {
-  const hardwareConcurrency = navigator.hardwareConcurrency ? parseInt(navigator.hardwareConcurrency, 10) : 0;
-  const deviceMemory = parseFloat(navigator.deviceMemory);
-  if (deviceMemory < 4 || hardwareConcurrency <= 4) return 'nano';
-  if (deviceMemory >= 8 && hardwareConcurrency > 4) return 'medium';
-  return 'nano';
-};
-
-const YOLO_MODEL_IDS = {
-  nano: 'Xenova/yolov8n-face',
-  medium: 'Xenova/yolov8n-face'
-};
-
-// 🟩 BUG FIX: verified live (not assumed) against Hugging Face's real API --
-// every request to the Xenova org's models, including this exact one,
-// currently returns 401 "Invalid username or password". This is NOT a
-// network/timeout condition (the YOLO_LOAD_TIMEOUT_MS/YOLO_INFERENCE_TIMEOUT_MS
-// fix below still protects against a genuine hang either way) -- it's a
-// permanent, unconditional rejection at the model-hosting level, so
-// retrying it every fresh page load/session just guarantees one wasted
-// network round trip plus a "Failed to load resource: 401" browser
-// console line NOTHING in application code can suppress (Chrome logs
-// failed network responses at the browser layer, before JS ever sees
-// them, regardless of try/catch). detectFaceFromImage's face-api.js
-// fallback already works identically to what Login uses exclusively, so
-// skipping the doomed attempt entirely -- rather than "try once per
-// session, then remember it failed" -- costs nothing. Flip this back to
-// false once Xenova/yolov8n-face (or a replacement model id) is
-// confirmed reachable again.
-const YOLO_KNOWN_BROKEN = true;
+// 🟩 REVOLVER: ordered list of candidate YOLO face-detection models. On any
+// failure for the currently-selected candidate -- model-load error, missing
+// required files, unsupported architecture, or an inference timeout -- the
+// scan loop advances to the next entry for the very next tick, no page
+// reload required (see yoloCandidateIndexRef / yoloExhaustedRef below).
+// Only once every candidate here has failed does it give up on YOLO for the
+// rest of the session and fall back to the face-api-only path (the same
+// path LoginPage.jsx uses exclusively).
+//
+// 🟩 As of 2026-08-15, every publicly reachable face-specific YOLO model
+// was checked with a REAL load attempt against this exact
+// @huggingface/transformers version (not a file-listing guess), and every
+// one failed:
+//   - Xenova/yolov8n-face: the entire Xenova org now returns 401 "Invalid
+//     username or password" on every model, unconditionally -- confirmed
+//     live across multiple Xenova model ids. Permanent, not flaky network.
+//     Marked knownBroken below so the revolver skips the doomed network
+//     request entirely and advances immediately, instead of eating a
+//     browser-console 401 line for nothing.
+//   - AdamCodd/YOLOv11n-face-detection: has root config.json + model.onnx,
+//     but is missing the required preprocessor_config.json.
+//   - deepghs/yolo-face: has real face-detection ONNX weights, but nested
+//     under subfolders with no root-level config.json/preprocessor_config.json
+//     (still fails even with transformers.js's `subfolder` option).
+//   - arnabdhar/YOLOv8-Face-Detection, jaredthejelly/yolov8s-face-detection:
+//     ship no .onnx weights at all (PyTorch-only).
+//   - onnx-community (Hugging Face's own post-Xenova ONNX org) has no
+//     face-specific detector at all -- only general object detectors
+//     (yolov10n, etc.), which fail with "Unsupported model type: yolov10"
+//     since transformers.js doesn't support that architecture yet.
+//   - hustvl/yolos-tiny (the officially-integrated YOLOS architecture,
+//     tried as a last resort on the theory that an architecture
+//     transformers.js genuinely supports would at least load): has no ONNX
+//     export in its repo at all.
+// The list below is intentionally left with just that one known-broken
+// placeholder. The moment a real working candidate is found (root-level
+// config.json + preprocessor_config.json + .onnx weights, architecture
+// supported by this transformers.js version), add it here -- the revolver
+// picks it up automatically, no other code changes needed.
+const YOLO_MODEL_CANDIDATES = [
+  { id: 'Xenova/yolov8n-face', knownBroken: true },
+];
 
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
@@ -332,6 +344,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // face-api-only for the rest of the session.
     const latencyMonitorRef = useRef(createLatencyMonitor());
     const dynamicYoloDisableRef = useRef(false);
+    // 🟩 REVOLVER STATE: yoloCandidateIndexRef points at the current entry in
+    // YOLO_MODEL_CANDIDATES; advances by one on any failure. yoloExhaustedRef
+    // flips true (one-way) once the index runs past the end of the list --
+    // distinct from dynamicYoloDisableRef above, which is a separate
+    // sustained-latency circuit breaker unrelated to which model was tried.
+    const yoloCandidateIndexRef = useRef(0);
+    const yoloExhaustedRef = useRef(false);
     // 🟩 EDGE DEVICE DIAGNOSTICS: a purely local, purely visual readout of
     // the sensor signals already being computed above — network/battery
     // adaptive mode, ambient light, lens clarity, motion stability. Nothing
@@ -512,7 +531,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         sourceContext.drawImage(imageEl, 0, 0, width, height);
         sourceContext.filter = 'none';
 
-        if (!YOLO_KNOWN_BROKEN && !disableYolo && !dynamicYoloDisableRef.current) {
+        if (!yoloExhaustedRef.current && !disableYolo && !dynamicYoloDisableRef.current) {
             try {
                 const detector = await withTimeout(ensureYoloFaceDetector(), YOLO_LOAD_TIMEOUT_MS, 'yolo-model-load');
                 const rawDetections = await withTimeout(
@@ -549,19 +568,28 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     }
                 }
             } catch (_error) {
-                // 🟩 BUG FIX: previously retried YOLO from scratch on every
-                // single tick even after a hard, persistent failure (e.g. the
-                // Hugging Face CDN being unreachable on this network) --
-                // wasting up to YOLO_LOAD_TIMEOUT_MS + YOLO_INFERENCE_TIMEOUT_MS
-                // of every ~1.8s tick budget forever, instead of ever
-                // settling into the fast, reliable face-api-only path this
-                // view already falls back to below (the same path
-                // LoginPage.jsx uses exclusively). One failure -- timeout or
-                // otherwise -- is now enough to stop retrying YOLO for the
-                // rest of this session, same one-way-downgrade treatment
-                // dynamicYoloDisableRef already gets from sustained latency.
-                dynamicYoloDisableRef.current = true;
-                if (import.meta.env.DEV) console.info('YOLO fallback to face-api full frame.', _error);
+                // 🟩 REVOLVER: any failure for the currently-selected
+                // candidate -- model-load error, the knownBroken placeholder,
+                // or an inference timeout -- advances to the next entry in
+                // YOLO_MODEL_CANDIDATES for the very next scan tick, no page
+                // reload needed. Previously a single failure permanently
+                // disabled YOLO for the whole session; now that only happens
+                // once every candidate in the list has been tried and failed
+                // (yoloExhaustedRef), so a working model added to the list
+                // later gets a real chance instead of being preempted by an
+                // earlier candidate's one-shot failure.
+                yoloDetectorRef.current = null;
+                yoloDetectorPromiseRef.current = null;
+                yoloCandidateIndexRef.current += 1;
+                if (yoloCandidateIndexRef.current >= YOLO_MODEL_CANDIDATES.length) {
+                    yoloExhaustedRef.current = true;
+                }
+                if (import.meta.env.DEV) {
+                    console.info(
+                        `YOLO candidate failed, revolver advancing (${yoloCandidateIndexRef.current}/${YOLO_MODEL_CANDIDATES.length}). Falling back to face-api full frame for this tick.`,
+                        _error
+                    );
+                }
             }
         }
 
@@ -612,24 +640,29 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
     const ensureYoloFaceDetector = async () => {
         if (yoloDetectorRef.current) return yoloDetectorRef.current;
-        if (!yoloDetectorPromiseRef.current) {
-            const selectedModelVersion = determineYoloVersion();
-            const modelId = selectedModelVersion === 'nano' ? YOLO_MODEL_IDS.nano : YOLO_MODEL_IDS.medium;
+        const candidate = YOLO_MODEL_CANDIDATES[yoloCandidateIndexRef.current];
+        if (!candidate) throw new Error('yolo-revolver-exhausted');
+        // 🟩 REVOLVER: a candidate marked knownBroken (currently only
+        // Xenova/yolov8n-face, permanently 401-gated at the HF org level --
+        // see YOLO_MODEL_CANDIDATES doc comment) is rejected here WITHOUT
+        // making the network request at all. The caller's catch block
+        // advances the revolver to the next candidate exactly like any
+        // other failure, so this costs one skipped tick, not a wasted round
+        // trip or an unsuppressable browser-console 401 line.
+        if (candidate.knownBroken) throw new Error(`yolo-candidate-known-broken:${candidate.id}`);
 
+        if (!yoloDetectorPromiseRef.current) {
             // 🟩 SIMPLIFIED: there's no local copy of the YOLO weights under
             // public/models/ (only the face-api.js models live there), so a
             // fallback fetch to a local YOLO path was guaranteed to 404/fail
             // right after the remote Hugging Face fetch already failed --
             // just extra latency and console noise before the caller's own
             // try/catch (detectFaceFromImage) falls back to face-api.js.
-            // Clearing the cached promise on failure (rather than leaving a
-            // permanently-rejected promise here) lets a later scan tick
-            // retry YOLO if the network/HF rate-limit recovers mid-session.
             yoloDetectorPromiseRef.current = loadTransformersModule()
-                .then(({ pipeline }) => pipeline('object-detection', modelId))
+                .then(({ pipeline }) => pipeline('object-detection', candidate.id))
                 .then(detector => {
                     yoloDetectorRef.current = detector;
-                    setCurrentModelVersion(selectedModelVersion);
+                    setCurrentModelVersion(candidate.id);
                     return detector;
                 })
                 .catch((err) => {

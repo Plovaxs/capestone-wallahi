@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import Card from '../components/Card';
 import Button from '../components/Button';
@@ -140,6 +140,14 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
         streamRef.current = null;
     };
 
+    // 🟩 BUG FIX: the camera used to die the instant a test run finished --
+    // runPipelineTest previously called stopStream() again right after a
+    // successful pass, unlike Login/Attendance where the preview stays live
+    // continuously. Cleanup now only happens when the user actually leaves
+    // this submodule (unmount) or starts a fresh run, not after every
+    // successful test.
+    useEffect(() => stopStream, []);
+
     const runPipelineTest = async () => {
         setIsRunning(true);
         setSteps([]);
@@ -183,10 +191,10 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
             return;
         }
 
-        // 🟩 Deliberately no YOLO-reachability step here anymore --
-        // AttendanceView.jsx no longer attempts Xenova/yolov8n-face at all
-        // (verified permanently gated, see YOLO_KNOWN_BROKEN there), so
-        // this pipeline test mirrors what actually happens on a real scan:
+        // 🟩 Deliberately no YOLO-reachability step here -- AttendanceView.jsx's
+        // YOLO "revolver" (see YOLO_MODEL_CANDIDATES there) currently has no
+        // confirmed-working candidate and always falls through to face-api.js,
+        // so this pipeline test mirrors what actually happens on a real scan:
         // camera -> face-api.js models -> detection. General Hugging Face
         // reachability is still checked on the Connectivity tab.
         const video = videoRef.current;
@@ -213,7 +221,6 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
             }
         }
 
-        stopStream();
         setRanAt(new Date());
         setIsRunning(false);
     };

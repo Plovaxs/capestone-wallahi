@@ -420,15 +420,17 @@ describe('AttendanceView', () => {
             // request to Xenova/yolov8n-face (including this exact model)
             // returns 401 "Invalid username or password", unconditionally --
             // a permanent access restriction, not a flaky network condition.
-            // AttendanceView.jsx's YOLO_KNOWN_BROKEN flag skips the attempt
-            // entirely now (see that file), rather than trying-and-timing-out
-            // on every fresh session -- which would have also guaranteed an
-            // un-suppressible "Failed to load resource: 401" browser console
-            // line every time, since Chrome logs failed network responses at
-            // the browser layer regardless of how the JS promise is handled.
-            // disableYolo=false here specifically to prove YOLO_KNOWN_BROKEN
-            // -- not the network-adaptive hook -- is what's actually gating
-            // it (every other test in this file leaves disableYolo=true).
+            // AttendanceView.jsx's YOLO_MODEL_CANDIDATES revolver marks this
+            // model knownBroken, which skips the network request entirely
+            // (see ensureYoloFaceDetector there) rather than trying-and-
+            // timing-out on every fresh session -- which would have also
+            // guaranteed an un-suppressible "Failed to load resource: 401"
+            // browser console line every time, since Chrome logs failed
+            // network responses at the browser layer regardless of how the
+            // JS promise is handled. disableYolo=false here specifically to
+            // prove the revolver's knownBroken skip -- not the
+            // network-adaptive hook -- is what's actually gating it (every
+            // other test in this file leaves disableYolo=true).
             globalThis.__mockDisableYolo = false;
             await renderAndFlushMount(employeeProfile);
             expect(getUserMediaMock).toHaveBeenCalled();
