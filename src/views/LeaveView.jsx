@@ -12,6 +12,7 @@ import { showUserError } from '../utils/errorHandling';
 import { confirmDialog } from '../utils/confirm';
 import { sanitizeUserInput } from '../utils/sanitize';
 import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * COMPONENT: LeaveView
@@ -23,6 +24,7 @@ import { useVirtualizedRows } from '../hooks/useVirtualizedRows';
  */
 const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveRequests, fetchProfile }) => {
     const { t } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
 
     // --- FORM DATA CONTROLLER STATES ---
     const [newRequest, setNewRequest] = useState({ type: 'Paid Holiday', start_date: '', end_date: '', reason: '' });
@@ -113,6 +115,41 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
         const u = usersById.get(id);
         return u?.source || u?.university || t('leave.presidentUniversity');
     };
+
+    // 🟩 NEW SUBMODULE: By Type -- total APPROVED days used per leave type
+    // (Paid Holiday / Sick Leave / Unpaid Leave), reusing the same already-
+    // fetched `leaveRequests` and the exact day-counting rule
+    // (LeaveQuotaPolicy.calculateRequestedDays) the quota/approval flow
+    // already relies on, instead of a separate ad hoc count.
+    const byTypeStats = useMemo(() => {
+        const byType = new Map();
+        leaveRequests
+            .filter((req) => req.status === 'Approved')
+            .forEach((req) => {
+                const days = LeaveQuotaPolicy.calculateRequestedDays(req.start_date, req.end_date);
+                byType.set(req.type, (byType.get(req.type) || 0) + days);
+            });
+        return Array.from(byType.entries())
+            .map(([type, days]) => ({ type, days }))
+            .sort((a, b) => b.days - a.days);
+    }, [leaveRequests]);
+
+    // 🟩 NEW SUBMODULE: By Employee -- total approved leave days taken per
+    // person. Employees see only their own row (still a genuinely useful
+    // "how many days have I actually taken" summary); supervisors see
+    // everyone, same cross-visibility level the roster table already has.
+    const byEmployeeStats = useMemo(() => {
+        const byEmployee = new Map();
+        leaveRequests
+            .filter((req) => req.status === 'Approved' && (userProfile.role === 'supervisor' || req.employee_id === userProfile.id))
+            .forEach((req) => {
+                const days = LeaveQuotaPolicy.calculateRequestedDays(req.start_date, req.end_date);
+                if (!byEmployee.has(req.employee_id)) byEmployee.set(req.employee_id, { employeeId: req.employee_id, name: getUserName(req.employee_id), days: 0 });
+                byEmployee.get(req.employee_id).days += days;
+            });
+        return Array.from(byEmployee.values()).sort((a, b) => b.days - a.days);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [leaveRequests, usersById, userProfile.role, userProfile.id]);
 
     // =========================================================================
     // 🔍 REAL-TIME DATA INDEX FILTER PIPELINES
@@ -590,6 +627,60 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                 )}
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('leave.tabOverview'), icon: Icons.CalendarDays },
+                    { id: 'byType', label: t('leave.tabByType'), icon: Icons.ClipboardList },
+                    { id: 'byEmployee', label: t('leave.tabByEmployee'), icon: Icons.UsersGroup },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'byType' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('leave.byTypeTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('leave.byTypeDescription')}</p>
+                    {byTypeStats.length === 0 ? (
+                        <EmptyState icon={Icons.ClipboardList} title={t('leave.noApprovedLeave')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byTypeStats.map((row) => (
+                                <li key={row.type} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.type}</span>
+                                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300 shrink-0">
+                                        {t('leave.dayCount', { count: row.days })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'byEmployee' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('leave.byEmployeeTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('leave.byEmployeeDescription')}</p>
+                    {byEmployeeStats.length === 0 ? (
+                        <EmptyState icon={Icons.UsersGroup} title={t('leave.noApprovedLeave')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byEmployeeStats.map((row) => (
+                                <li key={row.employeeId} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300 shrink-0">
+                                        {t('leave.dayCount', { count: row.days })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'overview' && (
+            <>
             {/* --- SECTION 1: ALLOWANCE CARDS & SUBMISSION FIELDS --- */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
@@ -902,6 +993,8 @@ const LeaveView = ({ userProfile, allUsers = [], leaveRequests = [], fetchLeaveR
                     <EmptyState icon={Icons.CalendarDays} title={t('leave.noRequestsMatch')} />
                  )}
             </div>
+            </>
+            )}
         </div>
     );
 };

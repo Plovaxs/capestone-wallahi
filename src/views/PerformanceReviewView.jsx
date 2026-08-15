@@ -12,6 +12,7 @@ import { selfAssessmentsRepository } from '../data/repositories/selfAssessmentsR
 import { getLocalDateString } from '../utils/dateOnly';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * COMPONENT: PerformanceReviewView
@@ -23,6 +24,7 @@ import { Icons } from '../components/Icons';
  */
 const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], tasks = [], contributions = [] }) => {
     const { t } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
     // --- RUBRIC BUILDER CORE STATES ---
     const [selectedUserId, setSelectedUserId] = useState(''); // Target intern ID being reviewed
     const [scores, setScores] = useState({}); // Dictionary map tracking scores per item ID (e.g., { A1: 3, B2: 2 })
@@ -392,6 +394,66 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
     }, [allUsers]);
     const getUserName = (id) => usersById.get(id)?.name || t('reviews.unknownUser');
 
+    // 🟩 NEW SUBMODULE: Score Trends -- average final_score per employee
+    // across their FULL evaluation history, reusing the same
+    // already-fetched `evaluations` (not a new query). The main archive
+    // table only ever shows individual rows chronologically; this ranks
+    // people by their historical average instead.
+    const scoreTrendsByEmployee = useMemo(() => {
+        const byEmployee = new Map();
+        evaluations.forEach((record) => {
+            if (!byEmployee.has(record.employee_id)) byEmployee.set(record.employee_id, []);
+            byEmployee.get(record.employee_id).push(record.final_score);
+        });
+        return Array.from(byEmployee.entries())
+            .map(([employeeId, scoreList]) => ({
+                employeeId,
+                name: getUserName(employeeId),
+                count: scoreList.length,
+                average: Math.round((scoreList.reduce((a, b) => a + b, 0) / scoreList.length) * 10) / 10,
+                latest: scoreList[0], // evaluations is already ordered newest-first
+            }))
+            .sort((a, b) => b.average - a.average);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [evaluations, usersById]);
+
+    // 🟩 NEW SUBMODULE: Self vs. Supervisor -- compares each employee's
+    // latest SELF-rated score (self_assessments, computed with the exact
+    // same formula calculateFinalScores uses) against their latest
+    // SUPERVISOR-rated score (evaluations, already has final_score
+    // precomputed) -- a comparison the app never surfaced despite already
+    // fetching both datasets independently.
+    const selfVsSupervisorStats = useMemo(() => {
+        const maxPossibleRaw = totalQuestionsCount * 3;
+        const latestSelfByEmployee = new Map();
+        selfAssessments.forEach((a) => {
+            if (!latestSelfByEmployee.has(a.employee_id)) latestSelfByEmployee.set(a.employee_id, a);
+        });
+        const latestEvalByEmployee = new Map();
+        evaluations.forEach((record) => {
+            if (!latestEvalByEmployee.has(record.employee_id)) latestEvalByEmployee.set(record.employee_id, record);
+        });
+        const employeeIds = new Set([...latestSelfByEmployee.keys(), ...latestEvalByEmployee.keys()]);
+        return Array.from(employeeIds)
+            .map((employeeId) => {
+                const self = latestSelfByEmployee.get(employeeId);
+                const evaluation = latestEvalByEmployee.get(employeeId);
+                const selfRaw = self ? Object.values(self.scores || {}).reduce((sum, v) => sum + v, 0) : null;
+                const selfScore = selfRaw === null ? null : Math.round((selfRaw / maxPossibleRaw) * 100 * 10) / 10;
+                const supervisorScore = evaluation ? evaluation.final_score : null;
+                return {
+                    employeeId,
+                    name: getUserName(employeeId),
+                    selfScore,
+                    supervisorScore,
+                    delta: selfScore !== null && supervisorScore !== null ? Math.round((selfScore - supervisorScore) * 10) / 10 : null,
+                };
+            })
+            .filter((row) => row.selfScore !== null && row.supervisorScore !== null)
+            .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selfAssessments, evaluations, usersById, totalQuestionsCount]);
+
     const handleDownloadPdf = (evaluation) => {
         generateReviewPdf({
             evaluation,
@@ -436,6 +498,79 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                 <p className="text-sm text-gray-500 dark:text-gray-400">{t('reviews.subtitle')}</p>
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('reviews.tabOverview'), icon: Icons.UserCircle },
+                    { id: 'scoreTrends', label: t('reviews.tabScoreTrends'), icon: Icons.ScatterChart },
+                    { id: 'selfVsSupervisor', label: t('reviews.tabSelfVsSupervisor'), icon: Icons.ClipboardCheck },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'scoreTrends' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('reviews.scoreTrendsTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('reviews.scoreTrendsDescription')}</p>
+                    {scoreTrendsByEmployee.length === 0 ? (
+                        <EmptyState icon={Icons.ScatterChart} title={t('reviews.noEvaluations')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {scoreTrendsByEmployee.map((row) => (
+                                <li key={row.employeeId} className="py-3 flex items-center justify-between gap-4">
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</p>
+                                        <p className="text-[10px] text-gray-400 dark:text-gray-500">{t('reviews.evaluationCount', { count: row.count })}</p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg shrink-0 ${
+                                        row.average >= 60
+                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                                            : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+                                    }`}>
+                                        {t('reviews.averageScore', { score: row.average })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'selfVsSupervisor' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('reviews.selfVsSupervisorTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('reviews.selfVsSupervisorDescription')}</p>
+                    {selfVsSupervisorStats.length === 0 ? (
+                        <EmptyState icon={Icons.ClipboardCheck} title={t('reviews.noSelfVsSupervisorData')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {selfVsSupervisorStats.map((row) => (
+                                <li key={row.employeeId} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                                            {t('reviews.selfScoreLabel', { score: row.selfScore })}
+                                        </span>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                                            {t('reviews.supervisorScoreLabel', { score: row.supervisorScore })}
+                                        </span>
+                                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                                            Math.abs(row.delta) <= 5
+                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                                                : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                                        }`}>
+                                            {t('reviews.deltaLabel', { delta: row.delta > 0 ? `+${row.delta}` : row.delta })}
+                                        </span>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'overview' && (
+            <>
             {/* SUPERVISOR PANEL INTERFACE SHEETS */}
             {userProfile.role === 'supervisor' && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -766,6 +901,8 @@ const PerformanceReviewView = ({ userProfile, allUsers = [], attendance = [], ta
                     </table>
                 </div>
             </div>
+            </>
+            )}
 
             {/* ========================================================================= */}
             {/* POPUP FULL READ-ONLY MODAL OVERLAY (FIXED INTERN DISPLAY TRANSCRIPTS)    */}

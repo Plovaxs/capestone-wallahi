@@ -14,6 +14,7 @@ import { supabase } from '../supabaseClient';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
 import { getChartTheme } from '../utils/chartTheme';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * Pure, module-scope so the LRU cache below survives across renders and
@@ -53,6 +54,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const { t } = useTranslation();
     const [selectedEmployee, setSelectedEmployee] = useState(userProfile.role === 'supervisor' ? 'all' : userProfile.id);
     const [showSettings, setShowSettings] = useState(false);
+    const [activeTab, setActiveTab] = useState('overview');
     // 🟩 INLINE EDITING: Outsource Directory edits an employee's assignment
     // fields directly in the table now (no more redirecting to Settings) --
     // shared hook with Settings > Manage Staff Assignments (see
@@ -304,6 +306,28 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     // on every notification poll even when tasks/attendance haven't changed. ---
     const leaderboard = computeLeaderboard(employeeUsers, tasks, attendance);
 
+    // 🟩 NEW SUBMODULE: Full Leaderboard -- the widget above deliberately
+    // caps at the top 5 (computeLeaderboard itself slices before returning,
+    // to keep the LRU-memoized widget cheap), so nothing ever showed
+    // where employee #6 and onward stood. A separate, unsliced computation
+    // here -- same ranking rule (approved task count, punctuality as a
+    // tiebreaker signal) -- rather than changing the shared memoized util
+    // and risking the existing widget's behavior/cache-key shape.
+    const fullLeaderboard = useMemo(
+        () => employeeUsers
+            .map(emp => {
+                const empTasks = tasks.filter(task => (task.assigned_to || []).includes(emp.id));
+                const approvedCount = empTasks.filter(task => task.status === 'Approved').length;
+                const empAttendance = attendance.filter(a => a.employee_id === emp.id);
+                const punctuality = empAttendance.length > 0
+                    ? Math.round((empAttendance.filter(a => a.status === 'Present').length / empAttendance.length) * 100)
+                    : null;
+                return { id: emp.id, name: emp.name, approvedCount, punctuality };
+            })
+            .sort((a, b) => b.approvedCount - a.approvedCount),
+        [employeeUsers, tasks, attendance]
+    );
+
     // --- ATTENDANCE ANOMALIES: per-employee statistical outliers (median +
     // MAD, robust against masking) against each person's OWN clock-in
     // history -- see domain/attendanceAnomalyDetector.js. Recomputed only
@@ -441,6 +465,76 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                 </div>
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('dashboard.tabOverview'), icon: Icons.LayoutDashboard },
+                    { id: 'fullLeaderboard', label: t('dashboard.tabFullLeaderboard'), icon: Icons.Trophy },
+                    { id: 'engagementFull', label: t('dashboard.tabEngagementFull'), icon: Icons.ScatterChart },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'fullLeaderboard' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('dashboard.fullLeaderboardTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('dashboard.fullLeaderboardDescription')}</p>
+                    {fullLeaderboard.length === 0 ? (
+                        <EmptyState icon={Icons.Trophy} title={t('dashboard.noEmployeesYet')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {fullLeaderboard.map((row, idx) => (
+                                <li key={row.id} className="py-3 flex items-center justify-between gap-4">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-[10px] font-black text-gray-300 dark:text-gray-600 w-5 text-right">{idx + 1}</span>
+                                        <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {row.punctuality !== null && (
+                                            <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                                                {t('dashboard.punctualityPercent', { percent: row.punctuality })}
+                                            </span>
+                                        )}
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                                            {t('dashboard.tasksApproved', { count: row.approvedCount })}
+                                        </span>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'engagementFull' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('dashboard.engagementFullTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('dashboard.engagementFullDescription')}</p>
+                    {engagementScores.filter((s) => s.compositeScore !== null).length === 0 ? (
+                        <EmptyState icon={Icons.ScatterChart} title={t('dashboard.noEmployeesYet')} className="py-6" />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {engagementScores.filter((s) => s.compositeScore !== null).map((s) => (
+                                <li key={s.employeeId} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{getUserName(s.employeeId)}</span>
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg shrink-0 ${
+                                        s.compositeScore >= 70
+                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                                            : s.compositeScore >= 40
+                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+                                            : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                                    }`}>
+                                        {s.compositeScore}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'overview' && (
+            <>
             {/* --- ADMIN INTERN SELECTOR --- */}
             {(widgets.attendanceChart || widgets.taskChart || widgets.individualTrend) && userProfile.role === 'supervisor' && (
                 <div className="flex justify-end bg-white p-3 rounded-2xl border border-gray-100 dark:bg-gray-800 dark:border-gray-700 shadow-sm">
@@ -915,6 +1009,8 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                 </div>
             )}
             </div>
+            </>
+            )}
         </div>
     );
 };

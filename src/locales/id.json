@@ -240,7 +240,16 @@
     "selectedCount": "{{count}} permintaan dipilih",
     "clearSelection": "Batal Pilih",
     "approveSelected": "Setujui yang Dipilih",
-    "bulkOverageSummary": "{{count}} permintaan melebihi kuota dan disetujui otomatis dengan saldo yang di-override:"
+    "bulkOverageSummary": "{{count}} permintaan melebihi kuota dan disetujui otomatis dengan saldo yang di-override:",
+    "tabOverview": "Ringkasan",
+    "tabByType": "Per Jenis",
+    "tabByEmployee": "Per Karyawan",
+    "byTypeTitle": "Hari disetujui per jenis cuti",
+    "byTypeDescription": "Total hari cuti disetujui, dirinci per Cuti Berbayar / Cuti Sakit / Cuti Tanpa Bayar.",
+    "noApprovedLeave": "Belum ada pengajuan cuti yang disetujui.",
+    "dayCount_other": "{{count}} hari",
+    "byEmployeeTitle": "Hari disetujui per karyawan",
+    "byEmployeeDescription": "Total hari cuti disetujui yang diambil, diurutkan dari yang terbanyak."
   },
   "reviews": {
     "unknownUser": "Pengguna Tidak Dikenal",
@@ -353,7 +362,20 @@
     "pdfRemarks": "Catatan Penutup",
     "pdfNoRemarks": "Tidak ada catatan tertulis.",
     "pdfGeneratedOn": "Dibuat pada {{date}}",
-    "pdfFilenamePrefix": "Penilaian_Kinerja"
+    "pdfFilenamePrefix": "Penilaian_Kinerja",
+    "tabOverview": "Ringkasan",
+    "tabScoreTrends": "Tren Skor",
+    "tabSelfVsSupervisor": "Diri vs. Supervisor",
+    "scoreTrendsTitle": "Rata-rata skor per karyawan",
+    "scoreTrendsDescription": "Rata-rata historis dari seluruh evaluasi yang tercatat, diurutkan dari tertinggi.",
+    "evaluationCount_other": "{{count}} evaluasi",
+    "averageScore": "rata-rata {{score}}",
+    "selfVsSupervisorTitle": "Skor mandiri vs. skor supervisor",
+    "selfVsSupervisorDescription": "Skor penilaian mandiri terakhir tiap karyawan dibandingkan dengan evaluasi supervisor terakhir mereka -- diurutkan dari selisih terbesar.",
+    "noSelfVsSupervisorData": "Belum ada karyawan yang punya penilaian mandiri sekaligus evaluasi supervisor.",
+    "selfScoreLabel": "mandiri {{score}}",
+    "supervisorScoreLabel": "supervisor {{score}}",
+    "deltaLabel": "Δ {{delta}}"
   },
   "reportBug": {
     "buttonLabel": "Laporkan Masalah",
@@ -495,7 +517,15 @@
     "punctualityPercent": "{{percent}}% tepat waktu",
     "noLeaderboardData": "Belum ada data tugas selesai untuk diperingkat.",
     "scoreLabel": "Skor",
-    "noTrendData": "Belum ada riwayat penilaian untuk karyawan ini."
+    "noTrendData": "Belum ada riwayat penilaian untuk karyawan ini.",
+    "tabOverview": "Ringkasan",
+    "tabFullLeaderboard": "Papan Peringkat Lengkap",
+    "tabEngagementFull": "Sinyal Keterlibatan Lengkap",
+    "fullLeaderboardTitle": "Semua orang, diurutkan",
+    "fullLeaderboardDescription": "Widget Top Performers cuma nampilin 5 teratas -- ini peringkat lengkapnya.",
+    "noEmployeesYet": "Belum ada data karyawan.",
+    "engagementFullTitle": "Skor keterlibatan setiap karyawan",
+    "engagementFullDescription": "Widget dashboard cuma nampilin 8 skor terendah -- ini semua orang yang punya skor terhitung."
   },
   "attendance": {
     "supervisorTitle": "Portal Pemantauan Staf Outsourcing",

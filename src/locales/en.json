@@ -242,7 +242,17 @@
     "selectedCount": "{{count}} request(s) selected",
     "clearSelection": "Clear",
     "approveSelected": "Approve Selected",
-    "bulkOverageSummary": "{{count}} request(s) exceeded quota and were auto-approved with an overridden balance:"
+    "bulkOverageSummary": "{{count}} request(s) exceeded quota and were auto-approved with an overridden balance:",
+    "tabOverview": "Overview",
+    "tabByType": "By Type",
+    "tabByEmployee": "By Employee",
+    "byTypeTitle": "Approved days by leave type",
+    "byTypeDescription": "Total approved days taken, broken down by Paid Holiday / Sick Leave / Unpaid Leave.",
+    "noApprovedLeave": "No approved leave requests yet.",
+    "dayCount_one": "{{count}} day",
+    "dayCount_other": "{{count}} days",
+    "byEmployeeTitle": "Approved days by employee",
+    "byEmployeeDescription": "Total approved leave days taken, ranked highest first."
   },
   "reviews": {
     "unknownUser": "Unknown User",
@@ -355,7 +365,21 @@
     "pdfRemarks": "Concluding Remarks",
     "pdfNoRemarks": "No written remarks.",
     "pdfGeneratedOn": "Generated on {{date}}",
-    "pdfFilenamePrefix": "Performance_Review"
+    "pdfFilenamePrefix": "Performance_Review",
+    "tabOverview": "Overview",
+    "tabScoreTrends": "Score Trends",
+    "tabSelfVsSupervisor": "Self vs. Supervisor",
+    "scoreTrendsTitle": "Average score per employee",
+    "scoreTrendsDescription": "Historical average across every evaluation on record, ranked highest first.",
+    "evaluationCount_one": "{{count}} evaluation",
+    "evaluationCount_other": "{{count}} evaluations",
+    "averageScore": "avg {{score}}",
+    "selfVsSupervisorTitle": "Self-rated vs. supervisor-rated",
+    "selfVsSupervisorDescription": "Each employee's latest self-assessment score compared against their latest supervisor evaluation -- sorted by the biggest gap.",
+    "noSelfVsSupervisorData": "No employee has both a self-assessment and a supervisor evaluation yet.",
+    "selfScoreLabel": "self {{score}}",
+    "supervisorScoreLabel": "supervisor {{score}}",
+    "deltaLabel": "Δ {{delta}}"
   },
   "reportBug": {
     "buttonLabel": "Report a Problem",
@@ -498,7 +522,15 @@
     "punctualityPercent": "{{percent}}% on time",
     "noLeaderboardData": "No completed task data to rank yet.",
     "scoreLabel": "Score",
-    "noTrendData": "No evaluation history yet for this employee."
+    "noTrendData": "No evaluation history yet for this employee.",
+    "tabOverview": "Overview",
+    "tabFullLeaderboard": "Full Leaderboard",
+    "tabEngagementFull": "Full Engagement Signal",
+    "fullLeaderboardTitle": "Everyone, ranked",
+    "fullLeaderboardDescription": "The Top Performers widget only shows the top 5 -- this is the full ranking.",
+    "noEmployeesYet": "No employee data yet.",
+    "engagementFullTitle": "Every employee's engagement score",
+    "engagementFullDescription": "The dashboard widget only shows the 8 lowest scores -- this is everyone with a computed score."
   },
   "attendance": {
     "supervisorTitle": "Outsourcing Staff Tracking Portal",
