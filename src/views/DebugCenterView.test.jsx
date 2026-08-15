@@ -130,10 +130,10 @@ describe('DebugCenterView', () => {
         expect(screen.getByText('Export Diagnostic Report')).not.toBeDisabled();
     });
 
-    it('the connectivity tab shows the reported YOLO/Hugging Face reachability failure', async () => {
+    it('the connectivity tab shows a Hugging Face reachability failure', async () => {
         render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
         await act(async () => { screen.getByText('Run Checks').click(); });
-        expect(screen.getByText('Hugging Face CDN (YOLO face model)')).toBeInTheDocument();
+        expect(screen.getByText('Hugging Face API (general reachability)')).toBeInTheDocument();
         expect(screen.getByText('Unreachable')).toBeInTheDocument();
     });
 

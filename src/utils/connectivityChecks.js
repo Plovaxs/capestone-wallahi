@@ -54,16 +54,26 @@ export const checkSupabaseRealtimeReachable = () => probe('supabase-realtime', (
 );
 
 /**
- * The exact model AttendanceView's YOLO face detector fetches -- see the
- * YOLO timeout/fallback fix in AttendanceView.jsx. Deliberately NOT
+ * General Hugging Face API reachability -- deliberately NOT
+ * Xenova/yolov8n-face (the model AttendanceView's YOLO path used to try).
+ * Verified live that every Xenova-org model now returns 401 "Invalid
+ * username or password" unconditionally -- a permanent access
+ * restriction on Hugging Face's side, not a per-user network condition,
+ * so probing it here would report "unreachable" forever regardless of
+ * this browser's actual connectivity (useless signal), AND would
+ * guarantee the same un-suppressible "Failed to load resource: 401"
+ * browser console line every time a supervisor runs this check.
+ * AttendanceView.jsx no longer attempts that model at all (see
+ * YOLO_KNOWN_BROKEN there) -- this checks a stable, canonical public
+ * model instead, purely as a general "can this browser reach Hugging
+ * Face's infrastructure at all" signal, useful if YOLO acceleration is
+ * ever re-enabled against a working model id. Deliberately NOT
  * `mode: 'no-cors'` -- verified live that Hugging Face's model API sends
- * normal CORS headers (no opaque-response workaround needed), and no-cors
- * would have hidden the real status code (`res.ok` is always false on an
- * opaque response, by spec, even on genuine success), making it
- * impossible to tell "unreachable" apart from "reachable but rejected".
+ * normal CORS headers, and no-cors would make `res.ok` always false (an
+ * opaque response, by spec) even on genuine success.
  */
 export const checkHuggingFaceCdnReachable = () => probe('huggingface-cdn', () =>
-    fetch('https://huggingface.co/api/models/Xenova/yolov8n-face', { method: 'HEAD' })
+    fetch('https://huggingface.co/api/models/bert-base-uncased', { method: 'HEAD' })
 );
 
 /** The local face-api.js model weights every face-scan page (Login, Attendance) depends on -- confirms they're actually being served, not a 404 from a broken deploy/CDN path. */

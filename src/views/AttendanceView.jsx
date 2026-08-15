@@ -122,6 +122,24 @@ const YOLO_MODEL_IDS = {
   medium: 'Xenova/yolov8n-face'
 };
 
+// 🟩 BUG FIX: verified live (not assumed) against Hugging Face's real API --
+// every request to the Xenova org's models, including this exact one,
+// currently returns 401 "Invalid username or password". This is NOT a
+// network/timeout condition (the YOLO_LOAD_TIMEOUT_MS/YOLO_INFERENCE_TIMEOUT_MS
+// fix below still protects against a genuine hang either way) -- it's a
+// permanent, unconditional rejection at the model-hosting level, so
+// retrying it every fresh page load/session just guarantees one wasted
+// network round trip plus a "Failed to load resource: 401" browser
+// console line NOTHING in application code can suppress (Chrome logs
+// failed network responses at the browser layer, before JS ever sees
+// them, regardless of try/catch). detectFaceFromImage's face-api.js
+// fallback already works identically to what Login uses exclusively, so
+// skipping the doomed attempt entirely -- rather than "try once per
+// session, then remember it failed" -- costs nothing. Flip this back to
+// false once Xenova/yolov8n-face (or a replacement model id) is
+// confirmed reachable again.
+const YOLO_KNOWN_BROKEN = true;
+
 const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAttendance, fetchProfile, onlineUserIds = new Set() }) => {
     const { t } = useTranslation();
     // 🟩 PAGE VISIBILITY: the scan loops below run every 500-1200ms doing
@@ -494,7 +512,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         sourceContext.drawImage(imageEl, 0, 0, width, height);
         sourceContext.filter = 'none';
 
-        if (!disableYolo && !dynamicYoloDisableRef.current) {
+        if (!YOLO_KNOWN_BROKEN && !disableYolo && !dynamicYoloDisableRef.current) {
             try {
                 const detector = await withTimeout(ensureYoloFaceDetector(), YOLO_LOAD_TIMEOUT_MS, 'yolo-model-load');
                 const rawDetections = await withTimeout(

@@ -4,7 +4,7 @@ import Card from '../components/Card';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
-import { runAllConnectivityChecks, checkHuggingFaceCdnReachable } from '../utils/connectivityChecks';
+import { runAllConnectivityChecks } from '../utils/connectivityChecks';
 import { clientErrorLogsRepository } from '../data/repositories/clientErrorLogsRepository';
 import { debugDiagnosticRunsRepository } from '../data/repositories/debugDiagnosticRunsRepository';
 import { showUserError } from '../utils/errorHandling';
@@ -183,13 +183,12 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
             return;
         }
 
-        const yoloCheck = await checkHuggingFaceCdnReachable();
-        push({
-            label: t('debugCenter.stepYolo'),
-            ok: yoloCheck.ok,
-            detail: yoloCheck.ok ? undefined : t('debugCenter.yoloUnreachableHint'),
-        });
-
+        // 🟩 Deliberately no YOLO-reachability step here anymore --
+        // AttendanceView.jsx no longer attempts Xenova/yolov8n-face at all
+        // (verified permanently gated, see YOLO_KNOWN_BROKEN there), so
+        // this pipeline test mirrors what actually happens on a real scan:
+        // camera -> face-api.js models -> detection. General Hugging Face
+        // reachability is still checked on the Connectivity tab.
         const video = videoRef.current;
         const deadline = Date.now() + 4000;
         while (video && video.readyState < 2 && Date.now() < deadline) {

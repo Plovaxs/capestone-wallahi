@@ -240,6 +240,7 @@ vi.mock('../supabaseClient', () => ({
 
 import AttendanceView from './AttendanceView';
 import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
+import { pipeline as yoloPipeline } from '@huggingface/transformers';
 
 // ============================================================
 // DOM/BROWSER ENVIRONMENT STUBS
@@ -413,26 +414,28 @@ describe('AttendanceView', () => {
         });
     });
 
-    describe('Part 1 regression: a hanging YOLO fetch does not freeze detection forever', () => {
-        it('times out the YOLO load and falls back to face-api, still completing a scan', async () => {
-            // 🟩 This is the fix for the reported "face box / eye box never
-            // appears on Attendance, but Login works fine" bug: Login never
-            // uses YOLO at all, so a hung fetch to Hugging Face's CDN can
-            // only ever freeze detection here. disableYolo=false so this
-            // test actually exercises the YOLO branch (every other test in
-            // this file deliberately keeps it disabled).
+    describe('Part 1 regression: YOLO (Xenova/yolov8n-face) is never attempted -- confirmed permanently gated on Hugging Face\'s side', () => {
+        it('never calls the YOLO pipeline, and still completes a scan via face-api alone', async () => {
+            // 🟩 Verified live against the real Hugging Face API: every
+            // request to Xenova/yolov8n-face (including this exact model)
+            // returns 401 "Invalid username or password", unconditionally --
+            // a permanent access restriction, not a flaky network condition.
+            // AttendanceView.jsx's YOLO_KNOWN_BROKEN flag skips the attempt
+            // entirely now (see that file), rather than trying-and-timing-out
+            // on every fresh session -- which would have also guaranteed an
+            // un-suppressible "Failed to load resource: 401" browser console
+            // line every time, since Chrome logs failed network responses at
+            // the browser layer regardless of how the JS promise is handled.
+            // disableYolo=false here specifically to prove YOLO_KNOWN_BROKEN
+            // -- not the network-adaptive hook -- is what's actually gating
+            // it (every other test in this file leaves disableYolo=true).
             globalThis.__mockDisableYolo = false;
             await renderAndFlushMount(employeeProfile);
             expect(getUserMediaMock).toHaveBeenCalled();
 
-            // First scan tick (1800ms) attempts YOLO; the mocked pipeline()
-            // never resolves, so withTimeout's internal race needs the full
-            // YOLO_LOAD_TIMEOUT_MS (8000ms) before rejecting and falling
-            // through to face-api -- which, per the mocks, detects a face
-            // that matches, blinks, and moves naturally, completing the
-            // clock-in within that same tick.
-            await advanceByMs(1800 + 8000 + 1000);
+            await advanceScanTicks(1);
             expect(performClockIn).toHaveBeenCalledTimes(1);
+            expect(yoloPipeline).not.toHaveBeenCalled();
         });
     });
 
