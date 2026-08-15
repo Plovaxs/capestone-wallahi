@@ -735,7 +735,17 @@
     "reEnrollSuggestion": "🔄 Kecocokan wajah kamu belakangan ini semakin kurang meyakinkan — pertimbangkan untuk mendaftar ulang wajah demi akurasi yang lebih baik.",
     "statusNotRecognized": "Wajah tidak dikenali",
     "statusScanning": "Memindai wajah...",
-    "statusScanRepeatedlyFailing": "Pemindaian wajah terus gagal — reload halaman, atau gunakan clock-in manual jika tersedia."
+    "statusScanRepeatedlyFailing": "Pemindaian wajah terus gagal — reload halaman, atau gunakan clock-in manual jika tersedia.",
+    "tabPunctualityBreakdown": "Rincian Ketepatan Waktu",
+    "tabRecentLate": "Catatan Terlambat Terbaru",
+    "punctualityBreakdownTitle": "Tingkat tepat waktu per karyawan",
+    "punctualityBreakdownDescription": "Skor ketepatan waktu dari seluruh riwayat setiap karyawan, bukan cuma snapshot hari ini.",
+    "noEmployeesYet": "Belum ada data karyawan.",
+    "noRecordsYet": "Belum ada catatan",
+    "recentLateTitle": "Absen terlambat terbaru",
+    "recentLateDescription": "20 catatan berstatus Terlambat terakhir dari seluruh tim, terbaru duluan.",
+    "noLateRecords": "Tidak ada catatan terlambat.",
+    "unknownEmployee": "Karyawan tidak diketahui"
   },
   "tasks": {
     "initializing": "Menginisialisasi Sistem Tugas...",

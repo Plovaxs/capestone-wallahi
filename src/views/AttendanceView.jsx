@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import ExportButton from '../components/ExportButton';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import ModuleTabBar from '../components/ModuleTabBar';
 import EdgeDiagnosticsPanel from '../components/EdgeDiagnosticsPanel';
 import { generateTablePdf } from '../utils/generateTablePdf';
 import SortableTh from '../components/SortableTh';
@@ -407,6 +408,38 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // defeating myHistory/filteredMyHistory's own memoization below.
     const attendanceRows = useMemo(() => (Array.isArray(attendance) ? attendance : []), [attendance]);
     const todayRecord = attendanceRows.find(record => record.employee_id === userProfile.id && record.date === today);
+
+    // 🟩 NEW SUBMODULES (supervisor-only, purely additive): this file is
+    // the most sensitive one in the app -- live camera + face-recognition
+    // state machine -- so unlike every other view's "wrap existing content
+    // in an Overview tab" treatment, NOTHING above this comment (the
+    // clock-in/scan flow, camera refs, enrollment wizard, roster table)
+    // was touched or gated behind a tab at all. These two panels are
+    // appended as a brand new, fully independent section at the very
+    // bottom of the page (see the end of the JSX return below), reusing
+    // only the already-fetched `attendanceRows`/`allUsers` props -- no new
+    // state feeds into the scan loop, and no existing state feeds into
+    // these.
+    const [insightsTab, setInsightsTab] = useState('punctuality');
+    const teamPunctuality = useMemo(() => {
+        if (userProfile.role !== 'supervisor') return [];
+        return allUsers
+            .filter((u) => u.role === 'employee')
+            .map((emp) => {
+                const rows = attendanceRows.filter((a) => a.employee_id === emp.id);
+                return { id: emp.id, name: emp.name, score: PunctualityPolicy.calculate(rows), recordCount: rows.length };
+            })
+            .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+    }, [userProfile.role, allUsers, attendanceRows]);
+    const recentLateRecords = useMemo(() => {
+        if (userProfile.role !== 'supervisor') return [];
+        const usersById = new Map(allUsers.map((u) => [u.id, u]));
+        return attendanceRows
+            .filter((a) => a.status === 'Late')
+            .sort((a, b) => new Date(b.date) - new Date(a.date))
+            .slice(0, 20)
+            .map((a) => ({ ...a, name: usersById.get(a.employee_id)?.name || t('attendance.unknownEmployee') }));
+    }, [userProfile.role, allUsers, attendanceRows, t]);
 
 
     const webcamVideoRef = useRef(null);
@@ -2863,6 +2896,78 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     </div>
                 </div>
             </Modal>
+
+            {/* 🟩 NEW SUBMODULES -- see the teamPunctuality/recentLateRecords
+                comment near the top of this component for why these are
+                appended here as a fully separate, additive-only section
+                instead of following the "wrap everything in an Overview
+                tab" pattern every other view in this round used. */}
+            {userProfile.role === 'supervisor' && (
+                <div className="mt-8 space-y-4">
+                    <ModuleTabBar
+                        tabs={[
+                            { id: 'punctuality', label: t('attendance.tabPunctualityBreakdown'), icon: Icons.Trophy },
+                            { id: 'recentLate', label: t('attendance.tabRecentLate'), icon: Icons.AlertTriangle },
+                        ]}
+                        activeTab={insightsTab}
+                        onChange={setInsightsTab}
+                    />
+
+                    {insightsTab === 'punctuality' && (
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                            <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('attendance.punctualityBreakdownTitle')}</h3>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('attendance.punctualityBreakdownDescription')}</p>
+                            {teamPunctuality.length === 0 ? (
+                                <EmptyState icon={Icons.Trophy} title={t('attendance.noEmployeesYet')} className="py-6" />
+                            ) : (
+                                <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                                    {teamPunctuality.map((row) => (
+                                        <li key={row.id} className="py-3 flex items-center justify-between gap-4">
+                                            <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                            <span className="flex items-center gap-2">
+                                                {row.score === null ? (
+                                                    <span className="text-[10px] text-gray-400 dark:text-gray-500">{t('attendance.noRecordsYet')}</span>
+                                                ) : (
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${
+                                                        row.score >= 90
+                                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                                                            : row.score >= 70
+                                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+                                                            : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                                                    }`}>
+                                                        {row.score}%
+                                                    </span>
+                                                )}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+
+                    {insightsTab === 'recentLate' && (
+                        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                            <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('attendance.recentLateTitle')}</h3>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('attendance.recentLateDescription')}</p>
+                            {recentLateRecords.length === 0 ? (
+                                <EmptyState icon={Icons.ShieldCheck} title={t('attendance.noLateRecords')} className="py-6" />
+                            ) : (
+                                <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                                    {recentLateRecords.map((record) => (
+                                        <li key={record.id} className="py-3 flex items-center justify-between gap-4">
+                                            <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{record.name}</span>
+                                            <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300 shrink-0">
+                                                {record.date}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

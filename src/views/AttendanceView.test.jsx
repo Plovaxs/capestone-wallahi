@@ -624,4 +624,47 @@ describe('AttendanceView', () => {
             expect(performClockOut).toHaveBeenCalledTimes(1);
         });
     });
+
+    describe('New submodules (supervisor-only, additive section at the bottom of the page)', () => {
+        const employeeA = { id: 'emp-a', role: 'employee', name: 'Budi' };
+        const employeeB = { id: 'emp-b', role: 'employee', name: 'Sari' };
+
+        it('the Punctuality Breakdown tab scores every employee from their full attendance history', async () => {
+            const attendanceRows = [
+                { id: 'r1', employee_id: 'emp-a', date: '2026-08-10', status: 'Present' },
+                { id: 'r2', employee_id: 'emp-a', date: '2026-08-11', status: 'Late' },
+                { id: 'r3', employee_id: 'emp-b', date: '2026-08-10', status: 'Present' },
+            ];
+            await renderAndFlushMount(supervisorProfile, {
+                allUsers: [supervisorProfile, employeeA, employeeB],
+                attendance: attendanceRows,
+            });
+
+            // Punctuality Breakdown is the default insights tab -- both
+            // names also appear in the (unrelated) roster table above it,
+            // so just confirm they're present and the computed score shows.
+            expect(screen.getAllByText('Budi').length).toBeGreaterThan(0);
+            expect(screen.getAllByText('Sari').length).toBeGreaterThan(0);
+            expect(screen.getByText('100%')).toBeInTheDocument();
+        });
+
+        it('the Recent Late Records tab lists Late-status rows across the whole team', async () => {
+            const attendanceRows = [
+                { id: 'r1', employee_id: 'emp-a', date: '2026-08-10', status: 'Present' },
+                { id: 'r2', employee_id: 'emp-a', date: '2026-08-11', status: 'Late' },
+                { id: 'r3', employee_id: 'emp-b', date: '2026-08-12', status: 'Late' },
+            ];
+            await renderAndFlushMount(supervisorProfile, {
+                allUsers: [supervisorProfile, employeeA, employeeB],
+                attendance: attendanceRows,
+            });
+
+            await act(async () => { screen.getByText('Recent Late Records').click(); });
+
+            expect(screen.getByText('2026-08-11')).toBeInTheDocument();
+            expect(screen.getByText('2026-08-12')).toBeInTheDocument();
+            // The one Present-status row must not show up in this list.
+            expect(screen.queryByText('2026-08-10')).not.toBeInTheDocument();
+        });
+    });
 });

@@ -740,7 +740,17 @@
     "reEnrollSuggestion": "🔄 Your face match has been getting less confident lately — consider re-enrolling your face for better accuracy.",
     "statusNotRecognized": "Face not recognized",
     "statusScanning": "Scanning for frontal matrix...",
-    "statusScanRepeatedlyFailing": "Face scanning keeps failing — reload the page, or use the manual clock-in if available."
+    "statusScanRepeatedlyFailing": "Face scanning keeps failing — reload the page, or use the manual clock-in if available.",
+    "tabPunctualityBreakdown": "Punctuality Breakdown",
+    "tabRecentLate": "Recent Late Records",
+    "punctualityBreakdownTitle": "On-time rate per employee",
+    "punctualityBreakdownDescription": "Full-history punctuality score for every employee, not just today's snapshot.",
+    "noEmployeesYet": "No employee data yet.",
+    "noRecordsYet": "No records yet",
+    "recentLateTitle": "Most recent late clock-ins",
+    "recentLateDescription": "The last 20 Late-status records across the whole team, newest first.",
+    "noLateRecords": "No late records on file.",
+    "unknownEmployee": "Unknown employee"
   },
   "tasks": {
     "initializing": "Initializing Task System...",
