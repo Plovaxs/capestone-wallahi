@@ -257,8 +257,22 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                     // "found someone but not confidently enough" (still
                     // useful for testing/tuning), and "nobody enrolled at
                     // all" here.
+                    // 🟩 BUG FIX (live crash): euclidean_distance_jsonb
+                    // returns SQL NULL (-> JS null here) when a profile's
+                    // stored template array doesn't match the live
+                    // descriptor's length -- e.g. corrupted/legacy
+                    // enrollment data. `null <= threshold` is TRUE in JS
+                    // (null coerces to 0 in relational comparisons), which
+                    // used to misclassify a null distance as a confident
+                    // "identified" match and then crash on
+                    // `identity.distance.toFixed(3)` in the render below.
+                    // Every distance is validated as a finite number before
+                    // it's trusted for comparison or display.
+                    const hasValidDistance = typeof best?.distance === 'number' && Number.isFinite(best.distance);
                     if (!best) {
                         setIdentity({ status: 'noEnrollments' });
+                    } else if (!hasValidDistance) {
+                        setIdentity({ status: 'error', detail: 'invalid-distance' });
                     } else if (best.distance <= best.threshold) {
                         setIdentity({ status: 'identified', name: best.profile_name, role: best.profile_role, distance: best.distance });
                     } else {
@@ -450,7 +464,7 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                             <span className="text-emerald-600 dark:text-emerald-400 font-bold">
                                 {t('debugCenter.identityIdentifiedAs', { name: identity.name, role: formatRole(identity.role) })}
                                 {' '}
-                                <span className="text-gray-400 dark:text-gray-500 font-normal">({t('debugCenter.identityDistanceLabel', { distance: identity.distance.toFixed(3) })})</span>
+                                <span className="text-gray-400 dark:text-gray-500 font-normal">({t('debugCenter.identityDistanceLabel', { distance: identity.distance?.toFixed?.(3) ?? '?' })})</span>
                             </span>
                         )}
                         {identity.status === 'closeGuess' && (
@@ -458,7 +472,7 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                                 {t('debugCenter.identityCloseGuess', { name: identity.name, role: formatRole(identity.role) })}
                                 {' '}
                                 <span className="text-gray-400 dark:text-gray-500 font-normal">
-                                    ({t('debugCenter.identityDistanceLabel', { distance: identity.distance.toFixed(3) })}, {t('debugCenter.identityAboveThreshold', { threshold: identity.threshold })})
+                                    ({t('debugCenter.identityDistanceLabel', { distance: identity.distance?.toFixed?.(3) ?? '?' })}, {t('debugCenter.identityAboveThreshold', { threshold: identity.threshold })})
                                 </span>
                             </span>
                         )}

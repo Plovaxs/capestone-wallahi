@@ -289,6 +289,26 @@ describe('DebugCenterView', () => {
             expect(screen.getByText(/Closest guess: Test Supervisor \(Supervisor\)/)).toBeInTheDocument();
         });
 
+        // 🟩 REGRESSION TEST for a real production crash: "Cannot read
+        // properties of null (reading 'toFixed')". The RPC's aggregated
+        // distance can come back as SQL NULL (-> JS null) when a profile's
+        // stored template length doesn't match the live descriptor (e.g.
+        // corrupted/legacy enrollment data) -- `null <= threshold` is TRUE
+        // in JS, which used to misclassify this as a confident "identified"
+        // match and then crash calling .toFixed() on the null distance.
+        it('does not crash and shows an error state when the RPC returns a null distance', async () => {
+            identifyFaceByDescriptorMock.mockResolvedValueOnce([
+                { profile_id: 'broken-1', profile_name: 'Broken Enrollment', profile_role: 'employee', distance: null, threshold: 0.5 },
+            ]);
+
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+
+            expect(screen.getByText('Identity check failed -- see Errors tab for details.')).toBeInTheDocument();
+            expect(screen.queryByText(/Broken Enrollment/)).not.toBeInTheDocument();
+        });
+
         it('shows "nobody enrolled" only when the system has no enrolled faces at all', async () => {
             identifyFaceByDescriptorMock.mockResolvedValueOnce([]);
 
