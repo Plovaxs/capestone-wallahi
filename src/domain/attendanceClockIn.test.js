@@ -50,10 +50,30 @@ describe('performClockIn', () => {
         expect(insertMock).not.toHaveBeenCalled();
     });
 
-    it('does not require GPS/geofence for a supervisor', async () => {
-        const supervisor = { id: 'sup-1', role: 'supervisor' };
+    // 🟩 PART 3 REGRESSION TEST: a supervisor previously bypassed the
+    // location gate unconditionally (role-based exemption). That's been
+    // replaced with the same work_mode-driven gate an employee gets --
+    // "the same location/duty-mode gating rules... the same way it does
+    // for employees" was an explicit requirement. These two tests replace
+    // the old (now-incorrect) "does not require GPS/geofence for a
+    // supervisor" test.
+    it('requires GPS/geofence for a WFO supervisor, same as a WFO employee', async () => {
+        const supervisor = { id: 'sup-1', role: 'supervisor', work_mode: 'WFO' };
+        const result = await performClockIn({ userProfile: supervisor, coords: null, isInRange: false, today: '2026-01-01' });
+        expect(result).toEqual({ success: false, reason: 'gps-waiting' });
+        expect(insertMock).not.toHaveBeenCalled();
+    });
+
+    it('bypasses the geofence for a WFH supervisor, same as a WFH employee', async () => {
+        const supervisor = { id: 'sup-1', role: 'supervisor', work_mode: 'WFH' };
         const result = await performClockIn({ userProfile: supervisor, coords: null, isInRange: false, today: '2026-01-01' });
         expect(result.success).toBe(true);
+    });
+
+    it('treats a supervisor with no work_mode set as WFO (fail-safe default), same as an employee', async () => {
+        const supervisor = { id: 'sup-1', role: 'supervisor' };
+        const result = await performClockIn({ userProfile: supervisor, coords: null, isInRange: false, today: '2026-01-01' });
+        expect(result).toEqual({ success: false, reason: 'gps-waiting' });
     });
 
     it('refuses a second clock-in on the same day (already-clocked-in guard)', async () => {
@@ -113,6 +133,27 @@ describe('performClockIn', () => {
     it('persists the clock-in method/source on the row', async () => {
         await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01', source: 'pin' });
         expect(insertMock).toHaveBeenCalledWith([expect.objectContaining({ clock_method: 'pin' })]);
+    });
+
+    // 🟩 PART 1 REGRESSION TEST: closes the cross-tab/cross-device double
+    // clock-in race the module's own comment already acknowledged as an
+    // open gap -- see migrations/20260812_add_attendance_unique_constraint.sql.
+    // A losing insert now fails with Postgres 23505 (unique violation);
+    // this must be treated as "already clocked in" (the user's attendance
+    // WAS recorded, just by the other attempt), not a scary generic error.
+    it('treats a 23505 unique-constraint violation on insert as already-clocked-in, not a generic db-error', async () => {
+        const uniqueViolation = Object.assign(new Error('duplicate key value violates unique constraint "attendance_employee_date_unique"'), { code: '23505' });
+        insertMock.mockResolvedValue({ error: uniqueViolation });
+        const result = await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01' });
+        expect(result).toEqual({ success: false, reason: 'already-clocked-in' });
+    });
+
+    it('still surfaces a non-23505 insert error as a generic db-error', async () => {
+        const otherError = Object.assign(new Error('connection reset'), { code: '08006' });
+        insertMock.mockResolvedValue({ error: otherError });
+        const result = await performClockIn({ userProfile, coords: { latitude: 1, longitude: 1 }, isInRange: true, today: '2026-01-01' });
+        expect(result.success).toBe(false);
+        expect(result.reason).toBe('db-error');
     });
 });
 

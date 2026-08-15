@@ -37,6 +37,7 @@ import FeatureFlagPanel from './components/FeatureFlagPanel';
 import NetworkStatusBanner from './components/NetworkStatusBanner';
 import MfaChallengeGate from './components/MfaChallengeGate';
 import KeyboardShortcutsPanel from './components/KeyboardShortcutsPanel';
+import ReportBugButton from './components/ReportBugButton';
 import { openShortcutsPanel } from './components/shortcutsPanelOpener';
 
 // 🟩 CODE-SPLITTING: each view (and its dependencies — AttendanceView alone
@@ -63,6 +64,7 @@ const BadgeScannerView = React.lazy(() => import('./views/BadgeScannerView'));
 const TeamView = React.lazy(() => import('./views/TeamView'));
 const DirectMessagesView = React.lazy(() => import('./views/DirectMessagesView'));
 const SecuritySignalsView = React.lazy(() => import('./views/SecuritySignalsView'));
+const DebugCenterView = React.lazy(() => import('./views/DebugCenterView'));
 
 const MainContent = ({ view, userProfile, ...props }) => {
   switch (view) {
@@ -85,6 +87,7 @@ const MainContent = ({ view, userProfile, ...props }) => {
     case 'myTeam': return <TeamView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
     case 'messages': return <DirectMessagesView userProfile={userProfile} allUsers={props.allUsers} />;
     case 'securitySignals': return <SecuritySignalsView userProfile={userProfile} allUsers={props.allUsers} attendance={props.attendance} />;
+    case 'debugCenter': return <DebugCenterView setActiveView={props.setActiveView} userProfile={userProfile} />;
     default: return <DashboardView {...props} userProfile={userProfile} />;
   }
 };
@@ -720,6 +723,7 @@ export default function App() {
         <ConfirmDialogHost />
         <FeatureFlagPanel />
         <KeyboardShortcutsPanel />
+        <ReportBugButton userProfile={userProfile} activeView={activeView} />
         <CommandPalette
           setActiveView={setActiveView}
           userProfile={userProfile}

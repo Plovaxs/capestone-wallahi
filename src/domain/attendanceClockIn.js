@@ -26,7 +26,12 @@ export const WORK_START_TIME = '08:00:00';
  * @param {string} [params.source] - free-text provenance tag stored client-side only (not persisted), e.g. 'face-match' | 'manual' | 'face-login'
  */
 export async function performClockIn({ userProfile, coords, isInRange, today, source = 'manual' }) {
-    const requiresLocationGate = userProfile.role !== 'supervisor';
+    // 🟩 PART 3: previously bypassed for any supervisor regardless of their
+    // assigned duty mode. The requirement is "the same location/duty-mode
+    // gating rules... the same way it does for employees" -- so this is now
+    // driven by work_mode (WFO requires the gate, WFH doesn't) exactly like
+    // an employee's, not by role.
+    const requiresLocationGate = (userProfile.work_mode || 'WFO') === 'WFO';
 
     if (requiresLocationGate && !coords) {
         return { success: false, reason: 'gps-waiting' };
@@ -72,6 +77,25 @@ export async function performClockIn({ userProfile, coords, isInRange, today, so
 
             return { success: true, time, status, source };
         } catch (error) {
+            // 🟩 RACE CLOSED AT THE DB LEVEL: the existence check above closes
+            // most of the cross-tab/cross-device race window, but not all of
+            // it -- see migrations/20260812_add_attendance_unique_constraint.sql
+            // for the unique(employee_id, date) constraint that closes the
+            // rest. If two near-simultaneous attempts both pass the check
+            // above, the LOSING insert now fails with Postgres 23505 (unique
+            // violation) instead of silently creating a duplicate row. That's
+            // not a real failure from the user's perspective -- their
+            // attendance WAS recorded, just by the other attempt -- so it's
+            // treated the same as 'already-clocked-in' rather than shown as
+            // a scary generic error.
+            // attendanceRepository.insert routes through apiClient's
+            // errorTransformMiddleware, which wraps whatever it throws in an
+            // ApiError with the original Postgres error under `.cause` (see
+            // data/pipeline/middlewares.js) -- the 23505 code lives there,
+            // not directly on `error`.
+            if (error?.cause?.code === '23505') {
+                return { success: false, reason: 'already-clocked-in' };
+            }
             return { success: false, reason: 'db-error', error };
         }
     };

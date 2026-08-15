@@ -37,6 +37,7 @@ const Sidebar = ({ userProfile, activeView, setActiveView, isMobileOpen, setIsMo
     { id: 'securitySignals', label: t('nav.securitySignals'), icon: Icons.ShieldCheck, supervisorOnly: true },
     { id: 'fleetHealth', label: t('nav.fleetHealth'), icon: Icons.CpuChip, supervisorOnly: true },
     { id: 'errorMonitor', label: t('nav.errorMonitor'), icon: Icons.AlertTriangle, supervisorOnly: true },
+    { id: 'debugCenter', label: t('nav.debugCenter'), icon: Icons.Bug, supervisorOnly: true },
   ];
 
   const handleNavClick = (id) => {

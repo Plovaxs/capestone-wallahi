@@ -47,6 +47,7 @@ import { useNetworkBatteryAdaptive } from '../hooks/useNetworkBatteryAdaptive';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { getBucket } from '../utils/tokenBucket';
 import Modal from '../components/Modal';
+import { withTimeout } from '../data/pipeline/withTimeout';
 
 // 🟩 LAZY-LOADED HEAVY VISION LIBS: face-api.js and @huggingface/transformers
 // are multi-MB and were previously static imports, so simply navigating to
@@ -134,6 +135,21 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const FACE_MATCH_THRESHOLD = 0.5;
     const YOLO_FACE_THRESHOLD = 0.35;
     const FACE_SCAN_INTERVAL_MS = 1800;
+    // 🟩 BUG FIX: unlike LoginPage.jsx (which never uses YOLO at all --
+    // face-api.js only), this view's YOLO detector fetches its model from
+    // Hugging Face's CDN on first use. That fetch had NO timeout anywhere:
+    // on a network that can't reach huggingface.co at all (corporate
+    // firewall, ISP-level block, regional restriction) -- which the
+    // Network Information API used by useNetworkBatteryAdaptive can't
+    // detect, since general connection speed looks fine -- the `await`
+    // simply never resolves, permanently freezing that tick (and every
+    // tick after it, since faceScanBusyRef never clears) with no face box,
+    // no eye box, and no error message. Reported as "face recognition
+    // seems broken, no box ever shows up" on attendance specifically, not
+    // login -- consistent with this being the one code path login never
+    // touches.
+    const YOLO_LOAD_TIMEOUT_MS = 8000;
+    const YOLO_INFERENCE_TIMEOUT_MS = 3000;
     // 🟩 Built once face-api.js finishes loading (see loadModels) instead of
     // at module/component top-level, which previously required face-api.js
     // to already be present just to construct this options object.
@@ -199,6 +215,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
     const [modelLoadAttempt, setModelLoadAttempt] = useState(0);
     const [faceStatus, setFaceStatus] = useState('idle');
+    // 🟩 BUG FIX (Part 1 guard-ref reset): a failed clock-in sets faceStatus
+    // to 'matched' (a few lines above the guardRef check) and then, on
+    // failure, resets it back to 'scanning' -- but both happen within the
+    // same tick's state-update batch. React bails out of re-rendering (and
+    // therefore never re-runs the scan-loop effect, whose deps include
+    // faceStatus) when a state variable's value at the end of a batch is
+    // identical to its value at the start, which 'scanning' -> 'matched' ->
+    // 'scanning' is. A monotonically-incrementing nonce has no such
+    // collapse-to-no-op risk -- every failed attempt is a guaranteed-distinct
+    // value, so it reliably forces the effect to re-run and recreate the
+    // scan interval regardless of what faceStatus itself settles on.
+    const [clockInRetryNonce, setClockInRetryNonce] = useState(0);
     const [biometricStatus, setBiometricStatus] = useState(t('login.statusInitializing'));
     // 🟩 UI: directional challenge glyph kept separate from biometricStatus
     // text -- see LoginPage.jsx's identical split for the full rationale
@@ -213,7 +241,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // face-api's tiny detector alone -- skipped on a slow/metered
     // connection or draining battery. Employees only; supervisors never
     // run the scan loop this feeds.
-    const { disableYolo, networkBatteryDiagnostics } = useNetworkBatteryAdaptive(!!userProfile && userProfile.role !== 'supervisor');
+    // 🟩 PART 3: supervisors now run the exact same scan pipeline as
+    // employees (see the camera/model-loading effects below), so this no
+    // longer excludes them.
+    const { disableYolo, networkBatteryDiagnostics } = useNetworkBatteryAdaptive(!!userProfile);
     const [faceOverlayBox, setFaceOverlayBox] = useState(null);
     // 🟩 NEW: per-eye boxes + closed/open read for the main clock-in scan
     // loop, so a blink is visibly confirmed on screen instead of only
@@ -364,6 +395,29 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const enrollmentScanBusyRef = useRef(false);
     const latestEnrollmentDetectionRef = useRef(null);
 
+    // ============================================================
+    // PART 2: "TEST BIOMETRIC SCAN" MODE -- lets either role verify the
+    // scan/liveness/match pipeline actually works without creating or
+    // touching any real attendance record. Deliberately uses its OWN
+    // liveness-challenge/box-motion tracker instances (never
+    // livenessChallengeRef/boxMotionTrackerRef, the ones the real clock-in/
+    // out loop above owns) so a test run can never leave residue that
+    // affects a real clock-in/out attempt, and vice versa. Reuses the same
+    // pure detection functions (detectFaceFromImage, matchAgainstTemplates,
+    // evaluatePassiveLiveness, etc.) -- same math, genuinely the same
+    // pipeline -- just an independent orchestration loop that only ever
+    // writes to test-scoped state below, never to attendance/handleClockIn/
+    // handleClockOut/todayRecord/isClockingOut.
+    // ============================================================
+    const [isTestScanning, setIsTestScanning] = useState(false);
+    const [testScanResult, setTestScanResult] = useState(null); // null | { status: 'pass'|'fail', reason: string }
+    const testScanBusyRef = useRef(false);
+    const testLivenessChallengeRef = useRef(null);
+    const testBoxMotionTrackerRef = useRef(null);
+    const testPrevFaceBoxRef = useRef(null);
+    const testScanStartedAtRef = useRef(0);
+    const TEST_SCAN_TIMEOUT_MS = 20000;
+
     // 🟩 MULTI-TEMPLATE: returns an array of Float32Array templates instead
     // of a single descriptor. Handles both a legacy single-angle enrollment
     // (wrapped as a 1-element array) and a multi-angle enrollment (several
@@ -442,8 +496,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
         if (!disableYolo && !dynamicYoloDisableRef.current) {
             try {
-                const detector = await ensureYoloFaceDetector();
-                const rawDetections = await detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD });
+                const detector = await withTimeout(ensureYoloFaceDetector(), YOLO_LOAD_TIMEOUT_MS, 'yolo-model-load');
+                const rawDetections = await withTimeout(
+                    detector(sourceCanvas, { threshold: YOLO_FACE_THRESHOLD }),
+                    YOLO_INFERENCE_TIMEOUT_MS,
+                    'yolo-inference'
+                );
                 // 🟩 CROWDED-SCENE HANDLING: pick the primary (largest + most
                 // centered) face among everyone YOLO found in the frame instead
                 // of blindly taking the highest-confidence box — a bystander
@@ -473,7 +531,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     }
                 }
             } catch (_error) {
-                if (import.meta.env.DEV) console.info('YOLO fallback to face-api full frame.');
+                // 🟩 BUG FIX: previously retried YOLO from scratch on every
+                // single tick even after a hard, persistent failure (e.g. the
+                // Hugging Face CDN being unreachable on this network) --
+                // wasting up to YOLO_LOAD_TIMEOUT_MS + YOLO_INFERENCE_TIMEOUT_MS
+                // of every ~1.8s tick budget forever, instead of ever
+                // settling into the fast, reliable face-api-only path this
+                // view already falls back to below (the same path
+                // LoginPage.jsx uses exclusively). One failure -- timeout or
+                // otherwise -- is now enough to stop retrying YOLO for the
+                // rest of this session, same one-way-downgrade treatment
+                // dynamicYoloDisableRef already gets from sustained latency.
+                dynamicYoloDisableRef.current = true;
+                if (import.meta.env.DEV) console.info('YOLO fallback to face-api full frame.', _error);
             }
         }
 
@@ -672,15 +742,17 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                     setLiveDistance(dist);
 
-                    if (userProfile.role === 'supervisor') {
+                    // 🟩 PART 3: previously bypassed entirely for supervisors
+                    // (`setIsInRange(true)` unconditionally). Per the explicit
+                    // requirement that supervisor clock-in/out use "the same
+                    // location/duty-mode gating rules... the same way it does
+                    // for employees" -- a supervisor's WFO/WFH assignment now
+                    // drives this exactly like an employee's does.
+                    const assignedMode = userProfile.work_mode || 'WFO';
+                    if (assignedMode === 'WFH') {
                         setIsInRange(true);
                     } else {
-                        const assignedMode = userProfile.work_mode || 'WFO';
-                        if (assignedMode === 'WFH') {
-                            setIsInRange(true);
-                        } else {
-                            setIsInRange(geofenceMachine.update(dist).state === 'INSIDE');
-                        }
+                        setIsInRange(geofenceMachine.update(dist).state === 'INSIDE');
                     }
                 } catch (e) {
                     if (import.meta.env.DEV) console.info(e);
@@ -701,7 +773,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // SENSOR FUSION: DEVICE MOTION STABILITY
     // ==========================================
     useEffect(() => {
-        if (!userProfile || userProfile.role === 'supervisor' || typeof DeviceMotionEvent === 'undefined') return;
+        // 🟩 PART 3: no longer excludes supervisors -- same liveness pipeline as employees.
+        if (!userProfile || typeof DeviceMotionEvent === 'undefined') return;
 
         // 🟩 devicemotion can fire as often as ~60Hz on capable hardware —
         // the tracker only needs enough samples to see whether the device is
@@ -748,7 +821,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // AMBIENT LIGHT SENSOR (where available)
     // ==========================================
     useEffect(() => {
-        if (!userProfile || userProfile.role === 'supervisor') return;
+        // 🟩 PART 3: no longer excludes supervisors -- same liveness pipeline as employees.
+        if (!userProfile) return;
 
         // 🟩 Feeds the *same* low-light mitigation path as the pixel-
         // brightness check (item 17) — a real lux reading can catch a dim
@@ -785,7 +859,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // VIDEO LIFE CYCLE CONTROLLER
     // ==========================================
     useEffect(() => {
-        if (!userProfile || userProfile.role === 'supervisor') return;
+        // 🟩 PART 3: supervisors now get the same real camera-based clock-in/
+        // out capability as employees, so this no longer skips them.
+        if (!userProfile) return;
         let isCancelled = false;
         let stream = null;
 
@@ -859,7 +935,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // NEURAL MODEL ENGINE WEIGHT LOADER
     // ==========================================
     useEffect(() => {
-        if (!userProfile || userProfile.role === 'supervisor') return;
+        // 🟩 PART 3: no longer excludes supervisors -- same liveness pipeline as employees.
+        if (!userProfile) return;
 
         async function loadModels() {
             setModelsLoadFailed(false);
@@ -910,7 +987,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // (isClockingOut) -- same scan/match/liveness pipeline, just
         // routed to handleClockOut below instead of handleClockIn.
         const clockingOutNow = isClockingOut && !!todayRecord && !todayRecord.clock_out;
-        if (!isCameraReady || faceStatus !== 'scanning' || !isTabVisible) return;
+        // 🟩 PART 2: mutually exclusive with Test Mode -- both loops read
+        // the same webcam video element, and only one should ever be
+        // driving real clock-in/out state at a time. Test Mode arming this
+        // pauses the real loop; it resumes automatically once the test run
+        // ends (isTestScanning flips back to false, a listed dependency).
+        if (!isCameraReady || faceStatus !== 'scanning' || !isTabVisible || isTestScanning) return;
         if (todayRecord && !clockingOutNow) return;
 
         borderlineStreakRef.current = 0;
@@ -1339,8 +1421,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                                     if (clockingOutNow) {
                                         setBiometricStatus(t('attendance.statusClockOutVerified'));
-                                        await handleClockOut();
+                                        const clockOutOk = await handleClockOut();
                                         setIsClockingOut(false);
+                                        // 🟩 BUG FIX: guardRef was set to `true` above and never reset
+                                        // on failure -- a failed clock-out (network blip, DB error)
+                                        // left clockOutGuardRef permanently `true`, so re-arming
+                                        // clock-out later would silently never trigger again (the
+                                        // `!guardRef.current` check above would just always be false)
+                                        // with zero explanation to the user. handleClockOut already
+                                        // returns a boolean for exactly this purpose.
+                                        if (!clockOutOk) {
+                                            guardRef.current = false;
+                                        }
                                     } else {
                                         setBiometricStatus(t('attendance.statusMatchVerified'));
 
@@ -1352,7 +1444,24 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         }
 
                                         reportDeviceHealthSnapshot();
-                                        await handleClockIn('face-match');
+                                        const clockInOk = await handleClockIn('face-match');
+                                        // 🟩 BUG FIX: same as clock-out above, but this one was worse
+                                        // for clock-in -- `faceStatus` was set to 'matched' a few lines
+                                        // above and `todayRecord` stays undefined on failure, so
+                                        // resetting faceStatus back to 'scanning' alone is NOT reliable:
+                                        // both the 'matched' and 'scanning' writes land in the same
+                                        // state-update batch, and React bails out of re-rendering (so
+                                        // the scan-loop effect never re-runs) when a state variable's
+                                        // net value across a batch is unchanged -- which "scanning" ->
+                                        // "matched" -> "scanning" is, from React's point of view.
+                                        // clockInRetryNonce (a plain incrementing counter, immune to
+                                        // that collapse-to-no-op case) is what actually, reliably
+                                        // forces the effect to re-run and spin up a fresh interval.
+                                        if (!clockInOk) {
+                                            guardRef.current = false;
+                                            setFaceStatus('scanning');
+                                            setClockInRetryNonce((n) => n + 1);
+                                        }
                                     }
                                 }
                             }
@@ -1406,7 +1515,156 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // steadily. userProfile.work_mode is read fresh via closure each tick;
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut]);
+    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut, isTestScanning, clockInRetryNonce]);
+
+    // ==========================================
+    // PART 2: TEST BIOMETRIC SCAN LOOP
+    // Independent orchestration of the SAME detection functions the real
+    // clock-in/out loop above uses (detectFaceFromImage, matchAgainstTemplates,
+    // evaluatePassiveLiveness, calculateBoxShiftRatio) -- genuinely the same
+    // pipeline, not a mock -- but with its own liveness-challenge/box-motion
+    // tracker instances and NO call anywhere in this effect to performClockIn,
+    // performClockOut, handleClockIn, handleClockOut, or any repository/
+    // notification/webhook. Concludes with a pass/fail + reason instead of
+    // running forever, bounded by TEST_SCAN_TIMEOUT_MS.
+    // ==========================================
+    useEffect(() => {
+        if (!isTestScanning || !isCameraReady || !isTabVisible) return;
+
+        testScanStartedAtRef.current = Date.now();
+        let lastBlockReason = 'no-face';
+
+        const timer = setInterval(async () => {
+            if (testScanBusyRef.current || !webcamVideoRef.current) return;
+            testScanBusyRef.current = true;
+
+            try {
+                if (Date.now() - testScanStartedAtRef.current > TEST_SCAN_TIMEOUT_MS) {
+                    clearInterval(timer);
+                    setTestScanResult({ status: 'fail', reason: lastBlockReason });
+                    setIsTestScanning(false);
+                    return;
+                }
+
+                const liveDet = await detectFaceFromImage(webcamVideoRef.current);
+                if (!liveDet || !liveDet.box) {
+                    lastBlockReason = 'no-face';
+                    return;
+                }
+
+                const imageWidth = webcamVideoRef.current.videoWidth;
+                const imageHeight = webcamVideoRef.current.videoHeight;
+                const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
+                const singleFace = checkSingleFace(liveDet.faceCount ?? 1, liveDet.isAmbiguous);
+                const occlusion = checkOcclusion(liveDet.detection?.score);
+                if (!singleFace.ok || !framing.ok || !occlusion.ok) {
+                    lastBlockReason = 'poor-quality';
+                    return;
+                }
+
+                testBoxMotionTrackerRef.current.addSample(calculateBoxShiftRatio(testPrevFaceBoxRef.current, liveDet.box));
+                testPrevFaceBoxRef.current = liveDet.box;
+
+                if (!referenceDescriptorRef.current || referenceDescriptorRef.current.length === 0) {
+                    lastBlockReason = 'no-enrolled-face';
+                    return;
+                }
+
+                const { distance: dist } = matchAgainstTemplates(liveDet.descriptor, referenceDescriptorRef.current, faceapiRef.current.euclideanDistance);
+                const adaptiveThreshold = getAdaptiveThreshold(userProfile.id, FACE_MATCH_THRESHOLD);
+                if (classifyMatch(dist, adaptiveThreshold) === 'no-match') {
+                    lastBlockReason = 'no-match';
+                    return;
+                }
+
+                if (testLivenessChallengeRef.current.isExpired()) {
+                    testLivenessChallengeRef.current.reset();
+                }
+                const challengeConfirmed = testLivenessChallengeRef.current.registerFrame(liveDet.landmarks);
+                if (!challengeConfirmed) {
+                    lastBlockReason = 'no-blink';
+                    return;
+                }
+
+                // 🟩 Passive fusion vote reuses the SAME rolling trackers the
+                // real loop feeds (motionTrackerRef/microMotionTrackerRef/
+                // latestColorLivenessRef/pulseDetectorRef) -- these are pure
+                // signal accumulators with no attendance side effects, safe
+                // to share; only the ACTIVE challenge/box-motion state that
+                // directly gates a real clock-in stays test-scoped above.
+                let ctx = null;
+                try { ctx = liveDet.sourceCanvas?.getContext('2d'); } catch { /* tainted canvas -- skip passive read */ }
+                if (ctx) {
+                    const marginX = Math.round(liveDet.box.width * 0.15);
+                    const marginY = Math.round(liveDet.box.height * 0.15);
+                    const borderRegion = ctx.getImageData(
+                        Math.max(0, liveDet.box.x - marginX),
+                        Math.max(0, liveDet.box.y - marginY),
+                        liveDet.box.width + marginX * 2,
+                        liveDet.box.height + marginY * 2
+                    );
+                    const deviceMotionStats = motionTrackerRef.current.getStats();
+                    const microMotionStats = microMotionTrackerRef.current.getStats();
+                    const pulseStats = pulseDetectorRef.current.getStats();
+                    const livenessSuspicious = evaluatePassiveLiveness({
+                        borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
+                        deviceFlat: deviceMotionStats.ready ? deviceMotionStats.isSuspiciouslyFlat : null,
+                        pixelFlat: microMotionStats.ready ? microMotionStats.isSuspiciouslyFlat : null,
+                        colorSuspicious: latestColorLivenessRef.current.suspicious,
+                        textureFlat: checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
+                        deviceEdgeSuspicious: checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
+                        handSuspicious: false,
+                        pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
+                    }).suspicious;
+                    if (livenessSuspicious) {
+                        lastBlockReason = 'liveness-suspicious';
+                        testLivenessChallengeRef.current.reset();
+                        return;
+                    }
+                }
+
+                const motionStats = testBoxMotionTrackerRef.current.getStats();
+                if (!motionStats.ready || !motionStats.hasNaturalMovement || motionStats.isErratic) {
+                    lastBlockReason = 'no-motion';
+                    return;
+                }
+
+                clearInterval(timer);
+                setTestScanResult({ status: 'pass', reason: null });
+                setIsTestScanning(false);
+            } catch (err) {
+                console.error('[attendance] test scan tick failed:', err);
+            } finally {
+                testScanBusyRef.current = false;
+            }
+        }, FACE_SCAN_INTERVAL_MS);
+
+        return () => clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isTestScanning, isCameraReady, isTabVisible]);
+
+    const handleStartTestScan = () => {
+        if (isTestScanning || isClockingOut) return;
+        if (cameraError) {
+            setTestScanResult({ status: 'fail', reason: 'camera-error' });
+            return;
+        }
+        if (!referenceDescriptorRef.current || referenceDescriptorRef.current.length === 0) {
+            setTestScanResult({ status: 'fail', reason: 'no-enrolled-face' });
+            return;
+        }
+        testLivenessChallengeRef.current = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        testBoxMotionTrackerRef.current = createBoxMotionTracker();
+        testPrevFaceBoxRef.current = null;
+        testScanBusyRef.current = false;
+        setTestScanResult(null);
+        setIsTestScanning(true);
+    };
+
+    const handleCancelTestScan = () => {
+        setIsTestScanning(false);
+        setTestScanResult(null);
+    };
 
     // Keeps latestFaceBoxRef in sync with the box the main scan loop above
     // (or the enrollment loop below) just computed, so the fast pulse
@@ -1423,10 +1681,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // small, already-known face-box crop (no face detection, no matching)
     // so it stays cheap enough to run continuously. Skipped on constrained
     // devices (same disableYolo signal the main loop already uses to shed
-    // load) and for supervisors (who never run the scan loop at all).
+    // load). 🟩 PART 3: no longer skipped for supervisors -- they now run
+    // the same scan loop employees do.
     // ==========================================
     useEffect(() => {
-        if (!isCameraReady || !isTabVisible || disableYolo || userProfile.role === 'supervisor') return;
+        if (!isCameraReady || !isTabVisible || disableYolo) return;
 
         const PULSE_SAMPLE_INTERVAL_MS = 50; // ~20Hz -- well above the Nyquist rate for a <=3.5Hz (210 BPM) signal
         const timer = setInterval(() => {
@@ -1647,7 +1906,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             if (!isValid) { toast.error(t('attendance.pinIncorrect')); return; }
 
             if (!todayRecord) {
-                const requiresLocationGate = userProfile.role !== 'supervisor' && (userProfile.work_mode || 'WFO') === 'WFO';
+                // 🟩 PART 3: no longer exempts supervisors -- same work_mode-driven gate as employees.
+                const requiresLocationGate = (userProfile.work_mode || 'WFO') === 'WFO';
                 if (requiresLocationGate && !isInRange) { toast.error(t('attendance.geofenceRejection')); return; }
                 const result = await performClockIn({ userProfile, coords: currentCoords, isInRange, today, source: 'pin' });
                 if (!result.success) {
@@ -1921,7 +2181,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 )}
             </div>
 
-            {userProfile.role === 'supervisor' ? (
+            {/* 🟩 PART 3: this used to be an exclusive ternary -- supervisors
+                got ONLY the roster/monitoring view below, employees got ONLY
+                the clock-in/out panel further down. Now additive: a
+                supervisor gets BOTH (roster first, then their own clock-in/
+                out panel using the exact same JSX employees already use) --
+                see the closing `)}`/unconditional block below instead of the
+                old `) : (`. The monitoring view's own content is completely
+                unchanged, just no longer mutually exclusive with the
+                clock-in panel. */}
+            {userProfile.role === 'supervisor' && (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         <div className="bg-white dark:bg-slate-800/40 border border-gray-200 dark:border-slate-700/50 rounded-2xl p-5 shadow-xl backdrop-blur-md">
@@ -2062,7 +2331,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         </div>
                     </div>
                 </div>
-            ) : (
+            )}
+            {(
                 <>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-bold text-gray-500 dark:text-slate-400 text-xs tracking-wider">
                         <div className="bg-gradient-to-br from-blue-600 to-indigo-800 rounded-2xl p-5 text-white shadow-xl">
@@ -2127,7 +2397,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         livenessChallengeRef.current.reset();
                                         setIsClockingOut(true);
                                     }}
-                                    disabled={isLoading || !isCameraReady}
+                                    disabled={isLoading || !isCameraReady || isTestScanning}
                                     className="w-full md:w-auto px-8 py-3 rounded-xl font-black text-white bg-red-600 hover:bg-red-500 transition-all shadow-md hover:-translate-y-0.5 uppercase text-xs tracking-widest disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                                 >
                                     {t('attendance.clockOutShift')}
@@ -2167,6 +2437,58 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                          </div>
                     </div>
 
+                    {/* 🟩 PART 2: TEST BIOMETRIC SCAN -- deliberately styled in
+                        purple/indigo (distinct from the yellow "clock in" and
+                        red "clock out" buttons above) and clearly labeled, so
+                        nobody mistakes this for actually clocking in/out.
+                        Available to both roles; never calls performClockIn/
+                        performClockOut/handleClockIn/handleClockOut -- see
+                        the dedicated test-scan effect above. */}
+                    <div className="bg-indigo-50 dark:bg-indigo-950/20 rounded-2xl border-2 border-dashed border-indigo-300 dark:border-indigo-800 p-5">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-indigo-600 text-white">{t('attendance.testModeBadge')}</span>
+                                    <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-200">{t('attendance.testModeTitle')}</h3>
+                                </div>
+                                <p className="text-[11px] text-indigo-700/80 dark:text-indigo-300/70 mt-1 max-w-md">{t('attendance.testModeDescription')}</p>
+                            </div>
+                            {!isTestScanning ? (
+                                <button
+                                    type="button"
+                                    onClick={handleStartTestScan}
+                                    disabled={isClockingOut || !isCameraReady}
+                                    className="shrink-0 px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                                >
+                                    {t('attendance.testModeStart')}
+                                </button>
+                            ) : (
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-widest animate-pulse">{t('attendance.testModeScanning')}</span>
+                                    <button
+                                        type="button"
+                                        onClick={handleCancelTestScan}
+                                        className="px-3 py-2 rounded-lg border border-indigo-300 dark:border-indigo-700 text-[10px] font-bold text-indigo-600 dark:text-indigo-300 uppercase tracking-widest hover:bg-indigo-100 dark:hover:bg-indigo-900/40"
+                                    >
+                                        {t('attendance.cancel')}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        {testScanResult && (
+                            <div className={`mt-4 p-3 rounded-xl flex items-start gap-3 text-xs font-bold ${testScanResult.status === 'pass' ? 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-950/40 text-red-800 dark:text-red-300'}`}>
+                                <span className="text-base leading-none" aria-hidden="true">{testScanResult.status === 'pass' ? '✅' : '❌'}</span>
+                                <div>
+                                    <p>{testScanResult.status === 'pass' ? t('attendance.testModePassTitle') : t('attendance.testModeFailTitle')}</p>
+                                    {testScanResult.reason && (
+                                        <p className="font-medium mt-0.5 opacity-90">{t(`attendance.testModeReason_${testScanResult.reason.replace(/-/g, '_')}`)}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <div className="bg-white dark:bg-slate-800/40 rounded-2xl border border-gray-200 dark:border-slate-700/50 shadow-xl overflow-hidden backdrop-blur-md">
                         <div className="px-5 py-4 border-b border-gray-200 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/20">
                             <h3 className="text-sm font-bold text-gray-900 dark:text-white">{t('attendance.liveVerificationGate')}</h3>
@@ -2183,6 +2505,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     className="absolute inset-0 w-full h-full object-cover"
                                     style={{ transform: 'scaleX(-1)' }}
                                 />
+
+                                {/* 🟩 PART 2: visible on the video feed itself (not just the panel
+                                    above) so it's unmistakable in a screen-share/screenshot too --
+                                    a corner banner, not a full block, since the whole point of Test
+                                    Mode is watching your own scan happen. */}
+                                {isTestScanning && (
+                                    <div className="absolute top-2 left-2 z-20 px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg animate-pulse">
+                                        {t('attendance.testModeBadge')}
+                                    </div>
+                                )}
 
                                 {/* 🟩 ANTI-AUTOMATION: a WebDriver-controlled session gets a clear,
                                     specific block instead of a stuck camera prompt -- manual clock-in
