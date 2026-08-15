@@ -6,6 +6,7 @@ import { showUserError } from '../utils/errorHandling';
 import { supabase } from '../supabaseClient';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 const URGENCY_STYLES = {
     expired: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-900/50',
@@ -26,6 +27,7 @@ const URGENCY_STYLES = {
  */
 const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
     const { t } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
     const employeeUsers = useMemo(() => allUsers.filter((u) => u.role === 'employee'), [allUsers]);
     const entries = useMemo(() => analyzeContractExpiry(employeeUsers), [employeeUsers]);
     const [generatingId, setGeneratingId] = useState(null);
@@ -93,6 +95,46 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
         return t('contractExpiry.expiresInDays', { days: entry.daysRemaining });
     };
 
+    // 🟩 NEW SUBMODULE: Timeline -- the overview list is already sorted
+    // soonest-first, but flat; this groups the SAME `entries` by
+    // expiry month so a supervisor can see the shape of upcoming
+    // renewals/offboarding at a glance (e.g. "6 contracts all end in
+    // October") instead of scrolling a long flat list.
+    const timelineGroups = useMemo(() => {
+        const byMonth = new Map();
+        entries.forEach((entry) => {
+            const end = new Date(entry.contract_end_date);
+            const key = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}`;
+            if (!byMonth.has(key)) byMonth.set(key, []);
+            byMonth.get(key).push(entry);
+        });
+        return Array.from(byMonth.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, monthEntries]) => {
+                const [year, month] = key.split('-').map(Number);
+                return {
+                    key,
+                    label: new Date(year, month - 1, 1).toLocaleDateString(undefined, { year: 'numeric', month: 'long' }),
+                    entries: monthEntries,
+                };
+            });
+    }, [entries]);
+
+    // 🟩 NEW SUBMODULE: By Department -- how many contracts in each
+    // urgency tier per department, reusing the `department` field already
+    // present on every entry (analyzeContractExpiry spreads the original
+    // employee object). Surfaces whether expiring contracts cluster in one
+    // department rather than being spread evenly.
+    const departmentStats = useMemo(() => {
+        const byDept = new Map();
+        entries.forEach((entry) => {
+            const dept = entry.department || t('dashboard.notSet');
+            if (!byDept.has(dept)) byDept.set(dept, { department: dept, expired: 0, urgent: 0, warning: 0, ok: 0 });
+            byDept.get(dept)[entry.urgency] += 1;
+        });
+        return Array.from(byDept.values()).sort((a, b) => (b.expired + b.urgent) - (a.expired + a.urgent));
+    }, [entries, t]);
+
     if (userProfile?.role !== 'supervisor') {
         return (
             <div className="p-8 text-center text-sm text-gray-400 dark:text-gray-500">
@@ -101,6 +143,23 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
         );
     }
 
+    const tabs = [
+        { id: 'overview', label: t('contractExpiry.tabOverview'), icon: Icons.FileClock },
+        { id: 'timeline', label: t('contractExpiry.tabTimeline'), icon: Icons.CalendarDays },
+        { id: 'byDepartment', label: t('contractExpiry.tabByDepartment'), icon: Icons.UsersGroup },
+    ];
+
+    const renderCertificateButton = (entry) => (
+        <button
+            type="button"
+            onClick={() => handleGenerateCertificate(entry)}
+            disabled={generatingId === entry.id}
+            className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 underline disabled:opacity-40"
+        >
+            {generatingId === entry.id ? t('contractExpiry.certificateGenerating') : t('contractExpiry.certificateGenerate')}
+        </button>
+    );
+
     return (
         <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
             <div>
@@ -108,59 +167,123 @@ const ContractExpiryView = ({ userProfile, allUsers = [] }) => {
                 <p className="text-sm text-gray-500 dark:text-gray-400">{t('contractExpiry.subtitle')}</p>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statExpired')}</p>
-                    <p className={`text-2xl font-black ${stats.expired > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'}`}>{stats.expired}</p>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statUrgent')}</p>
-                    <p className={`text-2xl font-black ${stats.urgent > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-800 dark:text-gray-100'}`}>{stats.urgent}</p>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statWarning')}</p>
-                    <p className="text-2xl font-black text-gray-800 dark:text-gray-100">{stats.warning}</p>
-                </div>
-                <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statOk')}</p>
-                    <p className="text-2xl font-black text-gray-800 dark:text-gray-100">{stats.ok}</p>
-                </div>
-            </div>
+            <ModuleTabBar tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
-            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 overflow-hidden">
-                <div className="p-5 pb-3">
-                    <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('contractExpiry.listTitle')}</h2>
-                </div>
-                {entries.length === 0 ? (
-                    <EmptyState icon={Icons.FileClock} title={t('contractExpiry.noContracts')} />
-                ) : (
-                    <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
-                        {entries.map((entry) => (
-                            <div key={entry.id} className="p-4 flex items-center justify-between gap-4">
-                                <div className="min-w-0">
-                                    <p className="text-xs font-bold text-gray-800 dark:text-gray-100">{entry.name}</p>
-                                    <p className="text-[10px] text-gray-400 dark:text-gray-500">
-                                        {entry.position || t('dashboard.notSet')} &middot; {entry.department || t('dashboard.notSet')} &middot; {new Date(entry.contract_end_date).toLocaleDateString('en-GB')}
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${URGENCY_STYLES[entry.urgency]}`}>
-                                        {describeDays(entry)}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleGenerateCertificate(entry)}
-                                        disabled={generatingId === entry.id}
-                                        className="text-[10px] font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400 underline disabled:opacity-40"
-                                    >
-                                        {generatingId === entry.id ? t('contractExpiry.certificateGenerating') : t('contractExpiry.certificateGenerate')}
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
+            {activeTab === 'overview' && (
+                <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statExpired')}</p>
+                            <p className={`text-2xl font-black ${stats.expired > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-800 dark:text-gray-100'}`}>{stats.expired}</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statUrgent')}</p>
+                            <p className={`text-2xl font-black ${stats.urgent > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-800 dark:text-gray-100'}`}>{stats.urgent}</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statWarning')}</p>
+                            <p className="text-2xl font-black text-gray-800 dark:text-gray-100">{stats.warning}</p>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">{t('contractExpiry.statOk')}</p>
+                            <p className="text-2xl font-black text-gray-800 dark:text-gray-100">{stats.ok}</p>
+                        </div>
                     </div>
-                )}
-            </div>
+
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 overflow-hidden">
+                        <div className="p-5 pb-3">
+                            <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('contractExpiry.listTitle')}</h2>
+                        </div>
+                        {entries.length === 0 ? (
+                            <EmptyState icon={Icons.FileClock} title={t('contractExpiry.noContracts')} />
+                        ) : (
+                            <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                                {entries.map((entry) => (
+                                    <div key={entry.id} className="p-4 flex items-center justify-between gap-4">
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-bold text-gray-800 dark:text-gray-100">{entry.name}</p>
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                                                {entry.position || t('dashboard.notSet')} &middot; {entry.department || t('dashboard.notSet')} &middot; {new Date(entry.contract_end_date).toLocaleDateString('en-GB')}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border ${URGENCY_STYLES[entry.urgency]}`}>
+                                                {describeDays(entry)}
+                                            </span>
+                                            {renderCertificateButton(entry)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
+
+            {activeTab === 'timeline' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 overflow-hidden">
+                    <div className="p-5 pb-3">
+                        <h2 className="text-sm font-bold text-gray-700 dark:text-gray-100 uppercase tracking-wider">{t('contractExpiry.timelineTitle')}</h2>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{t('contractExpiry.timelineDescription')}</p>
+                    </div>
+                    {timelineGroups.length === 0 ? (
+                        <EmptyState icon={Icons.CalendarDays} title={t('contractExpiry.noContracts')} />
+                    ) : (
+                        <div className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {timelineGroups.map((group) => (
+                                <div key={group.key} className="p-4">
+                                    <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
+                                        {group.label} &middot; {t('contractExpiry.timelineCount', { count: group.entries.length })}
+                                    </p>
+                                    <div className="space-y-2">
+                                        {group.entries.map((entry) => (
+                                            <div key={entry.id} className="flex items-center justify-between gap-4">
+                                                <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{entry.name}</span>
+                                                <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 ${URGENCY_STYLES[entry.urgency]}`}>
+                                                    {describeDays(entry)}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'byDepartment' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6 overflow-x-auto">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('contractExpiry.byDepartmentTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('contractExpiry.byDepartmentDescription')}</p>
+                    {departmentStats.length === 0 ? (
+                        <EmptyState icon={Icons.UsersGroup} title={t('contractExpiry.noContracts')} />
+                    ) : (
+                        <table className="min-w-full text-xs">
+                            <thead>
+                                <tr className="text-left text-gray-400 dark:text-gray-500">
+                                    <th className="pb-2 pr-4 font-bold">{t('contractExpiry.colDepartment')}</th>
+                                    <th className="pb-2 pr-4 font-bold">{t('contractExpiry.statExpired')}</th>
+                                    <th className="pb-2 pr-4 font-bold">{t('contractExpiry.statUrgent')}</th>
+                                    <th className="pb-2 pr-4 font-bold">{t('contractExpiry.statWarning')}</th>
+                                    <th className="pb-2 font-bold">{t('contractExpiry.statOk')}</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                                {departmentStats.map((row) => (
+                                    <tr key={row.department}>
+                                        <td className="py-2 pr-4 font-bold text-gray-700 dark:text-gray-200">{row.department}</td>
+                                        <td className={`py-2 pr-4 ${row.expired > 0 ? 'text-red-600 dark:text-red-400 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>{row.expired}</td>
+                                        <td className={`py-2 pr-4 ${row.urgent > 0 ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-gray-500 dark:text-gray-400'}`}>{row.urgent}</td>
+                                        <td className="py-2 pr-4 text-gray-500 dark:text-gray-400">{row.warning}</td>
+                                        <td className="py-2 text-gray-500 dark:text-gray-400">{row.ok}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

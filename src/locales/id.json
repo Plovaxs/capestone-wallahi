@@ -1170,7 +1170,15 @@
     "explainLeaveNoQuota": "Mengajukan {{days}} hari",
     "explainTaskLate": "Diputuskan {{days}} hari setelah deadline",
     "explainTaskEarly": "Diputuskan {{days}} hari sebelum deadline",
-    "explainTaskOnDeadline": "Diputuskan tepat pada deadline"
+    "explainTaskOnDeadline": "Diputuskan tepat pada deadline",
+    "tabOverview": "Ringkasan",
+    "tabByActor": "Per Pelaku",
+    "tabByEntityType": "Per Jenis Entitas",
+    "byActorTitle": "Siapa yang paling banyak menghasilkan entri",
+    "byActorDescription": "Feed yang sama, diagregasi per pelaku alih-alih ditampilkan kronologis.",
+    "byEntityTypeTitle": "Jenis aktivitas apa yang paling dominan",
+    "byEntityTypeDescription": "Persetujuan cuti vs. edit penilaian vs. perubahan role vs. perubahan status tugas.",
+    "entryCount_other": "{{count}} entri"
   },
   "contractExpiry": {
     "title": "Masa Kontrak",
@@ -1195,7 +1203,16 @@
     "certificateSupervisorLabel": "Supervisor",
     "certificateIssuedOn": "Diterbitkan pada",
     "certificateFilenamePrefix": "Sertifikat_Penyelesaian",
-    "reminderSent": "Pengingat masa kontrak terkirim ke {{name}}"
+    "reminderSent": "Pengingat masa kontrak terkirim ke {{name}}",
+    "tabOverview": "Ringkasan",
+    "tabTimeline": "Linimasa",
+    "tabByDepartment": "Per Departemen",
+    "timelineTitle": "Kontrak berakhir per bulan",
+    "timelineDescription": "Daftar yang sama, dikelompokkan per bulan berakhirnya kontrak, biar bisa lihat pola perpanjangan yang akan datang sekilas.",
+    "timelineCount_other": "{{count}} kontrak",
+    "byDepartmentTitle": "Urgensi per departemen",
+    "byDepartmentDescription": "Apakah kontrak yang akan berakhir terkonsentrasi di satu departemen atau tersebar merata.",
+    "colDepartment": "Departemen"
   },
   "onboardingTracker": {
     "title": "Pelacak Onboarding",
@@ -1276,7 +1293,18 @@
     "unsupported": "Akses kamera tidak didukung di perangkat ini.",
     "cameraDenied": "Gagal mengakses kamera — periksa izin browser Anda.",
     "matched": "Kartu Terverifikasi",
-    "noMatch": "Kartu ini tidak cocok dengan karyawan mana pun."
+    "noMatch": "Kartu ini tidak cocok dengan karyawan mana pun.",
+    "tabScanner": "Pemindai",
+    "tabHistory": "Riwayat Pindai",
+    "tabLookup": "Pencarian Manual",
+    "historyTitle": "Pindaian sesi ini",
+    "historyDescription": "Setiap kartu yang dipindai sejak halaman ini dibuka, terbaru duluan.",
+    "noScansYet": "Belum ada kartu yang dipindai sesi ini.",
+    "unknownBadge": "Kartu tidak dikenali",
+    "lookupTitle": "Cari seseorang berdasarkan nama",
+    "lookupDescription": "Alternatif tanpa kamera untuk saat kartu rusak atau tidak terbaca.",
+    "lookupPlaceholder": "Ketik nama...",
+    "noLookupResults": "Tidak ada karyawan yang cocok dengan nama itu."
   },
   "messages": {
     "title": "Pesan",
@@ -1300,7 +1328,17 @@
     "travelFlagDetail": "{{distance}} km dalam {{hours}} jam (~{{speed}} km/jam) — {{from}} ke {{to}}",
     "devicesTitle": "Perangkat Baru Login",
     "devicesDescription": "Perangkat yang pertama kali terlihat dalam 24 jam terakhir.",
-    "noNewDevices": "Tidak ada perangkat baru dalam 24 jam terakhir."
+    "noNewDevices": "Tidak ada perangkat baru dalam 24 jam terakhir.",
+    "tabOverview": "Ringkasan",
+    "tabAllDevices": "Semua Perangkat Dikenal",
+    "tabByEmployee": "Per Karyawan",
+    "allDevicesTitle": "Riwayat perangkat lengkap",
+    "allDevicesDescription": "Semua perangkat yang dikenal, bukan cuma yang terlihat 24 jam terakhir.",
+    "byEmployeeTitle": "Sinyal konsolidasi per karyawan",
+    "byEmployeeDescription": "Karyawan dengan tanda perjalanan mustahil dan/atau lebih dari satu perangkat dikenal, terparah duluan.",
+    "noEmployeeFlags": "Tidak ada karyawan yang punya tanda perjalanan mustahil atau banyak perangkat saat ini.",
+    "travelFlagCount_other": "{{count}} tanda perjalanan",
+    "deviceCount_other": "{{count}} perangkat"
   },
   "debugCenter": {
     "title": "Pusat Debug",
@@ -1469,6 +1507,18 @@
     "colTier": "Model",
     "colNetwork": "Jaringan",
     "colBattery": "Baterai",
-    "colLens": "Lensa"
+    "colLens": "Lensa",
+    "tabOverview": "Ringkasan",
+    "tabPerDevice": "Rincian Per Perangkat",
+    "tabIssues": "Hanya Masalah",
+    "perDeviceTitle": "Rincian per perangkat",
+    "perDeviceDescription": "Sesi yang sama, dikelompokkan per karyawan -- lihat persis perangkat mana yang menurunkan rata-rata fleet.",
+    "colSnapshotCount": "Sesi",
+    "colAvgLatency": "Rata-rata Latensi",
+    "colIssueCount": "Masalah",
+    "colLastSeen": "Terakhir Terlihat",
+    "issuesTitle": "Sesi dengan masalah yang ditandai",
+    "issuesDescription": "Hanya sesi yang melaporkan model ringan, jaringan lambat, atau lensa terhalang.",
+    "noIssues": "Tidak ada masalah yang ditandai di sesi manapun."
   }
 }

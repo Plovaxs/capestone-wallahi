@@ -1170,7 +1170,16 @@
     "explainLeaveNoQuota": "Requested {{days}} day(s)",
     "explainTaskLate": "Decided {{days}} day(s) after the deadline",
     "explainTaskEarly": "Decided {{days}} day(s) before the deadline",
-    "explainTaskOnDeadline": "Decided exactly on the deadline"
+    "explainTaskOnDeadline": "Decided exactly on the deadline",
+    "tabOverview": "Overview",
+    "tabByActor": "By Actor",
+    "tabByEntityType": "By Entity Type",
+    "byActorTitle": "Who's generating the most entries",
+    "byActorDescription": "The same feed, aggregated per actor instead of listed chronologically.",
+    "byEntityTypeTitle": "What kind of activity dominates",
+    "byEntityTypeDescription": "Leave approvals vs. review edits vs. role changes vs. task status changes.",
+    "entryCount_one": "{{count}} entry",
+    "entryCount_other": "{{count}} entries"
   },
   "contractExpiry": {
     "title": "Contract Expiry",
@@ -1195,7 +1204,17 @@
     "certificateSupervisorLabel": "Supervisor",
     "certificateIssuedOn": "Issued on",
     "certificateFilenamePrefix": "Completion_Certificate",
-    "reminderSent": "Contract expiry reminder sent to {{name}}"
+    "reminderSent": "Contract expiry reminder sent to {{name}}",
+    "tabOverview": "Overview",
+    "tabTimeline": "Timeline",
+    "tabByDepartment": "By Department",
+    "timelineTitle": "Upcoming expirations by month",
+    "timelineDescription": "The same list, grouped by expiry month, to see the shape of upcoming renewals at a glance.",
+    "timelineCount_one": "{{count}} contract",
+    "timelineCount_other": "{{count}} contracts",
+    "byDepartmentTitle": "Urgency by department",
+    "byDepartmentDescription": "Whether expiring contracts cluster in one department or are spread evenly.",
+    "colDepartment": "Department"
   },
   "onboardingTracker": {
     "title": "Onboarding Tracker",
@@ -1277,7 +1296,18 @@
     "unsupported": "Camera access isn't supported on this device.",
     "cameraDenied": "Couldn't access the camera — check your browser permissions.",
     "matched": "Badge Verified",
-    "noMatch": "This badge doesn't match any known employee."
+    "noMatch": "This badge doesn't match any known employee.",
+    "tabScanner": "Scanner",
+    "tabHistory": "Scan History",
+    "tabLookup": "Manual Lookup",
+    "historyTitle": "Scans this session",
+    "historyDescription": "Every badge scanned since you opened this page, newest first.",
+    "noScansYet": "No badges scanned yet this session.",
+    "unknownBadge": "Unrecognized badge",
+    "lookupTitle": "Look someone up by name",
+    "lookupDescription": "A camera-free fallback for when a badge is damaged or unreadable.",
+    "lookupPlaceholder": "Type a name...",
+    "noLookupResults": "No employees match that name."
   },
   "messages": {
     "title": "Messages",
@@ -1301,7 +1331,19 @@
     "travelFlagDetail": "{{distance}} km apart in {{hours}}h (~{{speed}} km/h implied) — {{from}} to {{to}}",
     "devicesTitle": "New Device Sign-ins",
     "devicesDescription": "Devices seen for the first time in the last 24 hours.",
-    "noNewDevices": "No new devices in the last 24 hours."
+    "noNewDevices": "No new devices in the last 24 hours.",
+    "tabOverview": "Overview",
+    "tabAllDevices": "All Known Devices",
+    "tabByEmployee": "By Employee",
+    "allDevicesTitle": "Full device history",
+    "allDevicesDescription": "Every known device, not just the ones seen in the last 24 hours.",
+    "byEmployeeTitle": "Consolidated per-employee signal",
+    "byEmployeeDescription": "Employees with a travel flag and/or more than one known device, worst first.",
+    "noEmployeeFlags": "No employee currently has a travel flag or multiple devices.",
+    "travelFlagCount_one": "{{count}} travel flag",
+    "travelFlagCount_other": "{{count}} travel flags",
+    "deviceCount_one": "{{count}} device",
+    "deviceCount_other": "{{count}} devices"
   },
   "debugCenter": {
     "title": "Debug Center",
@@ -1471,6 +1513,18 @@
     "colTier": "Model",
     "colNetwork": "Network",
     "colBattery": "Battery",
-    "colLens": "Lens"
+    "colLens": "Lens",
+    "tabOverview": "Overview",
+    "tabPerDevice": "Per-Device Breakdown",
+    "tabIssues": "Issues Only",
+    "perDeviceTitle": "Per-device breakdown",
+    "perDeviceDescription": "Same sessions, grouped by employee -- see exactly which device is dragging the fleet average down.",
+    "colSnapshotCount": "Sessions",
+    "colAvgLatency": "Avg. Latency",
+    "colIssueCount": "Issues",
+    "colLastSeen": "Last Seen",
+    "issuesTitle": "Sessions with a flagged issue",
+    "issuesDescription": "Only sessions that reported a reduced model tier, a slow network, or an obstructed lens.",
+    "noIssues": "No flagged issues in any reported session."
   }
 }
