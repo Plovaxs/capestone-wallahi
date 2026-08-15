@@ -1210,7 +1210,16 @@
     "checklistInstitution": "Institusi",
     "checklistContractDates": "Periode kontrak",
     "checklistLoaDocument": "Dokumen LOA",
-    "checklistFirstClockIn": "Absen pertama"
+    "checklistFirstClockIn": "Absen pertama",
+    "tabOverview": "Ringkasan",
+    "tabByItem": "Per Item Checklist",
+    "tabByDepartment": "Per Departemen",
+    "byItemTitle": "Di mana hambatannya",
+    "byItemDescription": "Tingkat penyelesaian per item checklist di semua karyawan -- bar paling rendah adalah langkah yang paling banyak menghambat.",
+    "itemCompleteCount": "{{count}}/{{total}} selesai",
+    "byDepartmentTitle": "Rata-rata penyelesaian per departemen",
+    "byDepartmentDescription": "Apakah onboarding yang belum lengkap tersebar merata atau terkonsentrasi di satu proses intake departemen tertentu.",
+    "employeeCount_other": "{{count}} karyawan"
   },
   "correlationInsights": {
     "title": "Wawasan Korelasi",
@@ -1223,14 +1232,39 @@
     "strength_strong": "Hubungan kuat (r = {{r}}).",
     "strength_moderate": "Hubungan sedang (r = {{r}}).",
     "strength_weak": "Hubungan lemah (r = {{r}}).",
-    "strength_negligible": "Hampir tidak ada hubungan (r = {{r}})."
+    "strength_negligible": "Hampir tidak ada hubungan (r = {{r}}).",
+    "tabOverview": "Ringkasan",
+    "tabBreakdown": "Rincian Karyawan",
+    "tabOutliers": "Anomali",
+    "breakdownTitle": "Angka setiap karyawan",
+    "breakdownDescription": "Metrik mentah di balik scatter plot -- satu baris per karyawan.",
+    "colEmployee": "Karyawan",
+    "colPunctuality": "Ketepatan Waktu",
+    "colTaskCompletion": "Penyelesaian Tugas",
+    "colReviewScore": "Skor Penilaian",
+    "outliersTitle": "Selisih Ketepatan Waktu vs. Penyelesaian Tugas",
+    "outliersDescription": "Karyawan yang tingkat ketepatan waktu dan penyelesaian tugasnya paling jauh berbeda -- layak dicek lebih lanjut ke arah manapun.",
+    "outlierDetail": "Ketepatan waktu {{punctuality}}% vs. penyelesaian tugas {{completion}}%",
+    "gapLabel": "selisih {{gap}} poin"
   },
   "idBadge": {
     "title": "Kartu ID",
     "subtitle": "Kartu QR yang bisa dipindai untuk verifikasi identitas fisik/visual.",
     "download": "Unduh Kartu",
     "generateError": "Gagal membuat kode QR kartu.",
-    "disclaimer": "Kartu ini hanya untuk verifikasi identitas — tidak melakukan absen atau memberi akses dengan sendirinya."
+    "disclaimer": "Kartu ini hanya untuk verifikasi identitas — tidak melakukan absen atau memberi akses dengan sendirinya.",
+    "tabOverview": "Ringkasan",
+    "tabDetails": "Detail Payload",
+    "tabPrint": "Tata Letak Cetak",
+    "detailsTitle": "Apa saja yang sebenarnya tersimpan",
+    "detailsDescription": "Field persis yang dibaca ulang oleh scanner dari kode QR kamu -- didekode dengan cara yang sama seperti BadgeScannerView.jsx, jadi kamu bisa pastikan datanya sesuai identitas asli sebelum dicetak atau dibagikan.",
+    "fieldProfileId": "ID Profil",
+    "fieldName": "Nama",
+    "decodeError": "Gagal mendekode payload kartu.",
+    "rawPayloadLabel": "Payload mentah",
+    "printTitle": "Tata letak siap cetak",
+    "printDescription": "Versi kartu yang lebih besar dan dioptimalkan untuk dicetak jadi kartu fisik.",
+    "printAction": "Cetak"
   },
   "badgeScanner": {
     "title": "Pemindai Kartu",
@@ -1403,7 +1437,17 @@
     "leadOnly": "Halaman ini cuma tersedia untuk ketua tim yang ditunjuk.",
     "noTeammates": "Belum ada karyawan lain yang ditemukan di departemen Anda.",
     "clockedIn": "Sudah absen",
-    "notYetIn": "Belum absen"
+    "notYetIn": "Belum absen",
+    "tabOverview": "Ringkasan",
+    "tabPunctuality": "Ketepatan Waktu",
+    "tabTrend": "Tren Mingguan",
+    "punctualityTitle": "Ketepatan waktu per rekan tim",
+    "punctualityDescription": "Tingkat tepat waktu dari seluruh riwayat kehadiran tiap rekan tim, bukan cuma hari ini.",
+    "noRecordsYet": "Belum ada catatan",
+    "recordCount_other": "{{count}} catatan",
+    "trendTitle": "7 hari terakhir",
+    "trendDescription": "Grid Hadir (P) / Terlambat (L) untuk {{days}} hari kalender terakhir.",
+    "nameColumn": "Nama"
   },
   "fleetHealth": {
     "title": "Kesehatan Perangkat",
