@@ -8,6 +8,7 @@ import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import toast from 'react-hot-toast';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 // --- PROBLEM TYPE CHECKLIST OPTIONS (stored values stay in English; display labels are translated) ---
 const PROBLEM_TYPES = ['Hardware', 'Software', 'Git Control', 'Workflow', 'Additional Resource'];
@@ -21,6 +22,7 @@ const PROBLEM_TYPE_KEYS = {
 
 const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets }) => {
     const { t } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
     const [newTitle, setNewTitle] = useState('');
     const [newContent, setNewContent] = useState('');
     const [ticketCategory, setTicketCategory] = useState('Help Request ❓');
@@ -88,6 +90,38 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
         () => helpdeskTickets.filter(t => t.ticket_status === 'Open').length,
         [helpdeskTickets]
     );
+
+    // 🟩 NEW SUBMODULE: By Problem Type -- the composer already tags every
+    // ticket with 0+ problem types, but nothing ever aggregated them
+    // across the full ticket history. Reuses the SAME already-fetched
+    // `helpdeskTickets` (not just the status-filtered visibleTickets)
+    // grouped by tag instead of listed one ticket at a time.
+    const byProblemTypeStats = useMemo(() => {
+        const counts = new Map();
+        helpdeskTickets.forEach((ticket) => {
+            (ticket.problem_types || []).forEach((pt) => {
+                counts.set(pt, (counts.get(pt) || 0) + 1);
+            });
+        });
+        return Array.from(counts.entries())
+            .map(([type, count]) => ({ type, count }))
+            .sort((a, b) => b.count - a.count);
+    }, [helpdeskTickets]);
+
+    // 🟩 NEW SUBMODULE: By Employee -- who's filing the most tickets,
+    // reusing `ticket.employee_name` (already shown per-ticket in the
+    // Overview tab, so this isn't new exposure, just aggregated).
+    const byEmployeeStats = useMemo(() => {
+        const counts = new Map();
+        helpdeskTickets.forEach((ticket) => {
+            const name = ticket.employee_name || t('helpdesk.unknownEmployee');
+            if (!counts.has(name)) counts.set(name, { name, total: 0, open: 0 });
+            const entry = counts.get(name);
+            entry.total += 1;
+            if (ticket.ticket_status === 'Open') entry.open += 1;
+        });
+        return Array.from(counts.values()).sort((a, b) => b.total - a.total);
+    }, [helpdeskTickets, t]);
 
     const toggleProblemType = (type) => {
         setSelectedProblemTypes(prev =>
@@ -246,6 +280,69 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                 )}
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('helpdesk.tabOverview'), icon: Icons.LifeBuoy },
+                    { id: 'byProblemType', label: t('helpdesk.tabByProblemType'), icon: Icons.ClipboardList },
+                    { id: 'byEmployee', label: t('helpdesk.tabByEmployee'), icon: Icons.UsersGroup },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'byProblemType' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('helpdesk.byProblemTypeTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('helpdesk.byProblemTypeDescription')}</p>
+                    {byProblemTypeStats.length === 0 ? (
+                        <EmptyState icon={Icons.ClipboardList} title={t('helpdesk.noTickets')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byProblemTypeStats.map((row) => (
+                                <li key={row.type} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">
+                                        {PROBLEM_TYPE_KEYS[row.type] ? t(`helpdesk.${PROBLEM_TYPE_KEYS[row.type]}`) : row.type}
+                                    </span>
+                                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300 shrink-0">
+                                        {t('helpdesk.ticketCount', { count: row.count })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'byEmployee' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('helpdesk.byEmployeeTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('helpdesk.byEmployeeDescription')}</p>
+                    {byEmployeeStats.length === 0 ? (
+                        <EmptyState icon={Icons.UsersGroup} title={t('helpdesk.noTickets')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byEmployeeStats.map((row) => (
+                                <li key={row.name} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {row.open > 0 && (
+                                            <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                                                {t('helpdesk.openCount', { count: row.open })}
+                                            </span>
+                                        )}
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                                            {t('helpdesk.ticketCount', { count: row.total })}
+                                        </span>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab !== 'overview' ? null : (
+            <>
             {/* --- NEW TICKET COMPOSER --- */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 dark:bg-gray-800 dark:border-gray-700 space-y-3">
 
@@ -476,6 +573,8 @@ const HelpdeskView = ({ userProfile, helpdeskTickets = [], fetchHelpdeskTickets 
                     );
                 })}
             </div>
+            </>
+            )}
         </div>
     );
 };

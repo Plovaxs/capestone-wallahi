@@ -12,6 +12,7 @@ import { useTypingIndicator } from '../realtime/useTypingIndicator';
 import { getLocalDateString } from '../utils/dateOnly';
 import EmptyState from '../components/EmptyState';
 import { Icons } from '../components/Icons';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * COMPONENT: ContributionsView
@@ -21,6 +22,7 @@ import { Icons } from '../components/Icons';
  */
 const ContributionsView = ({ userProfile, contributions = [], allUsers = [], fetchContributions }) => {
     const { t } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
     // --- POST COMPOSER FORUM STATES ---
     const [newPost, setNewPost] = useState('');
     const [newTitle, setNewTitle] = useState('');
@@ -227,6 +229,43 @@ const handleCreateThread = async () => {
         [generalThreads, searchTerm, selectedCategory, getUserName]
     );
 
+    // 🟩 NEW SUBMODULE: Top Contributors -- how many threads + replies each
+    // person has posted, reusing the same already-fetched `generalThreads`
+    // (each carrying its own `.replies` array) instead of a new query.
+    const topContributors = useMemo(() => {
+        const counts = new Map();
+        const bump = (id, field) => {
+            const key = String(id);
+            if (!counts.has(key)) counts.set(key, { userId: id, name: getUserName(id), threads: 0, replies: 0 });
+            counts.get(key)[field] += 1;
+        };
+        generalThreads.forEach((post) => {
+            bump(post.employee_id, 'threads');
+            (post.replies || []).forEach((reply) => bump(reply.author_id, 'replies'));
+        });
+        return Array.from(counts.values())
+            .map((row) => ({ ...row, total: row.threads + row.replies }))
+            .sort((a, b) => b.total - a.total);
+    }, [generalThreads, getUserName]);
+
+    // 🟩 NEW SUBMODULE: By Category -- thread count per forum category,
+    // reusing the same `generalThreads` grouped instead of filtered.
+    const byCategoryStats = useMemo(() => {
+        const counts = new Map();
+        generalThreads.forEach((post) => {
+            counts.set(post.category, (counts.get(post.category) || 0) + 1);
+        });
+        return Array.from(counts.entries())
+            .map(([category, count]) => ({ category, count }))
+            .sort((a, b) => b.count - a.count);
+    }, [generalThreads]);
+
+    const tabs = [
+        { id: 'overview', label: t('contributions.tabOverview'), icon: Icons.ChatBubble },
+        { id: 'topContributors', label: t('contributions.tabTopContributors'), icon: Icons.Trophy },
+        { id: 'byCategory', label: t('contributions.tabByCategory'), icon: Icons.ClipboardList },
+    ];
+
     return (
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
             
@@ -261,6 +300,57 @@ const handleCreateThread = async () => {
                 </div>
             </div>
 
+            <ModuleTabBar tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
+
+            {activeTab === 'topContributors' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('contributions.topContributorsTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('contributions.topContributorsDescription')}</p>
+                    {topContributors.length === 0 ? (
+                        <EmptyState icon={Icons.Trophy} title={t('contributions.noThreadsMatch')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {topContributors.map((row) => (
+                                <li key={row.userId} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                                            {t('contributions.threadCount', { count: row.threads })}
+                                        </span>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                                            {t('contributions.replyCount', { count: row.replies })}
+                                        </span>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'byCategory' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('contributions.byCategoryTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('contributions.byCategoryDescription')}</p>
+                    {byCategoryStats.length === 0 ? (
+                        <EmptyState icon={Icons.ClipboardList} title={t('contributions.noThreadsMatch')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byCategoryStats.map((row) => (
+                                <li key={row.category} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.category}</span>
+                                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300 shrink-0">
+                                        {t('contributions.threadCount', { count: row.count })}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab !== 'overview' ? null : (
+            <>
             {/* --- COMPOSER TOP INPUT SHEET PANEL WIDGET --- */}
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
                 <div className="p-5">
@@ -491,6 +581,8 @@ const handleCreateThread = async () => {
                     <EmptyState icon={Icons.Trophy} title={t('contributions.noThreadsMatch')} />
                 )}
             </div>
+            </>
+            )}
         </div>
     );
 };

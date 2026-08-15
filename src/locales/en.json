@@ -144,7 +144,18 @@
     "reply": "Reply",
     "noThreadsMatch": "No discussion threads match your filter layout criteria.",
     "emptyPostError": "Please write something before publishing.",
-    "someoneIsTyping": "{{names}} is typing a post..."
+    "someoneIsTyping": "{{names}} is typing a post...",
+    "tabOverview": "Overview",
+    "tabTopContributors": "Top Contributors",
+    "tabByCategory": "By Category",
+    "topContributorsTitle": "Who's most active",
+    "topContributorsDescription": "Threads started + replies posted, ranked by total activity.",
+    "threadCount_one": "{{count}} thread",
+    "threadCount_other": "{{count}} threads",
+    "replyCount_one": "{{count}} reply",
+    "replyCount_other": "{{count}} replies",
+    "byCategoryTitle": "Threads per channel",
+    "byCategoryDescription": "How discussion activity splits across forum categories."
   },
   "leave": {
     "unknownOfficer": "Unknown Officer",
@@ -387,7 +398,17 @@
     "bulkStatusSuccess": "Updated {{count}} ticket(s) to {{status}}.",
     "bulkStatusPartialFailure": "Couldn't update {{count}} ticket(s).",
     "replyPlaceholder": "Reply...",
-    "send": "Send"
+    "send": "Send",
+    "tabOverview": "Overview",
+    "tabByProblemType": "By Problem Type",
+    "tabByEmployee": "By Employee",
+    "byProblemTypeTitle": "What kind of problem comes up most",
+    "byProblemTypeDescription": "Every ticket's problem-type tags, aggregated across the full history.",
+    "ticketCount_one": "{{count}} ticket",
+    "ticketCount_other": "{{count}} tickets",
+    "byEmployeeTitle": "Who's filing the most tickets",
+    "byEmployeeDescription": "Total tickets per employee, with how many are still open.",
+    "unknownEmployee": "Unknown employee"
   },
   "dashboard": {
     "welcome": "Welcome, {{name}}!",
@@ -1141,7 +1162,18 @@
     "user": "User",
     "url": "URL",
     "stackTrace": "Stack Trace",
-    "userAgent": "User Agent"
+    "userAgent": "User Agent",
+    "unknownMessage": "(no message)",
+    "tabOverview": "Overview",
+    "tabByMessage": "By Message",
+    "tabByUser": "By User",
+    "byMessageTitle": "Deduplicated by message",
+    "byMessageDescription": "Same recurring errors grouped together instead of listed one-by-one -- click a row for full details.",
+    "lastSeen": "Last seen {{time}}",
+    "occurrenceCount_one": "{{count}} occurrence",
+    "occurrenceCount_other": "{{count}} occurrences",
+    "byUserTitle": "Which users are affected most",
+    "byUserDescription": "Distinguishes one person having a bad time from an error hitting everyone."
   },
   "auditLog": {
     "title": "Audit Log",
@@ -1316,7 +1348,20 @@
     "noMessagesYet": "No messages yet — say hello!",
     "loading": "Loading messages...",
     "placeholder": "Type a message...",
-    "send": "Send"
+    "send": "Send",
+    "tabConversations": "Conversations",
+    "tabUnread": "Unread",
+    "tabStats": "Message Stats",
+    "unreadTitle": "Everything you haven't read yet",
+    "unreadDescription": "Every unread message across every conversation, newest first -- tap one to jump to that thread.",
+    "noUnread": "You're all caught up.",
+    "unknownSender": "Unknown sender",
+    "statsTitle": "Activity per contact",
+    "statsDescription": "Sent/received counts and last activity, one row per conversation.",
+    "colContact": "Contact",
+    "colSent": "Sent",
+    "colReceived": "Received",
+    "colLastActivity": "Last Activity"
   },
   "securitySignals": {
     "title": "Security Signals",

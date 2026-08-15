@@ -144,7 +144,16 @@
     "reply": "Balas",
     "noThreadsMatch": "Tidak ada thread diskusi yang cocok dengan filter Anda.",
     "emptyPostError": "Mohon tulis sesuatu sebelum menerbitkan.",
-    "someoneIsTyping": "{{names}} sedang mengetik postingan..."
+    "someoneIsTyping": "{{names}} sedang mengetik postingan...",
+    "tabOverview": "Ringkasan",
+    "tabTopContributors": "Kontributor Teratas",
+    "tabByCategory": "Per Kategori",
+    "topContributorsTitle": "Siapa yang paling aktif",
+    "topContributorsDescription": "Thread dimulai + balasan diposting, diurutkan berdasarkan total aktivitas.",
+    "threadCount_other": "{{count}} thread",
+    "replyCount_other": "{{count}} balasan",
+    "byCategoryTitle": "Thread per kanal",
+    "byCategoryDescription": "Bagaimana aktivitas diskusi terbagi di berbagai kategori forum."
   },
   "leave": {
     "unknownOfficer": "Petugas Tidak Dikenal",
@@ -387,7 +396,16 @@
     "bulkStatusSuccess": "Berhasil memperbarui {{count}} tiket ke {{status}}.",
     "bulkStatusPartialFailure": "Gagal memperbarui {{count}} tiket.",
     "replyPlaceholder": "Balas...",
-    "send": "Kirim"
+    "send": "Kirim",
+    "tabOverview": "Ringkasan",
+    "tabByProblemType": "Per Jenis Masalah",
+    "tabByEmployee": "Per Karyawan",
+    "byProblemTypeTitle": "Jenis masalah apa yang paling sering muncul",
+    "byProblemTypeDescription": "Tag jenis masalah dari setiap tiket, diagregasi dari seluruh riwayat.",
+    "ticketCount_other": "{{count}} tiket",
+    "byEmployeeTitle": "Siapa yang paling banyak mengajukan tiket",
+    "byEmployeeDescription": "Total tiket per karyawan, dengan berapa yang masih terbuka.",
+    "unknownEmployee": "Karyawan tidak diketahui"
   },
   "dashboard": {
     "welcome": "Selamat datang, {{name}}!",
@@ -1141,7 +1159,17 @@
     "user": "User",
     "url": "URL",
     "stackTrace": "Stack Trace",
-    "userAgent": "User Agent"
+    "userAgent": "User Agent",
+    "unknownMessage": "(tanpa pesan)",
+    "tabOverview": "Ringkasan",
+    "tabByMessage": "Per Pesan",
+    "tabByUser": "Per Pengguna",
+    "byMessageTitle": "Dikelompokkan per pesan",
+    "byMessageDescription": "Error yang sama berulang dikelompokkan bareng, bukan ditampilkan satu-satu -- klik baris untuk detail lengkap.",
+    "lastSeen": "Terakhir terlihat {{time}}",
+    "occurrenceCount_other": "{{count}} kejadian",
+    "byUserTitle": "Pengguna mana yang paling terdampak",
+    "byUserDescription": "Membedakan satu orang yang lagi sial dari error yang menimpa semua orang."
   },
   "auditLog": {
     "title": "Log Audit",
@@ -1313,7 +1341,20 @@
     "noMessagesYet": "Belum ada pesan — sapa duluan!",
     "loading": "Memuat pesan...",
     "placeholder": "Ketik pesan...",
-    "send": "Kirim"
+    "send": "Kirim",
+    "tabConversations": "Percakapan",
+    "tabUnread": "Belum Dibaca",
+    "tabStats": "Statistik Pesan",
+    "unreadTitle": "Semua yang belum kamu baca",
+    "unreadDescription": "Setiap pesan belum dibaca dari semua percakapan, terbaru duluan -- ketuk untuk lompat ke thread itu.",
+    "noUnread": "Semua sudah dibaca.",
+    "unknownSender": "Pengirim tidak dikenal",
+    "statsTitle": "Aktivitas per kontak",
+    "statsDescription": "Jumlah terkirim/diterima dan aktivitas terakhir, satu baris per percakapan.",
+    "colContact": "Kontak",
+    "colSent": "Terkirim",
+    "colReceived": "Diterima",
+    "colLastActivity": "Aktivitas Terakhir"
   },
   "securitySignals": {
     "title": "Sinyal Keamanan",
