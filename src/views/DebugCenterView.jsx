@@ -243,9 +243,27 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                         FACE_MATCH_THRESHOLD
                     );
                     const best = rows?.[0];
-                    setIdentity(best
-                        ? { status: 'identified', name: best.profile_name, role: best.profile_role, distance: best.distance }
-                        : { status: 'unknown' });
+                    // 🟩 BUG FIX: the RPC used to hard-filter to only rows
+                    // under the match threshold, so a live capture that
+                    // landed even slightly above it (different lighting/
+                    // angle/detector warm-up than a real login attempt --
+                    // reported live by a supervisor whose face matches fine
+                    // at actual login) came back as an undifferentiated "no
+                    // match", with zero visibility into how close the real
+                    // nearest match was. The RPC now always returns the
+                    // single closest match (if anyone in the system has an
+                    // enrolled face at all) with its real distance -- this
+                    // is what actually distinguishes "confident match",
+                    // "found someone but not confidently enough" (still
+                    // useful for testing/tuning), and "nobody enrolled at
+                    // all" here.
+                    if (!best) {
+                        setIdentity({ status: 'noEnrollments' });
+                    } else if (best.distance <= best.threshold) {
+                        setIdentity({ status: 'identified', name: best.profile_name, role: best.profile_role, distance: best.distance });
+                    } else {
+                        setIdentity({ status: 'closeGuess', name: best.profile_name, role: best.profile_role, distance: best.distance, threshold: best.threshold });
+                    }
                 } catch (error) {
                     setIdentity({ status: 'error', detail: error?.message });
                 } finally {
@@ -435,7 +453,16 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                                 <span className="text-gray-400 dark:text-gray-500 font-normal">({t('debugCenter.identityDistanceLabel', { distance: identity.distance.toFixed(3) })})</span>
                             </span>
                         )}
-                        {identity.status === 'unknown' && <span className="text-amber-600 dark:text-amber-400 font-bold">{t('debugCenter.identityUnknown')}</span>}
+                        {identity.status === 'closeGuess' && (
+                            <span className="text-amber-600 dark:text-amber-400 font-bold">
+                                {t('debugCenter.identityCloseGuess', { name: identity.name, role: formatRole(identity.role) })}
+                                {' '}
+                                <span className="text-gray-400 dark:text-gray-500 font-normal">
+                                    ({t('debugCenter.identityDistanceLabel', { distance: identity.distance.toFixed(3) })}, {t('debugCenter.identityAboveThreshold', { threshold: identity.threshold })})
+                                </span>
+                            </span>
+                        )}
+                        {identity.status === 'noEnrollments' && <span className="text-amber-600 dark:text-amber-400 font-bold">{t('debugCenter.identityUnknown')}</span>}
                         {identity.status === 'error' && <span className="text-red-600 dark:text-red-400 font-bold">{t('debugCenter.identityError')}</span>}
                     </div>
                 </div>

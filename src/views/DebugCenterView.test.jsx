@@ -258,7 +258,7 @@ describe('DebugCenterView', () => {
 
         it('identifies the live-detected face against enrolled profiles and shows name + role', async () => {
             identifyFaceByDescriptorMock.mockResolvedValueOnce([
-                { profile_id: 'emp-1', profile_name: 'Budi Santoso', profile_role: 'employee', distance: 0.21 },
+                { profile_id: 'emp-1', profile_name: 'Budi Santoso', profile_role: 'employee', distance: 0.21, threshold: 0.5 },
             ]);
 
             render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
@@ -269,14 +269,34 @@ describe('DebugCenterView', () => {
             expect(screen.getByText(/Identified as Budi Santoso \(Employee\)/)).toBeInTheDocument();
         });
 
-        it('shows "no enrolled match" when the live face does not match anyone', async () => {
+        // 🟩 REGRESSION TEST: the RPC used to hard-filter out any match
+        // above the threshold, so a live capture that landed just barely
+        // above 0.5 (plausible given this panel's lighting/angle differs
+        // from a real login attempt) came back completely empty --
+        // reported live by a supervisor whose face matches fine at actual
+        // login but got "no match" here. It now always returns the closest
+        // match with its real distance, and the UI labels it a "closest
+        // guess" instead of silently saying nothing was found.
+        it('shows a "closest guess" (not a confident match) when the nearest profile is above the match threshold', async () => {
+            identifyFaceByDescriptorMock.mockResolvedValueOnce([
+                { profile_id: 'sup-1', profile_name: 'Test Supervisor', profile_role: 'supervisor', distance: 0.63, threshold: 0.5 },
+            ]);
+
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+
+            expect(screen.getByText(/Closest guess: Test Supervisor \(Supervisor\)/)).toBeInTheDocument();
+        });
+
+        it('shows "nobody enrolled" only when the system has no enrolled faces at all', async () => {
             identifyFaceByDescriptorMock.mockResolvedValueOnce([]);
 
             render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
             await act(async () => { screen.getByText('Camera & Face').click(); });
             await act(async () => { screen.getByText('Run Test').click(); });
 
-            expect(screen.getByText('No enrolled match found for this face.')).toBeInTheDocument();
+            expect(screen.getByText('Nobody in the system has an enrolled face yet.')).toBeInTheDocument();
         });
 
         it('stopping the live preview clears the overlay and blink counter', async () => {
