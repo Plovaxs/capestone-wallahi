@@ -846,7 +846,16 @@
     "selectedCount": "{{count}} tugas dipilih",
     "clearSelection": "Batal Pilih",
     "processing": "Memproses...",
-    "approveSelected": "Setujui yang Dipilih"
+    "approveSelected": "Setujui yang Dipilih",
+    "tabOverview": "Ringkasan",
+    "tabEscalations": "Eskalasi",
+    "tabByAssignee": "Per Penerima Tugas",
+    "escalationsTitle": "Tugas yang perlu perhatian",
+    "escalationsDescription": "Semua tugas yang ditandai oleh aturan eskalasi, tingkat keparahan tertinggi duluan -- sinyal yang sama seperti badge di tiap kartu, tapi diagregasi jadi satu daftar.",
+    "noEscalations": "Tidak ada yang tereskalasi saat ini.",
+    "byAssigneeTitle": "Jumlah tugas per orang",
+    "byAssigneeDescription": "Berapa banyak tugas yang dimiliki tiap orang, dirinci per status.",
+    "noTasksYet": "Belum ada tugas."
   },
   "nav": {
     "apps": "Aplikasi",
@@ -1163,7 +1172,20 @@
     "enableDesktopNotifications": "🔔 Aktifkan Notifikasi Desktop",
     "desktopNotificationsEnabled": "Notifikasi desktop sudah aktif.",
     "desktopNotificationsDenied": "Notifikasi desktop diblokir — kamu bisa mengaktifkannya lagi di pengaturan situs browser.",
-    "desktopNotificationsUnsupported": "Notifikasi desktop tidak didukung di browser ini."
+    "desktopNotificationsUnsupported": "Notifikasi desktop tidak didukung di browser ini.",
+    "tabOverview": "Ringkasan",
+    "tabSessionInfo": "Info Sesi",
+    "tabExportData": "Ekspor Data Saya",
+    "sessionInfoTitle": "Sesi kamu saat ini",
+    "sessionInfoDescription": "Detail tentang sesi browser yang sedang kamu gunakan sekarang.",
+    "loadingSessionInfo": "Memuat info sesi...",
+    "sessionEmail": "Email",
+    "sessionExpiresAt": "Berakhir Pada",
+    "sessionProvider": "Metode Masuk",
+    "sessionUserAgent": "Browser / Perangkat",
+    "exportDataTitle": "Unduh data kamu",
+    "exportDataDescription": "File JSON berisi data profil kamu dan aktivitas akun kamu sendiri baru-baru ini.",
+    "exportDataAction": "Unduh JSON"
   },
   "errorMonitor": {
     "title": "Pemantau Error",

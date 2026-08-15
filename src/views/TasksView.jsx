@@ -20,6 +20,7 @@ import { useUndoableAction } from '../patterns/useUndoableAction';
 import { canTransitionTo } from '../state-machines/taskWorkflowMachine';
 import { evaluateTaskEscalation } from '../rule-engine/taskEscalationRules';
 import { useFeatureFlag } from '../feature-flags/useFeatureFlag';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * SUB-COMPONENT: UserAvatar
@@ -59,6 +60,7 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
     const { t } = useTranslation();
     const { runUndoable } = useUndoableAction();
     const bulkActionsEnabled = useFeatureFlag('bulkActions');
+    const [activeTab, setActiveTab] = useState('overview');
     // 🟩 REVISION TARGET: which assignee a "Revision Needed" request is
     // aimed at -- null/'' means general (applies to every assignee).
     const [revisionTarget, setRevisionTarget] = useState('');
@@ -186,6 +188,42 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
             return user ? user.name : t('tasks.unknown');
         }).join(', ');
     };
+
+    // 🟩 NEW SUBMODULE: Escalations -- evaluateTaskEscalation is already
+    // computed per-card (just for a small badge on that one card); this
+    // aggregates the SAME rule-engine result across every task into one
+    // triage list, worst severity first, instead of only surfacing it one
+    // card at a time while scrolling the board.
+    const escalatedTasks = useMemo(() => {
+        const SEVERITY_RANK = { critical: 3, warning: 2, notice: 1 };
+        return tasksWithOptimisticUpdates
+            .map((task) => {
+                const deadlineStatus = getDeadlineStatus(task.due_date, task.status);
+                const escalation = evaluateTaskEscalation(task, deadlineStatus);
+                return escalation ? { task, deadlineStatus, severity: escalation.action.severity } : null;
+            })
+            .filter(Boolean)
+            .sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+    }, [tasksWithOptimisticUpdates]);
+
+    // 🟩 NEW SUBMODULE: By Assignee -- per-employee task counts split by
+    // status, reusing the same already-fetched `tasksWithOptimisticUpdates`
+    // (each task can have multiple assignees, so a task counts once per
+    // assignee here, same as the board's own per-assignee submission logic).
+    const byAssigneeStats = useMemo(() => {
+        const byAssignee = new Map();
+        tasksWithOptimisticUpdates.forEach((task) => {
+            (task.assigned_to || []).forEach((id) => {
+                const key = String(id);
+                if (!byAssignee.has(key)) byAssignee.set(key, { assigneeId: id, name: usersById.get(key)?.name || t('tasks.unknown'), total: 0, byStatus: new Map() });
+                const entry = byAssignee.get(key);
+                entry.total += 1;
+                entry.byStatus.set(task.status, (entry.byStatus.get(task.status) || 0) + 1);
+            });
+        });
+        return Array.from(byAssignee.values()).sort((a, b) => b.total - a.total);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tasksWithOptimisticUpdates, usersById]);
 
     // Formats filtered parameters into a sanitized format before generating spreadsheet reports
     const exportData = useMemo(() => processedTasks
@@ -957,6 +995,73 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                 </div>
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('tasks.tabOverview'), icon: Icons.ClipboardList },
+                    { id: 'escalations', label: t('tasks.tabEscalations'), icon: Icons.AlertTriangle },
+                    { id: 'byAssignee', label: t('tasks.tabByAssignee'), icon: Icons.UsersGroup },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'escalations' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('tasks.escalationsTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('tasks.escalationsDescription')}</p>
+                    {escalatedTasks.length === 0 ? (
+                        <EmptyState icon={Icons.ShieldCheck} title={t('tasks.noEscalations')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {escalatedTasks.map(({ task, deadlineStatus, severity }) => (
+                                <li key={task.id} className="py-3 flex items-center justify-between gap-4">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-bold text-gray-800 dark:text-gray-100 truncate">{task.title}</p>
+                                        <p className="text-[10px] text-gray-400 dark:text-gray-500">{getAssigneeNames(task.assigned_to)} &middot; {deadlineStatus}</p>
+                                    </div>
+                                    <span className={`text-[10px] font-bold px-2 py-1 rounded-lg shrink-0 uppercase ${
+                                        severity === 'critical'
+                                            ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
+                                            : severity === 'warning'
+                                            ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
+                                            : 'bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300'
+                                    }`}>
+                                        {severity}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'byAssignee' && (
+                <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700/60 p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('tasks.byAssigneeTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('tasks.byAssigneeDescription')}</p>
+                    {byAssigneeStats.length === 0 ? (
+                        <EmptyState icon={Icons.UsersGroup} title={t('tasks.noTasksYet')} />
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40">
+                            {byAssigneeStats.map((row) => (
+                                <li key={row.assigneeId} className="py-3 flex items-center justify-between gap-4">
+                                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">{row.name}</span>
+                                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                        {Array.from(row.byStatus.entries()).map(([status, count]) => (
+                                            <span key={status} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-gray-100 text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                                                {status}: {count}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'overview' && (
+            <>
             {/* --- CONTROL PANEL FILTERS BAR --- */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
                 <div>
@@ -1334,6 +1439,8 @@ const TasksView = ({ userProfile, tasks = [], taskSubmissions = [], allUsers = [
                         </div>
                     </div>
                 </div>
+            )}
+            </>
             )}
         </div>
     );

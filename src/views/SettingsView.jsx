@@ -18,6 +18,7 @@ import Button from '../components/Button';
 import Card from '../components/Card';
 import EmptyState from '../components/EmptyState';
 import { SkeletonList } from '../components/Skeleton';
+import ModuleTabBar from '../components/ModuleTabBar';
 
 /**
  * COMPONENT: SettingsView
@@ -36,10 +37,22 @@ const SettingsView = ({
     onReplayOnboarding,
 }) => {
     const { t, i18n } = useTranslation();
+    const [activeTab, setActiveTab] = useState('overview');
 
     // --- INTERFACE UTILITY LOADING STATES ---
     const [uploading, setUploading] = useState(false);
     const [password, setPassword] = useState('');
+
+    // 🟩 NEW SUBMODULE: Session Info -- this view never surfaced the
+    // logged-in user's own session expiry/last-sign-in details anywhere
+    // (Debug Center's Session & Auth tab shows something similar, but
+    // that's a supervisor-only diagnostic, not a personal settings page).
+    // One extra read-only supabase.auth.getSession() call, fetched once
+    // on mount -- same call Debug Center already makes.
+    const [sessionInfo, setSessionInfo] = useState(null);
+    useEffect(() => {
+        supabase.auth.getSession().then(({ data }) => setSessionInfo(data?.session || null));
+    }, []);
 
     // --- BROWSER PUSH NOTIFICATION CHANNEL (strategy pattern toggle) ---
     const pushChannel = notificationDispatcher.getChannel(BrowserPushChannel);
@@ -426,6 +439,37 @@ const SettingsView = ({
         }
     };
 
+    // 🟩 NEW SUBMODULE: Export My Data -- a downloadable JSON snapshot of
+    // this user's own profile fields + their own recent activity (the
+    // `activity` state above, already fetched for the Activity card).
+    // Purely a client-side blob download, same technique
+    // DebugCenterView's diagnostic report / ReportBugButton's snapshot
+    // already use elsewhere in this app -- no new backend endpoint.
+    const handleExportMyData = () => {
+        const payload = {
+            exportedAt: new Date().toISOString(),
+            profile: {
+                id: userProfile.id, name: userProfile.name, email: userProfile.email, role: userProfile.role,
+                department: userProfile.department, position: userProfile.position, source: userProfile.source,
+                work_mode: userProfile.work_mode, contract_start_date: userProfile.contract_start_date,
+                contract_end_date: userProfile.contract_end_date, vacation_days: userProfile.vacation_days,
+                sick_days: userProfile.sick_days,
+            },
+            recentActivity: activity.map((entry) => ({
+                action: entry.action, entity_type: entry.entity_type, created_at: entry.created_at, details: entry.details,
+            })),
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `my-data-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const handleSignOutEverywhere = async () => {
         if (!(await confirmDialog(t('settings.confirmSignOutEverywhere')))) return;
         setSigningOutEverywhere(true);
@@ -445,6 +489,61 @@ const SettingsView = ({
                 <p className="text-sm text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
             </div>
 
+            <ModuleTabBar
+                tabs={[
+                    { id: 'overview', label: t('settings.tabOverview'), icon: Icons.UserCircle },
+                    { id: 'sessionInfo', label: t('settings.tabSessionInfo'), icon: Icons.Lock },
+                    { id: 'exportData', label: t('settings.tabExportData'), icon: Icons.ClipboardCheck },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+            />
+
+            {activeTab === 'sessionInfo' && (
+                <Card className="p-6">
+                    <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.sessionInfoTitle')}</h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t('settings.sessionInfoDescription')}</p>
+                    {!sessionInfo ? (
+                        <p className="text-xs text-gray-400 dark:text-gray-500">{t('settings.loadingSessionInfo')}</p>
+                    ) : (
+                        <ul className="divide-y divide-gray-50 dark:divide-gray-700/40 text-xs">
+                            <li className="flex items-center justify-between py-2.5">
+                                <span className="text-gray-400 dark:text-gray-500">{t('settings.sessionEmail')}</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-200">{sessionInfo.user?.email || t('settings.notSetYet')}</span>
+                            </li>
+                            <li className="flex items-center justify-between py-2.5">
+                                <span className="text-gray-400 dark:text-gray-500">{t('settings.sessionExpiresAt')}</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-200">
+                                    {sessionInfo.expires_at ? new Date(sessionInfo.expires_at * 1000).toLocaleString() : t('settings.notSetYet')}
+                                </span>
+                            </li>
+                            <li className="flex items-center justify-between py-2.5">
+                                <span className="text-gray-400 dark:text-gray-500">{t('settings.sessionProvider')}</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-200">{sessionInfo.user?.app_metadata?.provider || t('settings.notSetYet')}</span>
+                            </li>
+                            <li className="py-2.5">
+                                <span className="text-gray-400 dark:text-gray-500 block mb-1">{t('settings.sessionUserAgent')}</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-200 break-all">{navigator.userAgent}</span>
+                            </li>
+                        </ul>
+                    )}
+                </Card>
+            )}
+
+            {activeTab === 'exportData' && (
+                <Card className="p-6">
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                            <h3 className="font-bold text-sm text-gray-800 dark:text-gray-100 mb-1">{t('settings.exportDataTitle')}</h3>
+                            <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md">{t('settings.exportDataDescription')}</p>
+                        </div>
+                        <Button size="sm" onClick={handleExportMyData}>{t('settings.exportDataAction')}</Button>
+                    </div>
+                </Card>
+            )}
+
+            {activeTab === 'overview' && (
+            <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
                 {/* --- CONTAINER SECTION 0: MY ASSIGNMENT (READ-ONLY, EMPLOYEES ONLY) --- */}
@@ -1133,6 +1232,8 @@ const SettingsView = ({
                     </div>
                 )}
             </div>
+            </>
+            )}
         </div>
     );
 };

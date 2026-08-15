@@ -851,7 +851,16 @@
     "selectedCount": "{{count}} task(s) selected",
     "clearSelection": "Clear",
     "processing": "Processing...",
-    "approveSelected": "Approve Selected"
+    "approveSelected": "Approve Selected",
+    "tabOverview": "Overview",
+    "tabEscalations": "Escalations",
+    "tabByAssignee": "By Assignee",
+    "escalationsTitle": "Tasks needing attention",
+    "escalationsDescription": "Every task the escalation rules flagged, worst severity first -- the same signal each card's badge shows individually, aggregated into one list.",
+    "noEscalations": "Nothing escalated right now.",
+    "byAssigneeTitle": "Task counts per person",
+    "byAssigneeDescription": "How many tasks each person has, broken down by status.",
+    "noTasksYet": "No tasks yet."
   },
   "nav": {
     "apps": "Apps",
@@ -1168,7 +1177,20 @@
     "enableDesktopNotifications": "🔔 Enable Desktop Notifications",
     "desktopNotificationsEnabled": "Desktop notifications are enabled.",
     "desktopNotificationsDenied": "Desktop notifications were blocked — you can re-enable them in your browser's site settings.",
-    "desktopNotificationsUnsupported": "Desktop notifications aren't supported in this browser."
+    "desktopNotificationsUnsupported": "Desktop notifications aren't supported in this browser.",
+    "tabOverview": "Overview",
+    "tabSessionInfo": "Session Info",
+    "tabExportData": "Export My Data",
+    "sessionInfoTitle": "Your current session",
+    "sessionInfoDescription": "Details about the browser session you're signed in with right now.",
+    "loadingSessionInfo": "Loading session info...",
+    "sessionEmail": "Email",
+    "sessionExpiresAt": "Expires At",
+    "sessionProvider": "Sign-in Method",
+    "sessionUserAgent": "Browser / Device",
+    "exportDataTitle": "Download your data",
+    "exportDataDescription": "A JSON file with your profile fields and your own recent account activity.",
+    "exportDataAction": "Download JSON"
   },
   "errorMonitor": {
     "title": "Error Monitor",
