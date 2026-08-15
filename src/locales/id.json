@@ -1316,7 +1316,7 @@
     "cameraReason_not-found": "Tidak ada kamera yang ditemukan di perangkat ini.",
     "cameraReason_busy": "Kamera sedang dipakai aplikasi lain.",
     "cameraReason_unknown": "Akses kamera gagal karena alasan yang tidak diketahui.",
-    "yoloUnreachableHint": "Host ini tidak terjangkau adalah penyebab yang diketahui bikin deteksi wajah diam-diam nggak pernah jalan di Attendance -- lihat perbaikan fallback-ke-face-api.",
+    "yoloUnreachableHint": "Ini bisa jadi masalah jaringan, atau host model-nya nolak request (misalnya butuh autentikasi) -- apapun sebabnya, deteksi wajah otomatis jatuh ke jalur yang sama seperti Login, jadi ini doang nggak bikin Attendance rusak.",
     "videoNotReady": "Feed kamera tidak pernah mulai memutar tepat waktu.",
     "detectionFoundFace": "Wajah terdeteksi (keyakinan {{score}}%).",
     "detectionNoFace": "Tidak ada wajah terdeteksi di frame -- coba pencahayaan lebih baik atau posisikan wajah di tengah.",

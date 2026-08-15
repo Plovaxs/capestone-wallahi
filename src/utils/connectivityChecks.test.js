@@ -46,6 +46,15 @@ describe('connectivityChecks', () => {
         expect(result.error).toBe('timeout');
     });
 
+    it('reports unreachable when the request resolves but with a non-ok HTTP status', async () => {
+        fetchMock.mockResolvedValue({ ok: false, status: 500 });
+        const resultPromise = checkSupabaseReachable();
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('HTTP 500');
+    });
+
     it('reports the underlying error message when the request rejects outright (not a timeout)', async () => {
         fetchMock.mockRejectedValue(new Error('Failed to fetch'));
         const resultPromise = checkSupabaseReachable();
@@ -58,16 +67,34 @@ describe('connectivityChecks', () => {
     // 🟩 This is the exact check that would have caught the reported
     // "attendance face recognition doesn't work but login does" bug --
     // AttendanceView's YOLO detector fetches its model from this same host.
-    it('checkHuggingFaceCdnReachable probes the YOLO model host', async () => {
-        fetchMock.mockResolvedValue({ type: 'opaque' });
+    it('checkHuggingFaceCdnReachable probes the YOLO model host and reports success on a 2xx', async () => {
+        fetchMock.mockResolvedValue({ ok: true, status: 200 });
         const resultPromise = checkHuggingFaceCdnReachable();
         await vi.runAllTimersAsync();
         const result = await resultPromise;
         expect(result.ok).toBe(true);
-        expect(fetchMock).toHaveBeenCalledWith(
-            expect.stringContaining('huggingface.co'),
-            expect.objectContaining({ mode: 'no-cors' })
-        );
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('huggingface.co'), expect.any(Object));
+        // Not mode:'no-cors' -- verified live that Hugging Face's model API
+        // sends normal CORS headers, and no-cors would make `res.ok` always
+        // false (an opaque response, by spec) even on genuine success,
+        // which would make the check below (a real 401) indistinguishable
+        // from a real success.
+        expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.not.objectContaining({ mode: 'no-cors' }));
+    });
+
+    // 🟩 REGRESSION TEST: verified live against the real Hugging Face API --
+    // Xenova/yolov8n-face (the exact model AttendanceView's YOLO detector
+    // depends on) currently returns 401 "Invalid username or password" for
+    // every request, unconditionally -- not a network/timeout issue at
+    // all. A resolved-but-non-ok fetch() promise previously made this
+    // check report "reachable" regardless of the actual HTTP status.
+    it('checkHuggingFaceCdnReachable reports unreachable on a real HTTP error status (e.g. 401), not just network failures', async () => {
+        fetchMock.mockResolvedValue({ ok: false, status: 401 });
+        const resultPromise = checkHuggingFaceCdnReachable();
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('HTTP 401');
     });
 
     it('checkSupabaseRealtimeReachable probes the realtime endpoint', async () => {

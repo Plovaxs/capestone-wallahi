@@ -1316,7 +1316,7 @@
     "cameraReason_not-found": "No camera was found on this device.",
     "cameraReason_busy": "The camera is already in use by another app.",
     "cameraReason_unknown": "Camera access failed for an unknown reason.",
-    "yoloUnreachableHint": "This host being unreachable is a known cause of face detection silently never working on Attendance -- see the fallback-to-face-api fix.",
+    "yoloUnreachableHint": "This can be a network issue, or the model host rejecting the request (e.g. requiring authentication) -- either way, face detection automatically falls back to the same reliable path Login uses, so this alone doesn't break Attendance.",
     "videoNotReady": "The camera feed never started playing in time.",
     "detectionFoundFace": "Face detected ({{score}}% confidence).",
     "detectionNoFace": "No face detected in the frame -- try better lighting or centering your face.",

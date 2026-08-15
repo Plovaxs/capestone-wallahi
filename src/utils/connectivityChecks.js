@@ -17,7 +17,20 @@ const DEFAULT_TIMEOUT_MS = 6000;
 async function probe(label, fetchFn, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     const startedAt = performance.now();
     try {
-        await withTimeout(fetchFn(), timeoutMs, label);
+        const res = await withTimeout(fetchFn(), timeoutMs, label);
+        // 🟩 BUG FIX: a resolved fetch() promise only means the request
+        // reached a server and got SOME response back -- it says nothing
+        // about whether that response was actually a success. Verified
+        // live: Xenova/yolov8n-face (the YOLO model AttendanceView depends
+        // on) now returns 401 "Invalid username or password" -- the org's
+        // models require auth on Hugging Face's side, unrelated to network
+        // reachability at all. `res.ok` (false for any 4xx/5xx) is checked
+        // explicitly now instead of treating "the promise didn't reject" as
+        // success, so a hard-rejected/gated/moved resource is correctly
+        // reported as unreachable instead of a false "reachable".
+        if (res && typeof res.ok === 'boolean' && !res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
         return { label, ok: true, latencyMs: Math.round(performance.now() - startedAt), error: null };
     } catch (error) {
         const isTimeout = /timed out/i.test(error?.message || '');
@@ -35,14 +48,22 @@ export const checkSupabaseReachable = () => probe('supabase', () =>
     fetch(`${supabaseUrl}/rest/v1/`, { method: 'HEAD', headers: { apikey: supabaseAnonKey } })
 );
 
-/** Supabase's Realtime websocket endpoint, over plain HTTP (just confirms the host/port answers -- doesn't open a full websocket, which needs an active client context this util doesn't have). */
+/** Supabase's Realtime websocket endpoint, over plain HTTP (just confirms the host/port answers -- doesn't open a full websocket, which needs an active client context this util doesn't have; DebugCenterView's Realtime tab does that deeper check separately). */
 export const checkSupabaseRealtimeReachable = () => probe('supabase-realtime', () =>
-    fetch(`${supabaseUrl.replace(/^http/, 'http')}/realtime/v1/`, { method: 'HEAD', headers: { apikey: supabaseAnonKey } })
+    fetch(`${supabaseUrl}/realtime/v1/`, { method: 'HEAD', headers: { apikey: supabaseAnonKey } })
 );
 
-/** The exact host AttendanceView's YOLO face detector fetches its model from -- see vision/faceDiagnostics.js and the YOLO timeout fix in AttendanceView.jsx. */
+/**
+ * The exact model AttendanceView's YOLO face detector fetches -- see the
+ * YOLO timeout/fallback fix in AttendanceView.jsx. Deliberately NOT
+ * `mode: 'no-cors'` -- verified live that Hugging Face's model API sends
+ * normal CORS headers (no opaque-response workaround needed), and no-cors
+ * would have hidden the real status code (`res.ok` is always false on an
+ * opaque response, by spec, even on genuine success), making it
+ * impossible to tell "unreachable" apart from "reachable but rejected".
+ */
 export const checkHuggingFaceCdnReachable = () => probe('huggingface-cdn', () =>
-    fetch('https://huggingface.co/api/models/Xenova/yolov8n-face', { method: 'HEAD', mode: 'no-cors' })
+    fetch('https://huggingface.co/api/models/Xenova/yolov8n-face', { method: 'HEAD' })
 );
 
 /** The local face-api.js model weights every face-scan page (Login, Attendance) depends on -- confirms they're actually being served, not a 404 from a broken deploy/CDN path. */
