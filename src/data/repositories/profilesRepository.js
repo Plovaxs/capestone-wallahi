@@ -39,4 +39,13 @@ export const profilesRepository = {
     findDuplicateEnrollments: () => runQuery('profiles.findDuplicateEnrollments', () =>
         supabase.rpc('find_duplicate_enrollments')
     ),
+
+    // 🟩 Debug Center "whose face is this" testing feature -- same
+    // server-side-only comparison discipline as findDuplicateEnrollments
+    // above: the live descriptor goes in, only the best match's identity
+    // and distance come back, nobody's stored template ever reaches the
+    // client. Supervisor-gated inside the RPC itself.
+    identifyFaceByDescriptor: (liveDescriptor, threshold) => runQuery('profiles.identifyFaceByDescriptor', () =>
+        supabase.rpc('identify_face_by_descriptor', { p_descriptor: liveDescriptor, p_threshold: threshold })
+    ),
 };

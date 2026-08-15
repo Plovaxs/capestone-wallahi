@@ -62,6 +62,30 @@ vi.mock('../supabaseClient', () => ({
     },
 }));
 
+// 🟩 Open-eye landmark points (6 per eye, EAR comfortably above the closed
+// threshold) shared by every camera-tab test below -- real coordinates
+// don't matter, only that calculateEAR/isEyeClosed read them as "open".
+const OPEN_EYE_POINTS = [
+    { x: 0, y: 0 }, { x: 2, y: -2 }, { x: 4, y: -2 },
+    { x: 6, y: 0 }, { x: 4, y: 2 }, { x: 2, y: 2 },
+];
+const mockLandmarks = { getLeftEye: () => OPEN_EYE_POINTS, getRightEye: () => OPEN_EYE_POINTS };
+const mockDetection = { detection: { score: 0.9, box: { x: 10, y: 10, width: 100, height: 100 } }, landmarks: mockLandmarks };
+
+// 🟩 face-api.js's real detectSingleFace(...).withFaceLandmarks() returns a
+// chainable, awaitable "task" object -- both a thenable AND exposes a
+// further .withFaceDescriptor() step. Mirrored here so both call sites in
+// DebugCenterView.jsx (the one-shot pipeline step, which stops at
+// withFaceLandmarks, and the live overlay loop, which chains
+// withFaceDescriptor too) work against the same mock.
+function makeLandmarksTask(detection) {
+    const task = Promise.resolve(detection);
+    task.withFaceDescriptor = () => Promise.resolve(
+        detection ? { ...detection, descriptor: new Float32Array(128).fill(0.1) } : null
+    );
+    return task;
+}
+
 vi.mock('face-api.js', () => ({
     nets: {
         tinyFaceDetector: { loadFromUri: vi.fn().mockResolvedValue() },
@@ -69,7 +93,14 @@ vi.mock('face-api.js', () => ({
         faceRecognitionNet: { loadFromUri: vi.fn().mockResolvedValue() },
     },
     TinyFaceDetectorOptions: vi.fn(),
-    detectSingleFace: vi.fn(() => ({ withFaceLandmarks: () => Promise.resolve(null) })),
+    detectSingleFace: vi.fn(() => ({
+        withFaceLandmarks: () => makeLandmarksTask(globalThis.__mockFaceDetection ?? null),
+    })),
+}));
+
+const identifyFaceByDescriptorMock = vi.hoisted(() => vi.fn(() => Promise.resolve([])));
+vi.mock('../data/repositories/profilesRepository', () => ({
+    profilesRepository: { identifyFaceByDescriptor: (...args) => identifyFaceByDescriptorMock(...args) },
 }));
 
 import DebugCenterView from './DebugCenterView';
@@ -190,5 +221,73 @@ describe('DebugCenterView', () => {
         await act(async () => { screen.getByText('History').click(); });
         await act(async () => { screen.getByText('Refresh').click(); });
         expect(screen.getByText('No diagnostic runs yet')).toBeInTheDocument();
+    });
+
+    describe('Camera & Face Recognition Pipeline', () => {
+        beforeEach(() => {
+            globalThis.__mockFaceDetection = mockDetection;
+            // 🟩 jsdom never actually plays media, so a real <video>'s
+            // readyState stays 0 (HAVE_NOTHING) forever -- without this
+            // stub, runPipelineTest's "wait for the video to be ready" loop
+            // would poll on a REAL 150ms setTimeout up to its 4s deadline,
+            // which act()'s microtask-only flush never waits out.
+            Object.defineProperty(window.HTMLMediaElement.prototype, 'readyState', {
+                configurable: true,
+                get: () => 4,
+            });
+        });
+
+        afterEach(() => {
+            delete globalThis.__mockFaceDetection;
+            delete window.HTMLMediaElement.prototype.readyState;
+        });
+
+        it('auto-starts the live face/eye overlay after a successful run instead of stopping the camera', async () => {
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+
+            // 🟩 Regression guard for the "camera dies right after the test
+            // finishes" bug: reaching the live-scanning state (and its Stop
+            // button) proves the stream was never torn down at the end of
+            // runPipelineTest.
+            expect(screen.getByText('Stop Live Preview')).toBeInTheDocument();
+            expect(screen.getByText('🔍 LIVE FACE')).toBeInTheDocument();
+            expect(screen.getByText('Blinks detected: 0')).toBeInTheDocument();
+        });
+
+        it('identifies the live-detected face against enrolled profiles and shows name + role', async () => {
+            identifyFaceByDescriptorMock.mockResolvedValueOnce([
+                { profile_id: 'emp-1', profile_name: 'Budi Santoso', profile_role: 'employee', distance: 0.21 },
+            ]);
+
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+
+            expect(identifyFaceByDescriptorMock).toHaveBeenCalledWith(expect.any(Array), 0.5);
+            expect(screen.getByText(/Identified as Budi Santoso \(Employee\)/)).toBeInTheDocument();
+        });
+
+        it('shows "no enrolled match" when the live face does not match anyone', async () => {
+            identifyFaceByDescriptorMock.mockResolvedValueOnce([]);
+
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+
+            expect(screen.getByText('No enrolled match found for this face.')).toBeInTheDocument();
+        });
+
+        it('stopping the live preview clears the overlay and blink counter', async () => {
+            render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />);
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+            await act(async () => { screen.getByText('Run Test').click(); });
+            expect(screen.getByText('Stop Live Preview')).toBeInTheDocument();
+
+            await act(async () => { screen.getByText('Stop Live Preview').click(); });
+            expect(screen.queryByText('🔍 LIVE FACE')).not.toBeInTheDocument();
+            expect(screen.getByText('Start Live Preview')).toBeInTheDocument();
+        });
     });
 });

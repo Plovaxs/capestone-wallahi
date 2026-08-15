@@ -1,5 +1,5 @@
 import { withTimeout } from '../data/pipeline/withTimeout';
-import { supabaseUrl, supabaseAnonKey } from '../supabaseClient';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../supabaseClient';
 
 const DEFAULT_TIMEOUT_MS = 6000;
 
@@ -43,15 +43,59 @@ async function probe(label, fetchFn, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     }
 }
 
-/** Supabase's own REST endpoint -- same lightweight HEAD request utils/serverTime.js already uses for clock sync, so this doesn't add a new backend dependency. */
+/**
+ * Supabase's own REST endpoint -- same lightweight HEAD request
+ * utils/serverTime.js already uses for clock sync, so this doesn't add a
+ * new backend dependency.
+ * 🟩 BUG FIX: sent only the `apikey` header -- reported live as a 401 on
+ * a real deployment even though the same anon key worked for every other
+ * Supabase call on that page (which all go through supabase-js, which
+ * always sends BOTH `apikey` and `Authorization: Bearer <anon key>`).
+ * Supabase's gateway can reject a request missing `Authorization`
+ * depending on project config, so a plain HEAD sending only `apikey` was
+ * a strictly weaker request than what the rest of the app actually relies
+ * on -- this probe could report "unreachable" on a deployment that was
+ * working completely fine otherwise. Sending both matches what
+ * supabase-js itself sends.
+ */
 export const checkSupabaseReachable = () => probe('supabase', () =>
-    fetch(`${supabaseUrl}/rest/v1/`, { method: 'HEAD', headers: { apikey: supabaseAnonKey } })
+    fetch(`${supabaseUrl}/rest/v1/`, {
+        method: 'HEAD',
+        headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${supabaseAnonKey}` },
+    })
 );
 
-/** Supabase's Realtime websocket endpoint, over plain HTTP (just confirms the host/port answers -- doesn't open a full websocket, which needs an active client context this util doesn't have; DebugCenterView's Realtime tab does that deeper check separately). */
-export const checkSupabaseRealtimeReachable = () => probe('supabase-realtime', () =>
-    fetch(`${supabaseUrl}/realtime/v1/`, { method: 'HEAD', headers: { apikey: supabaseAnonKey } })
-);
+/**
+ * Supabase Realtime reachability, checked the same way DebugCenterView's
+ * dedicated Realtime tab already does: actually opening a short-lived
+ * websocket channel via supabase-js and waiting for SUBSCRIBED, not a
+ * plain `fetch()` HEAD against the /realtime/v1/ HTTP path.
+ * 🟩 BUG FIX: the old HEAD-fetch approach was verified live to fail with
+ * a browser CORS error on a real deployment -- Realtime's HTTP endpoint
+ * exists to negotiate a websocket upgrade, and Supabase doesn't
+ * necessarily serve CORS headers on it for a plain cross-origin HEAD
+ * request. supabase-js's own websocket client sidesteps this entirely
+ * (the browser's CORS preflight machinery only applies to `fetch`/XHR,
+ * not the WebSocket handshake), so this is both more accurate (tests the
+ * actual protocol the app depends on) and doesn't throw an
+ * un-suppressible "blocked by CORS policy" console line for a routine
+ * diagnostic check.
+ */
+export const checkSupabaseRealtimeReachable = () => probe('supabase-realtime', async () => {
+    const channel = supabase.channel(`connectivity-probe-${Date.now()}`);
+    try {
+        const failureStatus = await new Promise((resolve) => {
+            channel.subscribe((status) => {
+                if (status === 'SUBSCRIBED') resolve(null);
+                else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') resolve(status);
+            });
+        });
+        if (failureStatus) throw new Error(failureStatus);
+        return { ok: true };
+    } finally {
+        await supabase.removeChannel(channel);
+    }
+});
 
 /**
  * General Hugging Face API reachability -- deliberately NOT

@@ -10,6 +10,9 @@ import { debugDiagnosticRunsRepository } from '../data/repositories/debugDiagnos
 import { showUserError } from '../utils/errorHandling';
 import { supabase } from '../supabaseClient';
 import { idbGet } from '../offline/indexedDbCache';
+import { calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
+import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
+import { profilesRepository } from '../data/repositories/profilesRepository';
 
 // 🟩 Same lazy-load-once-and-cache pattern AttendanceView.jsx/LoginPage.jsx
 // each already have their own copy of -- a third independent copy here
@@ -129,15 +132,55 @@ const PipelineStepRow = ({ step }) => (
     </li>
 );
 
+// 🟩 LIVE DIAGNOSTIC OVERLAY: how often the live loop below runs a
+// detection tick, and how often (at minimum) it's allowed to fire the
+// identify_face_by_descriptor RPC -- ticking every 500ms but only
+// identifying every 1.5s keeps the face/eye/blink overlay responsive
+// without hammering the database with a request per frame. Same
+// FACE_MATCH_THRESHOLD AttendanceView.jsx uses for a real clock-in match.
+const LIVE_TICK_MS = 500;
+const IDENTIFY_THROTTLE_MS = 1500;
+const FACE_MATCH_THRESHOLD = 0.5;
+
 const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
     const { t } = useTranslation();
     const [isRunning, setIsRunning] = useState(false);
     const videoRef = useRef(null);
     const streamRef = useRef(null);
+    const faceapiRef = useRef(null);
+    const detectOptionsRef = useRef(null);
+
+    // 🟩 LIVE DIAGNOSTIC OVERLAY (this round's feature): after a successful
+    // pipeline run, keeps polling the still-live camera the same way
+    // Login/Attendance do -- draws a box around the detected face and each
+    // eye, lights an eye box up on blink, counts blinks, and (throttled)
+    // asks the database who the live descriptor best matches via
+    // identify_face_by_descriptor -- purely for supervisors to visually
+    // confirm face/eye/blink detection AND identity matching are actually
+    // working on this device, without needing a real clock-in attempt.
+    const [isLiveScanning, setIsLiveScanning] = useState(false);
+    const [liveFaceBox, setLiveFaceBox] = useState(null);
+    const [liveEyeBoxes, setLiveEyeBoxes] = useState(null);
+    const [blinkCount, setBlinkCount] = useState(0);
+    const [identity, setIdentity] = useState({ status: 'idle' });
+    const tickBusyRef = useRef(false);
+    const identifyInFlightRef = useRef(false);
+    const lastIdentifyAtRef = useRef(0);
+    const eyesWereOpenRef = useRef(true);
+    const runLiveTickRef = useRef(() => {});
 
     const stopStream = () => {
         streamRef.current?.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
+    };
+
+    const resetLiveOverlay = () => {
+        setIsLiveScanning(false);
+        setLiveFaceBox(null);
+        setLiveEyeBoxes(null);
+        setBlinkCount(0);
+        setIdentity({ status: 'idle' });
+        eyesWereOpenRef.current = true;
     };
 
     // 🟩 BUG FIX: the camera used to die the instant a test run finished --
@@ -148,10 +191,90 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
     // successful test.
     useEffect(() => stopStream, []);
 
+    runLiveTickRef.current = async () => {
+        const video = videoRef.current;
+        const faceapi = faceapiRef.current;
+        if (!video || !faceapi || video.readyState < 2 || tickBusyRef.current) return;
+        tickBusyRef.current = true;
+        try {
+            const detection = await faceapi
+                .detectSingleFace(video, detectOptionsRef.current)
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+
+            if (!detection) {
+                setLiveFaceBox(null);
+                setLiveEyeBoxes(null);
+                return;
+            }
+
+            const box = detection.detection.box;
+            setLiveFaceBox({ x: box.x, y: box.y, width: box.width, height: box.height });
+
+            const leftEye = detection.landmarks.getLeftEye();
+            const rightEye = detection.landmarks.getRightEye();
+            const leftClosed = isEyeClosed(leftEye);
+            const rightClosed = isEyeClosed(rightEye);
+            const geometry = calculateEyeBoxes(detection.landmarks);
+            setLiveEyeBoxes(geometry ? { ...geometry, leftClosed, rightClosed } : null);
+
+            const bothClosed = leftClosed && rightClosed;
+            if (bothClosed && eyesWereOpenRef.current) {
+                setBlinkCount((count) => count + 1);
+                eyesWereOpenRef.current = false;
+            } else if (!leftClosed && !rightClosed) {
+                eyesWereOpenRef.current = true;
+            }
+
+            // 🟩 SECURITY: identifyFaceByDescriptor goes through runQuery,
+            // which dedupes purely by RPC label (see apiClient.js) -- firing
+            // a second call before the first resolves would let it adopt
+            // the first call's in-flight promise and silently return a
+            // match for a DIFFERENT (stale) descriptor. The in-flight guard
+            // below, not just the time throttle, is what prevents that.
+            const now = Date.now();
+            if (!identifyInFlightRef.current && now - lastIdentifyAtRef.current >= IDENTIFY_THROTTLE_MS) {
+                identifyInFlightRef.current = true;
+                lastIdentifyAtRef.current = now;
+                setIdentity((prev) => ({ ...prev, status: 'identifying' }));
+                try {
+                    const rows = await profilesRepository.identifyFaceByDescriptor(
+                        Array.from(detection.descriptor),
+                        FACE_MATCH_THRESHOLD
+                    );
+                    const best = rows?.[0];
+                    setIdentity(best
+                        ? { status: 'identified', name: best.profile_name, role: best.profile_role, distance: best.distance }
+                        : { status: 'unknown' });
+                } catch (error) {
+                    setIdentity({ status: 'error', detail: error?.message });
+                } finally {
+                    identifyInFlightRef.current = false;
+                }
+            }
+        } catch (_error) {
+            // Transient per-tick detection failure -- next tick just retries.
+        } finally {
+            tickBusyRef.current = false;
+        }
+    };
+
+    useEffect(() => {
+        if (!isLiveScanning) return undefined;
+        // 🟩 Fires one tick immediately instead of waiting a full
+        // LIVE_TICK_MS before the very first face/eye/identity read --
+        // otherwise the overlay sits empty for half a second right after
+        // the user (or the auto-start below) turns it on for no reason.
+        runLiveTickRef.current();
+        const intervalId = setInterval(() => { runLiveTickRef.current(); }, LIVE_TICK_MS);
+        return () => clearInterval(intervalId);
+    }, [isLiveScanning]);
+
     const runPipelineTest = async () => {
         setIsRunning(true);
         setSteps([]);
         stopStream();
+        resetLiveOverlay();
         const collected = [];
         const push = (step) => { collected.push(step); setSteps([...collected]); };
 
@@ -182,6 +305,8 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                 faceapi.nets.faceLandmark68Net.loadFromUri(FACE_MODEL_URL),
                 faceapi.nets.faceRecognitionNet.loadFromUri(FACE_MODEL_URL),
             ]);
+            faceapiRef.current = faceapi;
+            detectOptionsRef.current = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.3 });
             push({ label: t('debugCenter.stepModels'), ok: true });
         } catch (error) {
             push({ label: t('debugCenter.stepModels'), ok: false, detail: error?.message });
@@ -207,7 +332,7 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
         } else {
             try {
                 const detection = await faceapi
-                    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.3 }))
+                    .detectSingleFace(video, detectOptionsRef.current)
                     .withFaceLandmarks();
                 push({
                     label: t('debugCenter.stepDetection'),
@@ -223,7 +348,17 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
 
         setRanAt(new Date());
         setIsRunning(false);
+        // 🟩 Auto-start the live overlay the moment camera + models are both
+        // confirmed working (both already returned early above on failure),
+        // matching the user's ask to see face/eye/blink/identity detection
+        // continuously the same way Login/Attendance do, not a one-shot
+        // pass/fail line.
+        setIsLiveScanning(true);
     };
+
+    const getFaceOverlayStyle = () => calculateFaceOverlayStyle({ box: liveFaceBox, videoEl: videoRef.current });
+    const getEyeOverlayStyle = (eyeBox) => calculateFaceOverlayStyle({ box: eyeBox, videoEl: videoRef.current });
+    const formatRole = (role) => (role ? role.charAt(0).toUpperCase() + role.slice(1) : '');
 
     return (
         <Card className="p-6">
@@ -233,10 +368,78 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                     <p className="text-xs text-gray-400 dark:text-gray-500 max-w-md">{t('debugCenter.cameraDescription')}</p>
                     <LastRunLabel ranAt={ranAt} t={t} />
                 </div>
-                <Button size="sm" onClick={runPipelineTest} loading={isRunning}>{t('debugCenter.runTest')}</Button>
+                <div className="flex items-center gap-2">
+                    {streamRef.current && faceapiRef.current && !isRunning && (
+                        <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => (isLiveScanning ? resetLiveOverlay() : setIsLiveScanning(true))}
+                        >
+                            {isLiveScanning ? t('debugCenter.stopLivePreview') : t('debugCenter.startLivePreview')}
+                        </Button>
+                    )}
+                    <Button size="sm" onClick={runPipelineTest} loading={isRunning}>{t('debugCenter.runTest')}</Button>
+                </div>
             </div>
 
-            <video ref={videoRef} autoPlay playsInline muted className="w-full max-w-xs rounded-xl bg-gray-100 dark:bg-gray-900 mb-4" style={{ transform: 'scaleX(-1)' }} />
+            <div className="relative w-full max-w-xs mb-4">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-xl bg-gray-100 dark:bg-gray-900" style={{ transform: 'scaleX(-1)' }} />
+
+                {liveFaceBox && isLiveScanning && (
+                    <div
+                        className="absolute border-2 rounded-xl z-20 pointer-events-none transition-all duration-75 border-blue-400 bg-blue-500/10 shadow-[0_0_15px_rgba(96,165,250,0.3)]"
+                        style={getFaceOverlayStyle() || { display: 'none' }}
+                    >
+                        <div className="absolute -top-6 left-0 text-[9px] font-black tracking-widest px-2 py-0.5 rounded-md text-white font-mono uppercase shadow-md bg-blue-500">
+                            {t('debugCenter.liveFaceBoxLabel')}
+                        </div>
+                    </div>
+                )}
+
+                {liveEyeBoxes && isLiveScanning && (
+                    <>
+                        <div
+                            aria-hidden="true"
+                            className={`absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 ${
+                                liveEyeBoxes.leftClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                            }`}
+                            style={getEyeOverlayStyle(liveEyeBoxes.left) || { display: 'none' }}
+                        />
+                        <div
+                            aria-hidden="true"
+                            className={`absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 ${
+                                liveEyeBoxes.rightClosed ? 'border-emerald-400 bg-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.5)]' : 'border-cyan-300/70'
+                            }`}
+                            style={getEyeOverlayStyle(liveEyeBoxes.right) || { display: 'none' }}
+                        />
+                    </>
+                )}
+            </div>
+
+            {isLiveScanning && (
+                <div className="mb-4 p-3 rounded-xl bg-gray-50 dark:bg-gray-900/30 border border-gray-100 dark:border-gray-700 space-y-2">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-bold text-gray-700 dark:text-gray-200">{t('debugCenter.liveBlinkCount', { count: blinkCount })}</span>
+                        <div className="flex items-center gap-1.5">
+                            <StatusPill ok={!!liveEyeBoxes && !liveEyeBoxes.leftClosed} label={`${t('debugCenter.leftEyeLabel')}: ${liveEyeBoxes?.leftClosed ? t('debugCenter.eyeStatusClosed') : t('debugCenter.eyeStatusOpen')}`} />
+                            <StatusPill ok={!!liveEyeBoxes && !liveEyeBoxes.rightClosed} label={`${t('debugCenter.rightEyeLabel')}: ${liveEyeBoxes?.rightClosed ? t('debugCenter.eyeStatusClosed') : t('debugCenter.eyeStatusOpen')}`} />
+                        </div>
+                    </div>
+                    <div className="text-xs">
+                        {identity.status === 'idle' && <span className="text-gray-400 dark:text-gray-500">{t('debugCenter.identityIdle')}</span>}
+                        {identity.status === 'identifying' && <span className="text-gray-400 dark:text-gray-500 animate-pulse">{t('debugCenter.identityIdentifying')}</span>}
+                        {identity.status === 'identified' && (
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                {t('debugCenter.identityIdentifiedAs', { name: identity.name, role: formatRole(identity.role) })}
+                                {' '}
+                                <span className="text-gray-400 dark:text-gray-500 font-normal">({t('debugCenter.identityDistanceLabel', { distance: identity.distance.toFixed(3) })})</span>
+                            </span>
+                        )}
+                        {identity.status === 'unknown' && <span className="text-amber-600 dark:text-amber-400 font-bold">{t('debugCenter.identityUnknown')}</span>}
+                        {identity.status === 'error' && <span className="text-red-600 dark:text-red-400 font-bold">{t('debugCenter.identityError')}</span>}
+                    </div>
+                </div>
+            )}
 
             {steps.length === 0 ? (
                 <EmptyState icon={Icons.ShieldCheck} title={t('debugCenter.noTestYetTitle')} description={t('debugCenter.noTestYetDescription')} />

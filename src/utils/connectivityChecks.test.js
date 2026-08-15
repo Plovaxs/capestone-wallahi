@@ -1,8 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// 🟩 vi.hoisted -- see the identical pattern/rationale in
+// DebugCenterView.test.jsx: these mock fns are configured inside the
+// hoisted vi.mock factory below AND asserted-on/reconfigured in the test
+// bodies further down, which needs them declared before the factory runs.
+const { channelSubscribeMock, removeChannelMock } = vi.hoisted(() => ({
+    // Default: immediately reports SUBSCRIBED, same as a healthy realtime
+    // connection -- individual tests override this via mockImplementation
+    // to simulate a failure/hang.
+    channelSubscribeMock: vi.fn((cb) => { cb('SUBSCRIBED'); return { subscribe: channelSubscribeMock }; }),
+    removeChannelMock: vi.fn(() => Promise.resolve()),
+}));
+
 vi.mock('../supabaseClient', () => ({
     supabaseUrl: 'https://test-project.supabase.co',
     supabaseAnonKey: 'test-anon-key',
+    supabase: {
+        channel: vi.fn(() => ({ subscribe: channelSubscribeMock })),
+        removeChannel: removeChannelMock,
+    },
 }));
 
 import {
@@ -35,6 +51,21 @@ describe('connectivityChecks', () => {
         expect(result.ok).toBe(true);
         expect(result.error).toBeNull();
         expect(typeof result.latencyMs).toBe('number');
+    });
+
+    // 🟩 REGRESSION TEST: verified live on a real deployment -- sending only
+    // `apikey` (no `Authorization`) got a real 401 from Supabase's gateway
+    // even though the same key worked fine for every supabase-js call on
+    // that same page (which always sends both headers).
+    it('checkSupabaseReachable sends both apikey and Authorization headers, matching what supabase-js itself sends', async () => {
+        fetchMock.mockResolvedValue({ ok: true });
+        const resultPromise = checkSupabaseReachable();
+        await vi.runAllTimersAsync();
+        await resultPromise;
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/rest/v1/'), {
+            method: 'HEAD',
+            headers: { apikey: 'test-anon-key', Authorization: 'Bearer test-anon-key' },
+        });
     });
 
     it('reports a specific "timeout" reason when the request hangs forever', async () => {
@@ -97,13 +128,25 @@ describe('connectivityChecks', () => {
         expect(result.error).toBe('HTTP 401');
     });
 
-    it('checkSupabaseRealtimeReachable probes the realtime endpoint', async () => {
-        fetchMock.mockResolvedValue({ ok: true });
-        const resultPromise = checkSupabaseRealtimeReachable();
-        await vi.runAllTimersAsync();
-        const result = await resultPromise;
+    // 🟩 REGRESSION TEST: verified live on a real deployment -- the old
+    // implementation did a plain `fetch()` HEAD against /realtime/v1/,
+    // which failed with a browser CORS error (blocked before the response
+    // status was even readable) despite the realtime connection itself
+    // being perfectly healthy. Now goes through supabase-js's own
+    // websocket channel subscribe, which doesn't hit fetch's CORS
+    // machinery at all.
+    it('checkSupabaseRealtimeReachable opens a realtime channel and reports success once SUBSCRIBED', async () => {
+        const result = await checkSupabaseRealtimeReachable();
         expect(result.ok).toBe(true);
-        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/realtime/v1/'), expect.any(Object));
+        expect(result.error).toBeNull();
+        expect(removeChannelMock).toHaveBeenCalled();
+    });
+
+    it('checkSupabaseRealtimeReachable reports unreachable when the channel reports CHANNEL_ERROR', async () => {
+        channelSubscribeMock.mockImplementationOnce((cb) => { cb('CHANNEL_ERROR'); return { subscribe: channelSubscribeMock }; });
+        const result = await checkSupabaseRealtimeReachable();
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('CHANNEL_ERROR');
     });
 
     it('checkFaceApiModelsReachable probes the local model manifest', async () => {
