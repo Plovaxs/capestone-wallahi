@@ -511,6 +511,25 @@ describe('AttendanceView', () => {
             expect(performClockOut).not.toHaveBeenCalled();
         });
 
+        // 🟩 REGRESSION TEST: reported live -- Test Mode's own scan loop
+        // (a separate effect from the real clock-in/out loop, see its own
+        // "PART 2: TEST BIOMETRIC SCAN LOOP" comment) never called
+        // setFaceOverlayBox/setEyeBoxes/setBiometricStatus/setChallengeGlyph
+        // at all, so the panel showed either nothing or a stale box/status
+        // left over from before the test started, for the entire run.
+        // Asserts the face box actually renders mid-scan (before the tick
+        // that completes the pass/fail run finishes).
+        it('draws the live face box during a Test Mode scan, not just a stale one from before it started', async () => {
+            await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+
+            const startButton = screen.getByText(/Start Test Scan/i);
+            await act(async () => { startButton.click(); });
+            await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
+
+            expect(screen.getByText('🔍 FACE-API')).toBeInTheDocument();
+        });
+
         it('is available to a supervisor too, and still never writes attendance', async () => {
             await renderAndFlushMount(supervisorProfile);
             expect(getUserMediaMock).toHaveBeenCalled();

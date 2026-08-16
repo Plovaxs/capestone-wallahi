@@ -1647,16 +1647,39 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 const liveDet = await detectFaceFromImage(webcamVideoRef.current);
                 if (!liveDet || !liveDet.box) {
                     lastBlockReason = 'no-face';
+                    setFaceOverlayBox(null);
+                    setEyeBoxes(null);
+                    setChallengeGlyph(null);
+                    setBiometricStatus(t('attendance.statusScanning'));
                     return;
                 }
 
                 const imageWidth = webcamVideoRef.current.videoWidth;
                 const imageHeight = webcamVideoRef.current.videoHeight;
+
+                // 🟩 BUG FIX: draw the same live face/eye boxes the real
+                // clock-in/out loop draws, unconditional on the quality/
+                // match/liveness gates below -- Test Mode previously never
+                // touched these at all, so the panel showed nothing (or a
+                // stale box from before the test started) for the entire
+                // scan. Same "update every tick regardless of gates"
+                // treatment as the main loop's own comment on eye boxes.
+                setFaceOverlayBox({ ...liveDet.box, imageWidth, imageHeight, source: liveDet.source });
+                const eyeGeometry = liveDet.landmarks ? calculateEyeBoxes(liveDet.landmarks) : null;
+                setEyeBoxes(eyeGeometry ? {
+                    left: { ...eyeGeometry.left, imageWidth, imageHeight },
+                    right: { ...eyeGeometry.right, imageWidth, imageHeight },
+                    leftClosed: isEyeClosed(liveDet.landmarks.getLeftEye()),
+                    rightClosed: isEyeClosed(liveDet.landmarks.getRightEye()),
+                } : null);
+
                 const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
                 const singleFace = checkSingleFace(liveDet.faceCount ?? 1, liveDet.isAmbiguous);
                 const occlusion = checkOcclusion(liveDet.detection?.score);
                 if (!singleFace.ok || !framing.ok || !occlusion.ok) {
                     lastBlockReason = 'poor-quality';
+                    setChallengeGlyph(null);
+                    setBiometricStatus(t('attendance.statusScanning'));
                     return;
                 }
 
@@ -1665,6 +1688,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                 if (!referenceDescriptorRef.current || referenceDescriptorRef.current.length === 0) {
                     lastBlockReason = 'no-enrolled-face';
+                    setChallengeGlyph(null);
+                    setBiometricStatus(t('attendance.statusScanning'));
                     return;
                 }
 
@@ -1672,6 +1697,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 const adaptiveThreshold = getAdaptiveThreshold(userProfile.id, FACE_MATCH_THRESHOLD);
                 if (classifyMatch(dist, adaptiveThreshold) === 'no-match') {
                     lastBlockReason = 'no-match';
+                    setChallengeGlyph(null);
+                    setBiometricStatus(t('attendance.statusScanning'));
                     return;
                 }
 
@@ -1681,8 +1708,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 const challengeConfirmed = testLivenessChallengeRef.current.registerFrame(liveDet.landmarks);
                 if (!challengeConfirmed) {
                     lastBlockReason = 'no-blink';
+                    const suffix = CHALLENGE_INSTRUCTION_SUFFIX[testLivenessChallengeRef.current.challengeType];
+                    setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[testLivenessChallengeRef.current.challengeType]);
+                    setBiometricStatus(t(`attendance.statusAwaiting${suffix}`, {
+                        step: testLivenessChallengeRef.current.stepIndex + 1,
+                        totalSteps: testLivenessChallengeRef.current.steps,
+                    }));
                     return;
                 }
+                setChallengeGlyph(null);
+                setBiometricStatus(t('attendance.statusMatchVerified'));
 
                 // 🟩 Passive fusion vote reuses the SAME rolling trackers the
                 // real loop feeds (motionTrackerRef/microMotionTrackerRef/
@@ -1756,12 +1791,27 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         testPrevFaceBoxRef.current = null;
         testScanBusyRef.current = false;
         setTestScanResult(null);
+        // 🟩 BUG FIX: the main scan loop pauses entirely while Test Mode
+        // runs (see its own `isTestScanning` guard above), so whatever
+        // biometricStatus/challengeGlyph/faceOverlayBox/eyeBoxes it last
+        // left on screen just stayed frozen there for the whole test --
+        // reported live as a Test Scan showing an old, unrelated "blink"
+        // prompt with no face/eye box the entire time. Same class of bug
+        // as the clock-out stale-state fix above; start from a clean slate.
+        setBiometricStatus(t('attendance.statusScanning'));
+        setChallengeGlyph(null);
+        setFaceOverlayBox(null);
+        setEyeBoxes(null);
         setIsTestScanning(true);
     };
 
     const handleCancelTestScan = () => {
         setIsTestScanning(false);
         setTestScanResult(null);
+        setBiometricStatus(t('attendance.statusScanning'));
+        setChallengeGlyph(null);
+        setFaceOverlayBox(null);
+        setEyeBoxes(null);
     };
 
     // Keeps latestFaceBoxRef in sync with the box the main scan loop above
