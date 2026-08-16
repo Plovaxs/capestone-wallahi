@@ -609,6 +609,39 @@ describe('AttendanceView', () => {
             expect(performClockOut).not.toHaveBeenCalled();
         });
 
+        // 🟩 REGRESSION TEST: reported live -- clock-out kept showing no
+        // face/eye box and never detected a real (multi-tick) blink, even
+        // after every earlier fix above. Root cause: the scan-loop effect
+        // listed the raw `faceStatus` string as a dependency, and the very
+        // FIRST tick that finds a match sets faceStatus to 'matched'
+        // *before* the liveness challenge is actually confirmed -- which
+        // in real, non-mocked usage takes several ticks (a genuine blink
+        // isn't instant). That dependency change tore the effect down
+        // (clearing the interval AND the overlay boxes via its cleanup)
+        // and the guard then refused to recreate it (faceStatus was no
+        // longer 'scanning'), permanently freezing mid-challenge. This
+        // drives the exact same sequence: challenge stays unconfirmed
+        // across a first tick (which still sets faceStatus to 'matched'
+        // since classifyMatch is mocked 'confident'), THEN gets confirmed
+        // on a later tick -- proving the loop is still alive and still
+        // ticking after that first 'matched' write, not dead.
+        it('keeps scanning past the tick that finds a match but not yet a confirmed blink, and completes once the blink lands', async () => {
+            globalThis.__mockChallengeConfirmed = false;
+            const { container } = await renderAndFlushMount(employeeProfile, { attendance: openClockInToday() });
+            expect(getUserMediaMock).toHaveBeenCalled();
+
+            await act(async () => { screen.getByText('Clock Out Shift').click(); });
+            markVideoReady(container);
+            await advanceScanTicks(1);
+
+            expect(performClockOut).not.toHaveBeenCalled();
+
+            globalThis.__mockChallengeConfirmed = true;
+            await advanceScanTicks(1);
+
+            expect(performClockOut).toHaveBeenCalledTimes(1);
+        });
+
         it('calls performClockOut once armed and every gate (match, blink, motion) passes', async () => {
             const { container } = await renderAndFlushMount(employeeProfile, { attendance: openClockInToday() });
             expect(getUserMediaMock).toHaveBeenCalled();

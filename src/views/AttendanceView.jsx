@@ -1072,6 +1072,30 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userProfile, disableYolo, FACE_MODEL_URL, modelLoadAttempt]);
 
+    // 🟩 BUG FIX: the scan loop below used to list the raw `faceStatus`
+    // string as an effect dependency. The very first tick that finds a
+    // face match sets faceStatus to 'matched' *before* the multi-tick
+    // liveness (blink) challenge is actually confirmed -- in real usage
+    // (unlike the test mocks, which confirm a blink instantly on the same
+    // tick) that's several ticks before the challenge completes. Because
+    // faceStatus was a dependency, React tore the whole effect down the
+    // moment it changed to 'matched' -- clearing the interval AND the
+    // face/eye overlay boxes via the cleanup below -- and the guard then
+    // refused to recreate it (faceStatus was no longer 'scanning'),
+    // permanently freezing the scan mid-challenge: no more ticks ever ran,
+    // so a real blink could never actually be registered. Reported live
+    // repeatedly as "no box, blink never detected" specifically on
+    // clock-out (which always needs a fresh multi-tick challenge; a
+    // repeat clock-IN attempt could luck into finishing within the one
+    // tick the interval had left before dying). Depending on this
+    // derived boolean instead keeps the SAME running interval alive
+    // across 'scanning' <-> 'matched' <-> 'mismatch' transitions (nothing
+    // inside the tick callback below actually reads `faceStatus`
+    // reactively -- it's write-only from inside the loop), while still
+    // correctly starting the loop once models finish loading and
+    // correctly refusing to start at all while genuinely broken.
+    const scanEligible = faceStatus !== 'idle' && faceStatus !== 'loading-models' && faceStatus !== 'error';
+
     // ==========================================
     // ACTIVE MOTION DETECTOR SCAN ENGINE HOOK
     // ==========================================
@@ -1087,7 +1111,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // driving real clock-in/out state at a time. Test Mode arming this
         // pauses the real loop; it resumes automatically once the test run
         // ends (isTestScanning flips back to false, a listed dependency).
-        if (!isCameraReady || faceStatus !== 'scanning' || !isTabVisible || isTestScanning) return;
+        if (!isCameraReady || !scanEligible || !isTabVisible || isTestScanning) return;
         if (todayRecord && !clockingOutNow) return;
 
         borderlineStreakRef.current = 0;
@@ -1613,7 +1637,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         // steadily. userProfile.work_mode is read fresh via closure each tick;
         // work_mode changes are rare enough that a full remount isn't needed.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isCameraReady, faceStatus, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut, isTestScanning, clockInRetryNonce]);
+    }, [isCameraReady, scanEligible, isInRange, todayRecord, disableYolo, isTabVisible, isClockingOut, isTestScanning, clockInRetryNonce]);
 
     // ==========================================
     // PART 2: TEST BIOMETRIC SCAN LOOP
