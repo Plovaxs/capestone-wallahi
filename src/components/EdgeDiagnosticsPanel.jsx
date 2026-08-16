@@ -12,7 +12,7 @@ import DiagnosticTile from './DiagnosticTile';
  * this block is purely presentational and doesn't touch any of the view's
  * scan-loop state directly.
  */
-const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensorDiagnostics, torchActive, disableYolo }) => (
+const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensorDiagnostics, torchActive, disableYolo, yoloExhausted = false }) => (
     <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/40 p-4 shadow-inner">
         <div className="flex items-center justify-between mb-1">
             <span className="text-[11px] font-black uppercase tracking-widest text-gray-500 dark:text-slate-400">{t('attendance.edgeDiagnosticsTitle')}</span>
@@ -74,7 +74,7 @@ const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensor
             />
             <DiagnosticTile
                 label={t('attendance.diagModel')}
-                value={disableYolo ? t('attendance.diagModelReduced') : t('attendance.diagModelFull')}
+                value={(disableYolo || yoloExhausted) ? t('attendance.diagModelReduced') : t('attendance.diagModelFull')}
                 ok={true}
             />
             <DiagnosticTile

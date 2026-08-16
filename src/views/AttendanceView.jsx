@@ -2497,6 +2497,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     onClick={() => {
                                         clockOutGuardRef.current = false;
                                         livenessChallengeRef.current.reset();
+                                        // 🟩 BUG FIX: a successful clock-IN earlier in this same
+                                        // page session sets faceStatus to 'matched' and nothing
+                                        // ever reset it back afterward -- the main scan-loop
+                                        // effect's own guard (`faceStatus !== 'scanning'` ->
+                                        // return early, never creating the detection interval)
+                                        // then silently blocked clock-out from ever running a
+                                        // single tick: no face box, no eye box, no blink read,
+                                        // reported live as "muka gak kedetect pas clock out".
+                                        // Clock-in's own failure-retry path already does this
+                                        // exact reset (see clockInRetryNonce's comment further
+                                        // down); clock-out just never had an equivalent because
+                                        // it had no prior 'matched' write of its own to undo.
+                                        setFaceStatus('scanning');
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady || isTestScanning}
@@ -2855,6 +2868,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         sensorDiagnostics={{ ...sensorDiagnostics, ...networkBatteryDiagnostics }}
                         torchActive={torchActive}
                         disableYolo={disableYolo}
+                        yoloExhausted={yoloExhaustedRef.current}
                     />
                 </>
             )}

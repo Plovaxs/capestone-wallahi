@@ -607,6 +607,50 @@ describe('AttendanceView', () => {
             expect(performClockOut).toHaveBeenCalledTimes(1);
             expect(performClockIn).not.toHaveBeenCalled();
         });
+
+        // 🟩 REGRESSION TEST: reported live -- clocking in, then later
+        // clicking "Clock Out Shift" in that SAME page session, showed no
+        // face box, no eye box, and never detected anything at all. Root
+        // cause: a successful clock-in sets faceStatus to 'matched' and
+        // nothing ever reset it back to 'scanning' afterward -- the main
+        // scan-loop effect's own guard (`faceStatus !== 'scanning'` ->
+        // return early, never even creating the detection interval)
+        // silently blocked clock-out from running a single tick. The tests
+        // above start with todayRecord already present via props (no real
+        // clock-in ever ran in the render), which is exactly why they
+        // never exercised this path -- this one drives a REAL clock-in
+        // first, same as Part 1(c), before arming clock-out.
+        it('still runs the scan loop for clock-out after a real clock-in earlier in the same session', async () => {
+            const { container, rerender } = await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+
+            await advanceScanTicks(1);
+            expect(performClockIn).toHaveBeenCalledTimes(1);
+
+            // Simulates the parent's fetchAttendance() picking up the new
+            // row and passing it back down as a fresh `attendance` prop --
+            // exactly what happens in the real app after a successful
+            // clock-in, without re-mounting the component (faceStatus's
+            // in-memory 'matched' value carries over, same as production).
+            await act(async () => {
+                rerender(
+                    <AttendanceView
+                        userProfile={employeeProfile}
+                        attendance={openClockInToday()}
+                        allUsers={[employeeProfile]}
+                        fetchAttendance={vi.fn()}
+                        fetchProfile={vi.fn()}
+                    />
+                );
+            });
+            markVideoReady(container);
+
+            await act(async () => { screen.getByText('Clock Out Shift').click(); });
+            markVideoReady(container);
+            await advanceScanTicks(1);
+
+            expect(performClockOut).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('Part 3: supervisor clock-out uses the identical gated pipeline', () => {
