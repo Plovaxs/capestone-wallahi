@@ -2510,6 +2510,27 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         // down); clock-out just never had an equivalent because
                                         // it had no prior 'matched' write of its own to undo.
                                         setFaceStatus('scanning');
+                                        // 🟩 BUG FIX (follow-up): the loop-running fix above wasn't
+                                        // enough by itself -- biometricStatus/challengeGlyph/
+                                        // faceOverlayBox/eyeBoxes are ALL left holding whatever
+                                        // they were at the moment of that earlier clock-in (e.g.
+                                        // still showing "Step 1/1: blink..." with its glyph), and
+                                        // nothing overwrites them until the new scan loop's first
+                                        // tick actually finds and matches a face again. Reported
+                                        // live as the panel looking "frozen" on stale text with no
+                                        // box while re-scanning genuinely hadn't found anything
+                                        // yet. Clearing them here makes a freshly-armed clock-out
+                                        // start from the exact same clean slate a fresh page
+                                        // mount would, same as the trackers/refs it already reset.
+                                        setBiometricStatus(t('attendance.statusScanning'));
+                                        setChallengeGlyph(null);
+                                        setFaceOverlayBox(null);
+                                        setEyeBoxes(null);
+                                        setIsFaceVerified(false);
+                                        pulseDetectorRef.current.reset();
+                                        boxMotionTrackerRef.current.reset();
+                                        prevFaceBoxForMotionRef.current = null;
+                                        microMotionTrackerRef.current.reset();
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady || isTestScanning}

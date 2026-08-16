@@ -651,6 +651,44 @@ describe('AttendanceView', () => {
 
             expect(performClockOut).toHaveBeenCalledTimes(1);
         });
+
+        // 🟩 REGRESSION TEST: reported live AGAIN after the faceStatus fix
+        // above shipped -- clock-out's scan loop was confirmed to be
+        // running again, but the screen still showed the clock-in's old
+        // "Match verified! Logging attendance..." status text (and no
+        // face/eye box), because arming clock-out never reset the other
+        // UI-facing state (biometricStatus, challengeGlyph, faceOverlayBox,
+        // eyeBoxes) left over from the earlier successful clock-in. This
+        // asserts the state right after clicking "Clock Out Shift", BEFORE
+        // any new tick runs, so it fails if only faceStatus is reset but
+        // the stale status text/boxes are left showing.
+        it('clears the stale clock-in status text and face/eye boxes the instant clock-out is armed', async () => {
+            const { container, rerender } = await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+
+            await advanceScanTicks(1);
+            expect(performClockIn).toHaveBeenCalledTimes(1);
+            expect(screen.getByText('Match verified! Logging attendance...')).toBeInTheDocument();
+
+            await act(async () => {
+                rerender(
+                    <AttendanceView
+                        userProfile={employeeProfile}
+                        attendance={openClockInToday()}
+                        allUsers={[employeeProfile]}
+                        fetchAttendance={vi.fn()}
+                        fetchProfile={vi.fn()}
+                    />
+                );
+            });
+            markVideoReady(container);
+
+            await act(async () => { screen.getByText('Clock Out Shift').click(); });
+
+            expect(screen.getByText('Scanning for frontal matrix...')).toBeInTheDocument();
+            expect(screen.queryByText('Match verified! Logging attendance...')).not.toBeInTheDocument();
+            expect(screen.queryByText(/blink to confirm/i)).not.toBeInTheDocument();
+        });
     });
 
     describe('Part 3: supervisor clock-out uses the identical gated pipeline', () => {
