@@ -58,27 +58,40 @@ export function checkOcclusion(detectionScore, minScore = 0.25) {
  *
  * Samples on a stride instead of every pixel — this runs once per scan
  * tick and only needs to be a rough signal, not a precise metric.
+ *
+ * 🟩 BUG FIX: averaging the gradient across every sampled pixel false-
+ * flagged perfectly clean webcams pointed at a real (mostly plain-colored:
+ * a wall, a desk, a monitor) room — most of a real frame has little
+ * texture even with a razor-sharp lens, which drags the *average* down
+ * near the "obstructed" threshold regardless of focus. A checkerboard
+ * test pattern (100% high-frequency) never exposed this because it has
+ * no flat regions to dilute the average. A genuinely fogged/smudged lens
+ * blurs EVERYTHING uniformly, including whatever sharp edges the scene
+ * does have (a face outline, a monitor bezel) — so the top percentile of
+ * sampled gradients (the sharpest edges actually present) separates the
+ * two cases correctly where the average cannot: real fog drags even the
+ * sharpest edges down, while a clear lens keeps them sharp no matter how
+ * plain the rest of the room is.
  */
-export function checkLensObstruction(imageData, width, height, { minSharpness = 6, sampleStride = 4 } = {}) {
+export function checkLensObstruction(imageData, width, height, { minSharpness = 40, sampleStride = 4, sharpPercentile = 0.9 } = {}) {
     if (!imageData || !width || !height) return { ok: true, reason: null };
 
     const luminance = (i) => luminanceAtIndex(imageData, i);
 
-    let gradientSum = 0;
-    let sampleCount = 0;
+    const gradients = [];
     for (let y = 0; y < height - 1; y += sampleStride) {
         for (let x = 0; x < width - 1; x += sampleStride) {
             const idx = (y * width + x) * 4;
             const idxRight = (y * width + (x + 1)) * 4;
             const idxDown = ((y + 1) * width + x) * 4;
-            gradientSum += Math.abs(luminance(idx) - luminance(idxRight)) + Math.abs(luminance(idx) - luminance(idxDown));
-            sampleCount += 1;
+            gradients.push(Math.abs(luminance(idx) - luminance(idxRight)) + Math.abs(luminance(idx) - luminance(idxDown)));
         }
     }
 
-    if (sampleCount === 0) return { ok: true, reason: null };
-    const avgGradient = gradientSum / sampleCount;
-    if (avgGradient < minSharpness) return { ok: false, reason: 'lens-obstructed' };
+    if (gradients.length === 0) return { ok: true, reason: null };
+    gradients.sort((a, b) => a - b);
+    const sharpEdgeGradient = gradients[Math.floor(gradients.length * sharpPercentile)];
+    if (sharpEdgeGradient < minSharpness) return { ok: false, reason: 'lens-obstructed' };
     return { ok: true, reason: null };
 }
 

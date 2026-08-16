@@ -135,4 +135,30 @@ describe('checkLensObstruction', () => {
         }
         expect(checkLensObstruction(data, width, height)).toEqual({ ok: true, reason: null });
     });
+
+    // 🟩 REGRESSION TEST: reported live -- a genuinely clean, in-focus
+    // webcam pointed at an ordinary room (plain wall/desk behind a sharp
+    // face) got flagged "CAMERA LENS LOOKS FOGGY OR DIRTY", blocking every
+    // scan. Root cause: averaging the gradient across the WHOLE sampled
+    // frame let the mostly-flat background (which is the normal case for
+    // a real room, not just a test artifact) dilute the average below the
+    // threshold even though the small textured region was perfectly
+    // sharp. A checkerboard test pattern never exposed this because it
+    // has no flat region to dilute anything.
+    it('does not flag a mostly-flat real-world background with one small sharp region as lens obstruction', () => {
+        const data = new Uint8ClampedArray(width * height * 4);
+        // Flat "wall" everywhere...
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = 120; data[i + 1] = 120; data[i + 2] = 120; data[i + 3] = 255;
+        }
+        // ...except a small sharp-edged "face" region (~20% of the frame).
+        for (let y = 5; y < 13; y++) {
+            for (let x = 5; x < 15; x++) {
+                const idx = (y * width + x) * 4;
+                const value = (x + y) % 2 === 0 ? 20 : 235;
+                data[idx] = value; data[idx + 1] = value; data[idx + 2] = value; data[idx + 3] = 255;
+            }
+        }
+        expect(checkLensObstruction(data, width, height, { sampleStride: 1 })).toEqual({ ok: true, reason: null });
+    });
 });
