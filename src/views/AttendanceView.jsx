@@ -303,6 +303,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const lensCheckTickRef = useRef(0);
     const cachedLensResultRef = useRef({ ok: true, reason: null });
     const LENS_CHECK_INTERVAL_TICKS = 5;
+    // 🟩 BUG FIX: counts consecutive *real* (non-cached) obstructed
+    // verdicts -- see the lens-check block below for why a single one is
+    // never enough to block on its own.
+    const lensObstructedStreakRef = useRef(0);
     // 🟩 SENSOR FUSION: fuses devicemotion's x/y/z accelerometer axes into a
     // rolling stability signal — mobile-only (desktop webcams have no
     // accelerometer, so this just never becomes `ready` there, which is the
@@ -1249,7 +1253,20 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             lensCheckTickRef.current += 1;
                             if (lensCheckTickRef.current % LENS_CHECK_INTERVAL_TICKS === 0) {
                                 const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
-                                lensObstruction = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                const lensCheckResult = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                                // 🟩 BUG FIX: reported live -- a genuinely clean webcam
+                                // got flagged "camera lens looks foggy or dirty" and
+                                // blocked from scanning entirely, even after the
+                                // percentile-based sharpness fix. One-off causes (autofocus
+                                // hunting, a motion-blurred frame right as the user leans
+                                // in for clock-out) can still land a single real recheck
+                                // below the threshold — a physically dirty/fogged lens
+                                // (the thing this is actually meant to catch) stays
+                                // obstructed on every recheck, so requiring 2 CONSECUTIVE
+                                // real (non-cached) failures before blocking filters out
+                                // the one-off case without giving up on the real one.
+                                lensObstructedStreakRef.current = lensCheckResult.ok ? 0 : lensObstructedStreakRef.current + 1;
+                                lensObstruction = lensObstructedStreakRef.current >= 2 ? lensCheckResult : { ok: true, reason: null };
                                 cachedLensResultRef.current = lensObstruction;
                                 // Diagnostics readout only — setState bails out for free when
                                 // the value hasn't actually changed (same object reference).
@@ -2605,6 +2622,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         boxMotionTrackerRef.current.reset();
                                         prevFaceBoxForMotionRef.current = null;
                                         microMotionTrackerRef.current.reset();
+                                        lensObstructedStreakRef.current = 0;
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady || isTestScanning}
