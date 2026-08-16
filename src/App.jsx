@@ -424,9 +424,13 @@ export default function App() {
    * replacement for it. Attendance's manual "Clock In Shift" button is
    * kept exactly as-is for anyone who logs in with a password, whose
    * auto clock-in didn't fire for some reason, or who just prefers it.
+   * 🟩 UPDATED (2026-08-16): now also fires for supervisors, not just
+   * employees -- consistent with supervisors being able to clock in/out
+   * at all (Part 3) and now being geofence-exempt again (see
+   * performClockIn's own comment).
    */
   const attemptAutoClockInAfterLogin = async (profile) => {
-    if (!profile || profile.role !== 'employee') return;
+    if (!profile || (profile.role !== 'employee' && profile.role !== 'supervisor')) return;
     if (!consumeFaceVerifiedLoginFlag()) return;
 
     // 🟩 TIMEZONE FIX: toISOString() returns the UTC calendar date, which
@@ -457,7 +461,10 @@ export default function App() {
     let coords = null;
     let isInRange = true;
 
-    if (workMode !== 'WFH') {
+    // 🟩 Supervisors are geofence-exempt unconditionally (see
+    // performClockIn's comment) -- skip the geolocation prompt/fetch
+    // entirely for them, same treatment as a WFH-assigned employee.
+    if (profile.role !== 'supervisor' && workMode !== 'WFH') {
       if (!navigator.geolocation) return;
       try {
         const position = await new Promise((resolve, reject) =>

@@ -23,6 +23,7 @@ import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pul
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
 import { checkVirtualCamera } from '../vision/virtualCameraDetector';
+import { isVirtualCameraCheckEnabled } from '../utils/systemSettings';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 
 // 🟩 LAZY-LOADED: face-api.js is multi-MB and was previously a static
@@ -286,14 +287,23 @@ export default function LoginPage() {
         // granted, so this is the earliest point it can run. A match stops
         // the stream immediately -- same hard-block treatment as
         // automationDetected, not one more vote in the passive fusion.
-        const virtualCameraCheck = await checkVirtualCamera();
+        const [virtualCameraCheck, virtualCameraCheckEnabled] = await Promise.all([
+          checkVirtualCamera(),
+          isVirtualCameraCheckEnabled(),
+        ]);
         if (!isCurrent) { stream.getTracks().forEach(track => track.stop()); return; }
-        if (virtualCameraCheck.suspicious) {
+        if (virtualCameraCheck.suspicious && virtualCameraCheckEnabled) {
           console.warn('[login] virtual camera driver detected:', virtualCameraCheck.matchedLabel);
           stream.getTracks().forEach(track => track.stop());
           setVirtualCameraDetected(true);
           setBiometricStatus(t('login.statusVirtualCameraBlocked'));
           return;
+        }
+        // 🟩 A supervisor can disable this check globally (Debug Center >
+        // Camera & Face) -- still worth a console note when it would have
+        // blocked, so the bypass isn't silent to anyone debugging.
+        if (virtualCameraCheck.suspicious && !virtualCameraCheckEnabled) {
+          console.info('[login] virtual camera driver detected but the check is disabled:', virtualCameraCheck.matchedLabel);
         }
 
         localStream = stream;

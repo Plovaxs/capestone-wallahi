@@ -146,6 +146,11 @@ vi.mock('../vision/virtualCameraDetector', () => ({
     checkVirtualCamera: vi.fn(() => Promise.resolve({ suspicious: false })),
 }));
 
+vi.mock('../utils/systemSettings', () => ({
+    isVirtualCameraCheckEnabled: vi.fn(() => Promise.resolve(true)),
+    VIRTUAL_CAMERA_CHECK_KEY: 'virtual_camera_check_enabled',
+}));
+
 vi.mock('../vision/inferenceLatencyMonitor', () => ({
     createLatencyMonitor: vi.fn(() => ({
         record: vi.fn(),

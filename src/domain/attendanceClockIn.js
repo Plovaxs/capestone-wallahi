@@ -26,12 +26,14 @@ export const WORK_START_TIME = '08:00:00';
  * @param {string} [params.source] - free-text provenance tag stored client-side only (not persisted), e.g. 'face-match' | 'manual' | 'face-login'
  */
 export async function performClockIn({ userProfile, coords, isInRange, today, source = 'manual' }) {
-    // 🟩 PART 3: previously bypassed for any supervisor regardless of their
-    // assigned duty mode. The requirement is "the same location/duty-mode
-    // gating rules... the same way it does for employees" -- so this is now
-    // driven by work_mode (WFO requires the gate, WFH doesn't) exactly like
-    // an employee's, not by role.
-    const requiresLocationGate = (userProfile.work_mode || 'WFO') === 'WFO';
+    // 🟩 REVERTED (2026-08-16): a prior round made this work_mode-driven
+    // for supervisors too, same as an employee's. Reported live: that
+    // blocked a supervisor from clocking in/out while legitimately away
+    // from the office on supervisor business (site visits, off-site
+    // meetings). Supervisors are exempt from the geofence unconditionally
+    // again, regardless of their assigned WFO/WFH mode -- only employees
+    // are gated by it.
+    const requiresLocationGate = userProfile.role !== 'supervisor' && (userProfile.work_mode || 'WFO') === 'WFO';
 
     if (requiresLocationGate && !coords) {
         return { success: false, reason: 'gps-waiting' };

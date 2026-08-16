@@ -50,18 +50,16 @@ describe('performClockIn', () => {
         expect(insertMock).not.toHaveBeenCalled();
     });
 
-    // 🟩 PART 3 REGRESSION TEST: a supervisor previously bypassed the
-    // location gate unconditionally (role-based exemption). That's been
-    // replaced with the same work_mode-driven gate an employee gets --
-    // "the same location/duty-mode gating rules... the same way it does
-    // for employees" was an explicit requirement. These two tests replace
-    // the old (now-incorrect) "does not require GPS/geofence for a
-    // supervisor" test.
-    it('requires GPS/geofence for a WFO supervisor, same as a WFO employee', async () => {
+    // 🟩 REVERTED (2026-08-16): a prior round made this work_mode-driven
+    // for supervisors too, same as an employee's -- reported live that
+    // blocked a supervisor from clocking in/out while legitimately away
+    // from the office. Supervisors are exempt from the geofence
+    // unconditionally again, regardless of their assigned work_mode.
+    it('bypasses the geofence for a WFO supervisor (unconditional exemption)', async () => {
         const supervisor = { id: 'sup-1', role: 'supervisor', work_mode: 'WFO' };
         const result = await performClockIn({ userProfile: supervisor, coords: null, isInRange: false, today: '2026-01-01' });
-        expect(result).toEqual({ success: false, reason: 'gps-waiting' });
-        expect(insertMock).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+        expect(insertMock).toHaveBeenCalled();
     });
 
     it('bypasses the geofence for a WFH supervisor, same as a WFH employee', async () => {
@@ -70,10 +68,10 @@ describe('performClockIn', () => {
         expect(result.success).toBe(true);
     });
 
-    it('treats a supervisor with no work_mode set as WFO (fail-safe default), same as an employee', async () => {
+    it('bypasses the geofence for a supervisor with no work_mode set (unconditional exemption regardless of the WFO fail-safe default)', async () => {
         const supervisor = { id: 'sup-1', role: 'supervisor' };
         const result = await performClockIn({ userProfile: supervisor, coords: null, isInRange: false, today: '2026-01-01' });
-        expect(result).toEqual({ success: false, reason: 'gps-waiting' });
+        expect(result.success).toBe(true);
     });
 
     it('refuses a second clock-in on the same day (already-clocked-in guard)', async () => {

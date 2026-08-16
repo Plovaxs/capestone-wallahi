@@ -103,6 +103,17 @@ vi.mock('../data/repositories/profilesRepository', () => ({
     profilesRepository: { identifyFaceByDescriptor: (...args) => identifyFaceByDescriptorMock(...args) },
 }));
 
+const { systemSettingsGetMock, systemSettingsSetMock } = vi.hoisted(() => ({
+    systemSettingsGetMock: vi.fn(() => Promise.resolve({ value: true })),
+    systemSettingsSetMock: vi.fn(() => Promise.resolve()),
+}));
+vi.mock('../data/repositories/systemSettingsRepository', () => ({
+    systemSettingsRepository: {
+        get: (...args) => systemSettingsGetMock(...args),
+        set: (...args) => systemSettingsSetMock(...args),
+    },
+}));
+
 import DebugCenterView from './DebugCenterView';
 
 const testSupervisor = { id: 'sup-1', role: 'supervisor', name: 'Test Supervisor' };
@@ -328,6 +339,26 @@ describe('DebugCenterView', () => {
             await act(async () => { screen.getByText('Stop Live Preview').click(); });
             expect(screen.queryByText('🔍 LIVE FACE')).not.toBeInTheDocument();
             expect(screen.getByText('Start Live Preview')).toBeInTheDocument();
+        });
+
+        it('shows the virtual camera check toggle reflecting the current system setting', async () => {
+            systemSettingsGetMock.mockResolvedValueOnce({ value: true });
+            await act(async () => { render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />); });
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+
+            expect(systemSettingsGetMock).toHaveBeenCalledWith('virtual_camera_check_enabled');
+            expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+        });
+
+        it('a supervisor can disable the virtual camera check globally', async () => {
+            systemSettingsGetMock.mockResolvedValueOnce({ value: true });
+            await act(async () => { render(<DebugCenterView setActiveView={vi.fn()} userProfile={testSupervisor} />); });
+            await act(async () => { screen.getByText('Camera & Face').click(); });
+
+            await act(async () => { screen.getByRole('switch').click(); });
+
+            expect(systemSettingsSetMock).toHaveBeenCalledWith('virtual_camera_check_enabled', false);
+            expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
         });
     });
 });

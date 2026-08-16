@@ -41,6 +41,7 @@ import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { detectAutomation } from '../vision/automationDetector';
 import { checkVirtualCamera } from '../vision/virtualCameraDetector';
+import { isVirtualCameraCheckEnabled } from '../utils/systemSettings';
 import { createLatencyMonitor } from '../vision/inferenceLatencyMonitor';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { createAmbientLightWatcher } from '../sensors/ambientLight';
@@ -826,14 +827,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                     setLiveDistance(dist);
 
-                    // 🟩 PART 3: previously bypassed entirely for supervisors
-                    // (`setIsInRange(true)` unconditionally). Per the explicit
-                    // requirement that supervisor clock-in/out use "the same
-                    // location/duty-mode gating rules... the same way it does
-                    // for employees" -- a supervisor's WFO/WFH assignment now
-                    // drives this exactly like an employee's does.
+                    // 🟩 REVERTED (2026-08-16): a prior round drove this by
+                    // work_mode for supervisors too, same as an employee's.
+                    // Reported live: that blocked a supervisor from clocking
+                    // in/out while genuinely away from the office on
+                    // supervisor business. Supervisors are exempt from the
+                    // geofence unconditionally again, regardless of their
+                    // assigned WFO/WFH mode -- only employees are gated by it.
                     const assignedMode = userProfile.work_mode || 'WFO';
-                    if (assignedMode === 'WFH') {
+                    if (userProfile.role === 'supervisor' || assignedMode === 'WFH') {
                         setIsInRange(true);
                     } else {
                         setIsInRange(geofenceMachine.update(dist).state === 'INSIDE');
@@ -977,14 +979,23 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     return;
                 }
 
-                const virtualCameraCheck = await checkVirtualCamera();
+                const [virtualCameraCheck, virtualCameraCheckEnabled] = await Promise.all([
+                    checkVirtualCamera(),
+                    isVirtualCameraCheckEnabled(),
+                ]);
                 if (isCancelled) { stream.getTracks().forEach(track => track.stop()); return; }
-                if (virtualCameraCheck.suspicious) {
+                if (virtualCameraCheck.suspicious && virtualCameraCheckEnabled) {
                     console.warn('[attendance] virtual camera driver detected:', virtualCameraCheck.matchedLabel);
                     stream.getTracks().forEach(track => track.stop());
                     setVirtualCameraDetected(true);
                     setCameraStatus('error');
                     return;
+                }
+                // 🟩 A supervisor can disable this check globally (Debug
+                // Center > Camera & Face) -- still worth a console note when
+                // it would have blocked, so the bypass isn't silent.
+                if (virtualCameraCheck.suspicious && !virtualCameraCheckEnabled) {
+                    console.info('[attendance] virtual camera driver detected but the check is disabled:', virtualCameraCheck.matchedLabel);
                 }
 
                 webcamStreamRef.current = stream;
@@ -1346,7 +1357,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             // (null/undefined, or an unvalidated CSV-import
                             // value like "Onsite") skipped the geofence
                             // block entirely instead of requiring it.
-                            if (!clockingOutNow && (userProfile.work_mode || 'WFO') === 'WFO' && !isInRange) {
+                            // 🟩 REVERTED (2026-08-16): supervisors are
+                            // exempt from the geofence unconditionally again
+                            // -- see the geofence-effect comment above for why.
+                            if (!clockingOutNow && userProfile.role !== 'supervisor' && (userProfile.work_mode || 'WFO') === 'WFO' && !isInRange) {
                                 setBiometricStatus(t('attendance.statusAccessDenied'));
                             } else if (!guardRef.current) {
                                 let livenessSuspicious = false;
@@ -1990,8 +2004,10 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             if (!isValid) { toast.error(t('attendance.pinIncorrect')); return; }
 
             if (!todayRecord) {
-                // 🟩 PART 3: no longer exempts supervisors -- same work_mode-driven gate as employees.
-                const requiresLocationGate = (userProfile.work_mode || 'WFO') === 'WFO';
+                // 🟩 REVERTED (2026-08-16): supervisors are exempt from the
+                // geofence unconditionally again -- see the geofence-effect
+                // comment further up this file for why.
+                const requiresLocationGate = userProfile.role !== 'supervisor' && (userProfile.work_mode || 'WFO') === 'WFO';
                 if (requiresLocationGate && !isInRange) { toast.error(t('attendance.geofenceRejection')); return; }
                 const result = await performClockIn({ userProfile, coords: currentCoords, isInRange, today, source: 'pin' });
                 if (!result.success) {
@@ -2448,7 +2464,9 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     )}
                                 </div>
                                 <p className={`text-xs font-bold uppercase font-mono mt-0.5 tracking-wider ${isInRange ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                    {(userProfile.work_mode || 'WFO') === 'WFO'
+                                    {userProfile.role === 'supervisor'
+                                        ? t('attendance.supervisorGeofenceBypass')
+                                        : (userProfile.work_mode || 'WFO') === 'WFO'
                                         ? (liveDistance !== null ? t('attendance.coordinatesTracked', { distance: liveDistance.toFixed(0) }) : t('attendance.capturingGps'))
                                         : t('attendance.remoteGeofenceBypass')}
                                 </p>

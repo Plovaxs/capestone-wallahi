@@ -13,6 +13,9 @@ import { idbGet } from '../offline/indexedDbCache';
 import { calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { calculateFaceOverlayStyle } from '../vision/faceOverlayGeometry';
 import { profilesRepository } from '../data/repositories/profilesRepository';
+import { systemSettingsRepository } from '../data/repositories/systemSettingsRepository';
+import { VIRTUAL_CAMERA_CHECK_KEY } from '../utils/systemSettings';
+import toast from 'react-hot-toast';
 
 // 🟩 Same lazy-load-once-and-cache pattern AttendanceView.jsx/LoginPage.jsx
 // each already have their own copy of -- a third independent copy here
@@ -141,6 +144,65 @@ const PipelineStepRow = ({ step }) => (
 const LIVE_TICK_MS = 500;
 const IDENTIFY_THROTTLE_MS = 1500;
 const FACE_MATCH_THRESHOLD = 0.5;
+
+// 🟩 NEW: supervisor-controllable global switch for the virtual-camera-
+// driver block on face sign-in (vision/virtualCameraDetector.js, enforced
+// on LoginPage.jsx and AttendanceView.jsx). Reported live: a real user's
+// legitimate virtual-camera driver (testing/screen-sharing) got hard-
+// blocked with no way through except email+password -- this lets a
+// supervisor relax that check for EVERYONE, from one place, without a
+// redeploy. Deliberately a real database row (system_settings table, see
+// migrations/20260815c_add_system_settings.sql), not the existing
+// per-browser FeatureFlagService -- a localStorage override wouldn't
+// reach the affected user's own browser at all.
+const VirtualCameraCheckToggle = () => {
+    const { t } = useTranslation();
+    const [enabled, setEnabled] = useState(null); // null = still loading
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        systemSettingsRepository.get(VIRTUAL_CAMERA_CHECK_KEY)
+            .then((row) => { if (!cancelled) setEnabled(typeof row?.value === 'boolean' ? row.value : true); })
+            .catch(() => { if (!cancelled) setEnabled(true); });
+        return () => { cancelled = true; };
+    }, []);
+
+    const handleToggle = async () => {
+        const next = !enabled;
+        setIsSaving(true);
+        try {
+            await systemSettingsRepository.set(VIRTUAL_CAMERA_CHECK_KEY, next);
+            setEnabled(next);
+            toast.success(next ? t('debugCenter.virtualCameraCheckEnabledToast') : t('debugCenter.virtualCameraCheckDisabledToast'));
+        } catch (error) {
+            showUserError('errors.updateSystemSetting', error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl bg-gray-50 dark:bg-gray-900/30 border border-gray-100 dark:border-gray-700 mb-4">
+            <div>
+                <p className="text-xs font-bold text-gray-700 dark:text-gray-200">{t('debugCenter.virtualCameraCheckTitle')}</p>
+                <p className="text-[11px] text-gray-400 dark:text-gray-500 max-w-md mt-0.5">{t('debugCenter.virtualCameraCheckDescription')}</p>
+            </div>
+            <button
+                type="button"
+                role="switch"
+                aria-checked={enabled === true}
+                disabled={enabled === null || isSaving}
+                onClick={handleToggle}
+                className={`relative shrink-0 inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+                    enabled ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'
+                }`}
+            >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+        </div>
+    );
+};
 
 const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
     const { t } = useTranslation();
@@ -413,6 +475,8 @@ const CameraPipelineSubmodule = ({ steps, setSteps, ranAt, setRanAt }) => {
                     <Button size="sm" onClick={runPipelineTest} loading={isRunning}>{t('debugCenter.runTest')}</Button>
                 </div>
             </div>
+
+            <VirtualCameraCheckToggle />
 
             <div className="relative w-full max-w-xs mb-4">
                 <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-xl bg-gray-100 dark:bg-gray-900" style={{ transform: 'scaleX(-1)' }} />
