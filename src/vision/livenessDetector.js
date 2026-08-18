@@ -427,12 +427,25 @@ export class RandomLivenessChallenge {
             const rightEyePoints = landmarks.getRightEye();
             const leftEAR = calculateEAR(leftEyePoints);
             const rightEAR = calculateEAR(rightEyePoints);
-            const avgEAR = (leftEAR + rightEAR) / 2;
             const pitch = calculatePitchRatio(landmarks);
             const faceSpan = calculateFaceVerticalSpan(landmarks);
             const eyeWidth = (calculateEyeWidth(leftEyePoints) + calculateEyeWidth(rightEyePoints)) / 2;
 
-            if (avgEAR < EAR_CLOSED_THRESHOLD) {
+            // 🟩 SECURITY FIX (reported live): averaging the two eyes'
+            // EAR let a tilt that only foreshortens ONE eye's projection
+            // (e.g. tilting the phone down shifts each eye's apparent
+            // vertical extent differently depending on its position
+            // relative to the tilt axis) drag the AVERAGE across both
+            // thresholds even though only one eye's ratio ever actually
+            // moved -- reading as a real blink, which always closes BOTH
+            // eyes together. Now requires BOTH eyes independently below
+            // the closed threshold (the worse/higher of the two must
+            // still clear it) and BOTH independently above the open
+            // threshold, closing that asymmetric-tilt gap.
+            const bothEyesClosed = Math.max(leftEAR, rightEAR) < EAR_CLOSED_THRESHOLD;
+            const bothEyesOpen = Math.min(leftEAR, rightEAR) > EAR_OPEN_THRESHOLD;
+
+            if (bothEyesClosed) {
                 this._closedRun += 1;
                 this._openRun = 0;
                 if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) {
@@ -441,7 +454,7 @@ export class RandomLivenessChallenge {
                     this._closedFaceSpan = faceSpan;
                     this._closedEyeWidth = eyeWidth;
                 }
-            } else if (avgEAR > EAR_OPEN_THRESHOLD) {
+            } else if (bothEyesOpen) {
                 this._closedRun = 0;
                 if (this.hasBeenClosed) {
                     // 🟩 SECURITY FIX: reject the open reading if the head's

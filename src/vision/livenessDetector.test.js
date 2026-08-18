@@ -84,6 +84,35 @@ const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50, mouth = neutralMouth)
     getMouth: () => mouth,
 });
 
+// Same shape as makeLandmarks but with independently-controllable left/right
+// eyes -- needed to simulate a tilt that foreshortens each eye's projection
+// differently (e.g. tilting a phone/photo down doesn't shift both eyes'
+// apparent vertical extent by the same amount, since they sit at different
+// positions relative to the tilt axis), unlike a real blink which always
+// closes both eyes together.
+const makeAsymmetricLandmarks = (leftEye, rightEye, noseY = 50) => ({
+    getLeftEye: () => leftEye,
+    getRightEye: () => rightEye,
+    getNose: () => [{ x: 50, y: noseY }],
+    getJawOutline: () => [{ x: 0, y: 100 }, { x: 50, y: 100 }, { x: 100, y: 100 }],
+    getLeftEyeBrow: () => [{ x: 20, y: 20 }, { x: 30, y: 20 }, { x: 40, y: 20 }],
+    getRightEyeBrow: () => [{ x: 60, y: 20 }, { x: 70, y: 20 }, { x: 80, y: 20 }],
+    getMouth: () => neutralMouth,
+});
+
+// A moderately-open eye (EAR = 0.5) -- well clear of EAR_OPEN_THRESHOLD
+// (0.28) on its own, but low enough that AVERAGING it with a fully-closed
+// eye (EAR = 0) lands the average (0.25) below EAR_CLOSED_THRESHOLD (0.26)
+// -- exactly the asymmetric-tilt shape this regression targets.
+const halfOpenEye = [
+    { x: 0, y: 5 },
+    { x: 2, y: 3.5 },
+    { x: 4, y: 3.5 },
+    { x: 6, y: 5 },
+    { x: 4, y: 6.5 },
+    { x: 2, y: 6.5 },
+];
+
 // Same shape as makeLandmarks but with a fully custom eyebrow-y/chin-y --
 // lets a test independently control the RAW vertical face span (chinY -
 // browY) versus where the nose sits WITHIN that span (pitch ratio), which
@@ -320,6 +349,27 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(closedEye, 0, 50))).toBe(false);
         expect(challenge.registerFrame(makeLandmarks(narrowOpenEye, 0, 50))).toBe(false);
+        expect(challenge.confirmed).toBe(false);
+    });
+
+    // 🟩 REGRESSION TEST: reported live -- tilting a photo DOWN foreshortens
+    // each eye's projection differently (they sit at different positions
+    // relative to the tilt axis), so only ONE eye's EAR actually dropped
+    // while the other stayed clearly open. Averaging the two eyes let that
+    // single-eye dip drag the AVERAGE below EAR_CLOSED_THRESHOLD even
+    // though neither eye was independently below it on its own AND above
+    // it -- misread as a real blink, which always closes BOTH eyes
+    // together. Now requires each eye to independently clear both
+    // thresholds.
+    it('does NOT confirm a blink when only ONE eye\'s ratio actually drops (asymmetric tilt), even though the AVERAGE would cross the threshold', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        expect(challenge.registerFrame(makeAsymmetricLandmarks(openEye, openEye))).toBe(false);
+        expect(challenge.registerFrame(makeAsymmetricLandmarks(openEye, openEye))).toBe(false);
+        // Left eye reads fully closed (EAR 0), right eye stays moderately
+        // open (EAR 0.5) -- average is 0.25, below EAR_CLOSED_THRESHOLD
+        // (0.26), but the right eye alone never actually closed.
+        expect(challenge.registerFrame(makeAsymmetricLandmarks(closedEye, halfOpenEye))).toBe(false);
+        expect(challenge.registerFrame(makeAsymmetricLandmarks(openEye, openEye))).toBe(false);
         expect(challenge.confirmed).toBe(false);
     });
 
