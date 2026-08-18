@@ -300,6 +300,28 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
     const employeeUsers = allUsers.filter(u => u.role === 'employee');
     const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
+    // --- OUTSOURCE DIRECTORY search/filter/sort -- mirrors the Attendance
+    // view's filter bar (search + institution/mode/status + sort) but scoped
+    // only to this widget's own copy of employeeUsers, so it never affects
+    // the Leaderboard/Team widgets that also read employeeUsers directly.
+    const [directorySearchTerm, setDirectorySearchTerm] = useState('');
+    const [directoryFilterSource, setDirectoryFilterSource] = useState('all');
+    const [directoryFilterMode, setDirectoryFilterMode] = useState('all');
+    const [directorySortBy, setDirectorySortBy] = useState('name-az');
+    const directorySources = [...new Set(employeeUsers.map(e => e.source || e.university).filter(Boolean))];
+    const filteredDirectoryUsers = employeeUsers
+        .filter(emp => {
+            const matchesSearch = (emp.name || '').toLowerCase().includes(directorySearchTerm.toLowerCase());
+            const empSource = emp.source || emp.university || '';
+            const matchesSource = directoryFilterSource === 'all' || empSource === directoryFilterSource;
+            const matchesMode = directoryFilterMode === 'all' || (emp.work_mode || 'WFO') === directoryFilterMode;
+            return matchesSearch && matchesSource && matchesMode;
+        })
+        .sort((a, b) => {
+            if (directorySortBy === 'name-za') return (b.name || '').localeCompare(a.name || '');
+            return (a.name || '').localeCompare(b.name || '');
+        });
+
     // --- LEADERBOARD: ranks employees by approved/completed task volume,
     // with punctuality as a tiebreaker signal shown alongside it.
     // LRU-memoized (see computeLeaderboard above) since this view re-renders
@@ -708,7 +730,45 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                         </div>
                     )}
 
-                    {employeeUsers.length > 0 ? (
+                    {employeeUsers.length > 0 && (
+                        <div className="mx-5 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-gray-50/60 dark:bg-gray-900/30 p-3 rounded-xl border border-gray-100 dark:border-gray-700/60">
+                            <div>
+                                <label htmlFor="dir-search" className="block text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">{t('dashboard.searchStaff')}</label>
+                                <input
+                                    id="dir-search"
+                                    type="text"
+                                    value={directorySearchTerm}
+                                    onChange={(e) => setDirectorySearchTerm(e.target.value)}
+                                    placeholder={t('dashboard.searchStaffPlaceholder')}
+                                    className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 font-medium"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="dir-source" className="block text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">{t('dashboard.colInstitution')}</label>
+                                <select id="dir-source" value={directoryFilterSource} onChange={(e) => setDirectoryFilterSource(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
+                                    <option value="all">{t('dashboard.allInstitutions')}</option>
+                                    {directorySources.map(src => <option key={src} value={src}>{src}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="dir-mode" className="block text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">{t('dashboard.colDutyMode')}</label>
+                                <select id="dir-mode" value={directoryFilterMode} onChange={(e) => setDirectoryFilterMode(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
+                                    <option value="all">{t('dashboard.allModes')}</option>
+                                    <option value="WFO">{t('dashboard.dutyModeOffice')}</option>
+                                    <option value="WFH">{t('dashboard.dutyModeRemote')}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="dir-sort" className="block text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5">{t('dashboard.sortConfiguration')}</label>
+                                <select id="dir-sort" value={directorySortBy} onChange={(e) => setDirectorySortBy(e.target.value)} className="w-full px-3 py-2 text-xs border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 dark:text-white font-bold">
+                                    <option value="name-az">{t('dashboard.nameAZ')}</option>
+                                    <option value="name-za">{t('dashboard.nameZA')}</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
+                    {filteredDirectoryUsers.length > 0 ? (
                         <div className="overflow-x-auto">
                             <table className="w-full text-xs">
                                 <thead>
@@ -723,7 +783,7 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-50 dark:divide-gray-700/40">
-                                    {[...employeeUsers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map((emp) => {
+                                    {filteredDirectoryUsers.map((emp) => {
                                         const isEditing = staffEditor.editingId === emp.id;
                                         // 🟩 INLINE EDITING: same shared hook/field-set as Settings
                                         // > Manage Staff Assignments (hooks/useStaffAssignmentEditor.js)
@@ -802,7 +862,9 @@ const DashboardView = ({ userProfile, tasks = [], leaveRequests = [], attendance
                             </table>
                         </div>
                     ) : (
-                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">{t('dashboard.noEmployeesFound')}</p>
+                        <p className="text-center text-xs text-gray-400 py-6 dark:text-gray-500 italic">
+                            {employeeUsers.length > 0 ? t('dashboard.noDirectoryMatches') : t('dashboard.noEmployeesFound')}
+                        </p>
                     )}
                 </div>
             )}
