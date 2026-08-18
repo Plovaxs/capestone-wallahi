@@ -49,6 +49,31 @@ export function calculateBoxShiftRatio(prevBox, currentBox) {
 }
 
 /**
+ * Re-expresses a box's position/size relative to a reference box (e.g. the
+ * detected face), instead of raw frame coordinates. A rigidly-held photo/
+ * phone wobbling in front of the camera moves EVERY point on it together --
+ * the face box, the mouth box, the nose box all shift in lockstep -- so
+ * their ABSOLUTE frame-to-frame motion (calculateBoxShiftRatio fed raw
+ * boxes) can't tell "the whole photo wobbled" from "the mouth actually
+ * moved," exactly the documented limitation on the face-box check above.
+ * Genuine lip/nostril movement changes the feature's position RELATIVE TO
+ * THE REST OF THE FACE (the mouth moves, the nose and jaw don't); a rigid
+ * wobble leaves that relative position essentially unchanged, since
+ * numerator and denominator shift together. Feed the result through
+ * calculateBoxShiftRatio/createBoxMotionTracker exactly like a normal box --
+ * it's just expressed in face-relative, not frame-absolute, coordinates.
+ */
+export function toFaceRelativeBox(box, faceBox) {
+    if (!box || !faceBox || !faceBox.width || !faceBox.height) return null;
+    return {
+        x: (box.x - faceBox.x) / faceBox.width,
+        y: (box.y - faceBox.y) / faceBox.height,
+        width: box.width / faceBox.width,
+        height: box.height / faceBox.height,
+    };
+}
+
+/**
  * Rolling-window version of the same check -- a single tick's shift
  * reading is noisy (a genuinely live person can easily hold still for one
  * 350ms-1.8s tick interval, especially while concentrating on blinking on

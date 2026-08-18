@@ -15,7 +15,7 @@ import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
-import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
+import { calculateBoxShiftRatio, createBoxMotionTracker, toFaceRelativeBox } from '../vision/boxMotionHeuristic';
 import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
@@ -709,21 +709,36 @@ export default function LoginPage() {
         // override a false suspicious vote (e.g. an odd-lighting hand/color
         // misread) instead of a lone motionless tick silently blocking a
         // genuinely live user.
+        // 🟩 SECURITY FIX: tracked in FACE-RELATIVE coordinates
+        // (toFaceRelativeBox), not raw frame position -- a rigidly-held
+        // photo/phone wobbles too, moving the face box AND the mouth/nose
+        // boxes together in lockstep (the exact same limitation
+        // boxMotionHeuristic.js's own comment documents for the face box
+        // itself), so raw absolute motion couldn't actually tell "the
+        // whole photo wobbled" from "the mouth really moved." Relative
+        // position cancels out a whole-object wobble while still catching
+        // genuine internal movement.
         const mouthGeometry = calculateMouthBox(detection.landmarks);
         const noseGeometry = calculateNoseBox(detection.landmarks);
+        const relativeMouthGeometry = mouthGeometry ? toFaceRelativeBox(mouthGeometry, box) : null;
+        const relativeNoseGeometry = noseGeometry ? toFaceRelativeBox(noseGeometry, box) : null;
         if (mouthGeometry) {
           setMouthBox({ ...mouthGeometry, imageWidth: width, imageHeight: height });
-          mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, mouthGeometry));
-          prevMouthBoxForMotionRef.current = mouthGeometry;
         } else {
           setMouthBox(null);
         }
+        if (relativeMouthGeometry) {
+          mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, relativeMouthGeometry));
+          prevMouthBoxForMotionRef.current = relativeMouthGeometry;
+        }
         if (noseGeometry) {
           setNoseBox({ ...noseGeometry, imageWidth: width, imageHeight: height });
-          noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, noseGeometry));
-          prevNoseBoxForMotionRef.current = noseGeometry;
         } else {
           setNoseBox(null);
+        }
+        if (relativeNoseGeometry) {
+          noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, relativeNoseGeometry));
+          prevNoseBoxForMotionRef.current = relativeNoseGeometry;
         }
         const mouthMotionStats = mouthMotionTrackerRef.current.getStats();
         const noseMotionStats = noseMotionTrackerRef.current.getStats();

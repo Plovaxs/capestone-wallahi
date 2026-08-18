@@ -35,7 +35,7 @@ import { createGeofenceStateMachine } from '../geo/geofenceStateMachine';
 import { calculateDistanceMeters, OFFICE_LOCATION, ALLOWED_RADIUS_METERS } from '../geo/officeGeofence';
 import { createMotionStabilityTracker } from '../sensors/motionStability';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
-import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
+import { calculateBoxShiftRatio, createBoxMotionTracker, toFaceRelativeBox } from '../vision/boxMotionHeuristic';
 import { checkColorLiveness } from '../vision/colorLivenessHeuristic';
 import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
@@ -1199,27 +1199,42 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     // 🟩 NEW: same "update every tick regardless of gates"
                     // treatment as the eye boxes above -- a photo/screen
                     // literally cannot move its own lips or nostrils, so
-                    // real movement in EITHER region (tracked the exact
-                    // same way as the mandatory face-box motion check) is
-                    // strong, independent proof of a live face. Read further
-                    // below to override a false suspicious vote (e.g. an
-                    // odd-lighting hand/color misread) instead of a lone
-                    // motionless tick silently blocking a genuinely live user.
+                    // real movement in EITHER region is strong, independent
+                    // proof of a live face. Read further below to override
+                    // a false suspicious vote (e.g. an odd-lighting hand/
+                    // color misread) instead of a lone motionless tick
+                    // silently blocking a genuinely live user.
+                    // 🟩 SECURITY FIX: tracked in FACE-RELATIVE coordinates
+                    // (toFaceRelativeBox), not raw frame position -- a
+                    // rigidly-held photo/phone wobbles too, moving the face
+                    // box AND the mouth/nose boxes together in lockstep
+                    // (the exact same limitation boxMotionHeuristic.js's
+                    // own comment documents for the face box itself), so
+                    // raw absolute motion couldn't actually tell "the whole
+                    // photo wobbled" from "the mouth really moved." Relative
+                    // position cancels out a whole-object wobble while
+                    // still catching genuine internal movement.
                     const mouthGeometry = liveDet.landmarks ? calculateMouthBox(liveDet.landmarks) : null;
                     const noseGeometry = liveDet.landmarks ? calculateNoseBox(liveDet.landmarks) : null;
+                    const relativeMouthGeometry = mouthGeometry && liveDet.box ? toFaceRelativeBox(mouthGeometry, liveDet.box) : null;
+                    const relativeNoseGeometry = noseGeometry && liveDet.box ? toFaceRelativeBox(noseGeometry, liveDet.box) : null;
                     if (mouthGeometry) {
                         setMouthBox({ ...mouthGeometry, imageWidth, imageHeight });
-                        mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, mouthGeometry));
-                        prevMouthBoxForMotionRef.current = mouthGeometry;
                     } else {
                         setMouthBox(null);
                     }
+                    if (relativeMouthGeometry) {
+                        mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, relativeMouthGeometry));
+                        prevMouthBoxForMotionRef.current = relativeMouthGeometry;
+                    }
                     if (noseGeometry) {
                         setNoseBox({ ...noseGeometry, imageWidth, imageHeight });
-                        noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, noseGeometry));
-                        prevNoseBoxForMotionRef.current = noseGeometry;
                     } else {
                         setNoseBox(null);
+                    }
+                    if (relativeNoseGeometry) {
+                        noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, relativeNoseGeometry));
+                        prevNoseBoxForMotionRef.current = relativeNoseGeometry;
                     }
                     const mouthMotionStats = mouthMotionTrackerRef.current.getStats();
                     const noseMotionStats = noseMotionTrackerRef.current.getStats();

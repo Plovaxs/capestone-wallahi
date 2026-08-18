@@ -110,6 +110,7 @@ vi.mock('../vision/scanReadiness', () => ({
 let mockBoxMotionStats = { ready: true, hasNaturalMovement: true, isErratic: false };
 vi.mock('../vision/boxMotionHeuristic', () => ({
     calculateBoxShiftRatio: vi.fn(() => 0.01),
+    toFaceRelativeBox: vi.fn((box) => box),
     createBoxMotionTracker: vi.fn(() => ({
         addSample: vi.fn(),
         getStats: () => mockBoxMotionStats,
