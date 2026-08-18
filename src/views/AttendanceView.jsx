@@ -17,6 +17,7 @@ import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
+import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { getLocalDateString } from '../utils/dateOnly';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
@@ -1409,6 +1410,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 let handCheck = { suspicious: false };
                                 let handEdgeCheck = { suspicious: false };
                                 let deviceEdgeCheck = { suspicious: false };
+                                let screenGlareCheck = { suspicious: false };
                                 let pulseStats = { ready: false };
                                 try {
                                     const ctx = liveDet.sourceCanvas.getContext('2d');
@@ -1471,6 +1473,11 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         // shrinks along with it). See handRegionHeuristic.js's
                                         // own comment on why this samples a DIFFERENT region.
                                         handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
+                                        // 🟩 SECURITY: a phone/tablet screen displaying a photo
+                                        // EMITS its own backlight, unlike real skin (or a printed
+                                        // photo) which only ever reflects ambient room light -- see
+                                        // vision/screenGlareHeuristic.js.
+                                        screenGlareCheck = checkScreenGlare(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
 
                                         setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                             && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -1492,6 +1499,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
                                             handSuspicious: handCheck.suspicious,
                                             handEdgeSuspicious: handEdgeCheck.suspicious,
+                                            screenGlareSuspicious: screenGlareCheck.suspicious,
                                             pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
                                         }).suspicious;
                                     }
@@ -1547,7 +1555,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // sneaking through.
                                     livenessChallengeRef.current.reset();
                                     setChallengeGlyph(null);
-                                    setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
+                                    setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : screenGlareCheck.suspicious ? 'attendance.statusScreenDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                 } else if (livenessSuspicious) {
                                     // Tolerated (within debounce) -- nothing is reset and no
@@ -1813,6 +1821,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                     const handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
                     const handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
+                    const screenGlareCheck = checkScreenGlare(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
                     const livenessSuspicious = evaluatePassiveLiveness({
                         borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
                         deviceFlat: deviceMotionStats.ready ? deviceMotionStats.isSuspiciouslyFlat : null,
@@ -1822,6 +1831,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         deviceEdgeSuspicious: checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
                         handSuspicious: handCheck.suspicious,
                         handEdgeSuspicious: handEdgeCheck.suspicious,
+                        screenGlareSuspicious: screenGlareCheck.suspicious,
                         pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
                     }).suspicious;
                     if (livenessSuspicious) {

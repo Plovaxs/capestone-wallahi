@@ -171,6 +171,10 @@ vi.mock('../vision/deviceEdgeHeuristic', () => ({
     checkDeviceEdges: vi.fn(() => ({ suspicious: false })),
 }));
 
+vi.mock('../vision/screenGlareHeuristic', () => ({
+    checkScreenGlare: vi.fn(() => ({ suspicious: false })),
+}));
+
 // 🟩 Controllable blink-challenge stand-in, exposed on globalThis so both
 // this factory (hoisted above all top-level declarations by vi.mock) and
 // the test bodies below can read/write the same flag without a
@@ -250,6 +254,7 @@ import { pipeline as yoloPipeline } from '@huggingface/transformers';
 import { checkLensObstruction } from '../vision/faceQuality';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
+import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 
 // ============================================================
 // DOM/BROWSER ENVIRONMENT STUBS
@@ -443,6 +448,19 @@ describe('AttendanceView', () => {
 
             expect(checkHandInFrame).toHaveBeenCalled();
             expect(checkDeviceEdges).toHaveBeenCalled();
+        });
+
+        // 🟩 REGRESSION TEST: a phone/tablet screen displaying a photo
+        // emits its own backlight -- real skin (or a printed photo) only
+        // ever reflects ambient room light -- so this is a genuinely new,
+        // independent detection signal, not just a wiring check like the
+        // hand/device-edge one above. Asserts it's actually invoked.
+        it('checks for screen glare (a self-lit phone/tablet screen vs real skin) every scan tick', async () => {
+            await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+            await advanceScanTicks(1);
+
+            expect(checkScreenGlare).toHaveBeenCalled();
         });
     });
 

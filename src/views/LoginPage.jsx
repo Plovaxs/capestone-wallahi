@@ -17,6 +17,7 @@ import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
 import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
+import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
@@ -787,6 +788,10 @@ export default function LoginPage() {
           // the whole camera frame. See handRegionHeuristic.js's own
           // comment on why this samples a DIFFERENT region.
           const handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, width, height, box);
+          // 🟩 SECURITY: a phone/tablet screen displaying a photo EMITS its
+          // own backlight, unlike real skin (or a printed photo) which only
+          // ever reflects ambient room light -- see vision/screenGlareHeuristic.js.
+          const screenGlareCheck = checkScreenGlare(fullFrame.data, width, height, box);
           const passiveVote = evaluatePassiveLiveness({
             borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
             pixelFlat: microMotionStats.isSuspiciouslyFlat,
@@ -795,6 +800,7 @@ export default function LoginPage() {
             deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
             handSuspicious: handCheck.suspicious,
             handEdgeSuspicious: handEdgeCheck.suspicious,
+            screenGlareSuspicious: screenGlareCheck.suspicious,
             pulseSuspicious: pulseStatsForVote.ready ? !pulseStatsForVote.hasPlausiblePulse : null,
           });
 
@@ -825,7 +831,7 @@ export default function LoginPage() {
             } else {
               passiveSuspicionStreakRef.current = 0;
               livenessChallengeRef.current.reset();
-              setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
+              setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : screenGlareCheck.suspicious ? 'login.statusScreenDetected' : 'login.statusLivenessSuspicious'));
               setChallengeGlyph(null);
             }
             return;
