@@ -16,7 +16,7 @@ import { isWeekend } from '../domain/attendanceDayPolicy';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
 import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
-import { checkHandInFrame } from '../vision/handRegionHeuristic';
+import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { getLocalDateString } from '../utils/dateOnly';
 import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
@@ -1407,6 +1407,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 let livenessSuspicious = false;
                                 let challengeConfirmed = false;
                                 let handCheck = { suspicious: false };
+                                let handEdgeCheck = { suspicious: false };
                                 let deviceEdgeCheck = { suspicious: false };
                                 let pulseStats = { ready: false };
                                 try {
@@ -1461,6 +1462,15 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
                                         const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                                         handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
+                                        // 🟩 SECURITY FIX (reported live): checkHandInFrame's
+                                        // surround band only reaches a modest margin past the
+                                        // face box itself -- misses fingers gripping a phone/
+                                        // photo near the outer edges of the whole camera frame,
+                                        // especially once the "face" it matched is actually a
+                                        // small photo on that phone's screen (its own margin
+                                        // shrinks along with it). See handRegionHeuristic.js's
+                                        // own comment on why this samples a DIFFERENT region.
+                                        handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
 
                                         setSensorDiagnostics((prev) => (prev.motionReady === deviceMotionStats.ready && prev.motionStable === !deviceMotionStats.isSuspiciouslyFlat
                                             && prev.microMotionReady === microMotionStats.ready && prev.microMotionStable === !microMotionStats.isSuspiciouslyFlat
@@ -1481,6 +1491,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             textureFlat: textureSuspicious,
                                             deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
                                             handSuspicious: handCheck.suspicious,
+                                            handEdgeSuspicious: handEdgeCheck.suspicious,
                                             pulseSuspicious: pulseStats.ready ? pulseSuspicious : null,
                                         }).suspicious;
                                     }
@@ -1536,7 +1547,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                     // sneaking through.
                                     livenessChallengeRef.current.reset();
                                     setChallengeGlyph(null);
-                                    setBiometricStatus(t(handCheck.suspicious ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
+                                    setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'attendance.statusHandDetected' : deviceEdgeCheck.suspicious ? 'attendance.statusDeviceDetected' : 'attendance.statusLivenessSuspicious'));
                                     toast(t('attendance.antiReplayWarning'), { icon: '⚠️' });
                                 } else if (livenessSuspicious) {
                                     // Tolerated (within debounce) -- nothing is reset and no
@@ -1801,6 +1812,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     // surrounding the face box.
                     const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
                     const handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
+                    const handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
                     const livenessSuspicious = evaluatePassiveLiveness({
                         borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
                         deviceFlat: deviceMotionStats.ready ? deviceMotionStats.isSuspiciouslyFlat : null,
@@ -1809,6 +1821,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         textureFlat: checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
                         deviceEdgeSuspicious: checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
                         handSuspicious: handCheck.suspicious,
+                        handEdgeSuspicious: handEdgeCheck.suspicious,
                         pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
                     }).suspicious;
                     if (livenessSuspicious) {

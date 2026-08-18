@@ -164,6 +164,7 @@ vi.mock('../vision/faceOverlayGeometry', () => ({
 
 vi.mock('../vision/handRegionHeuristic', () => ({
     checkHandInFrame: vi.fn(() => ({ suspicious: false })),
+    checkHandNearFrameEdges: vi.fn(() => ({ suspicious: false })),
 }));
 
 vi.mock('../vision/deviceEdgeHeuristic', () => ({

@@ -81,3 +81,64 @@ export function checkHandInFrame(imageData, width, height, faceBox) {
     const skinFraction = skinCount / sampled;
     return { suspicious: skinFraction >= HAND_REGION_SKIN_FRACTION_THRESHOLD, skinFraction, samples: sampled };
 }
+
+// 🟩 SECURITY FIX (reported live): checkHandInFrame's surround band only
+// reaches SURROUND_MARGIN_RATIO (60%) of the face box's OWN size outward --
+// fine for a hand held close over/around the face, but someone holding up a
+// phone or printed photo at a normal arm's length typically grips it with
+// fingers near the OUTER EDGES of the whole camera frame, well past that
+// band, especially once the device itself is framed to fill most of the
+// shot (a detected "face" that's actually the photo on the phone's screen
+// is small, so its 60%-margin band stays small too). Deliberately checks a
+// DIFFERENT region than the surround band -- only the frame's own outer
+// border strip -- so it doesn't reopen the neck/collar false positive that
+// motivated shrinking the surround band in the first place (a normal
+// neck/collar sits close to the face, not out at the frame edges).
+const EDGE_BAND_FRACTION = 0.16;
+const EDGE_SKIN_FRACTION_THRESHOLD = 0.35;
+
+/**
+ * Skin-toned fraction of just the frame's own outer border strip (top/
+ * bottom/left/right, each EDGE_BAND_FRACTION of the frame's own height/
+ * width), excluding the face box. One more independent vote for
+ * livenessFusion.js, same non-hard-gate treatment as checkHandInFrame.
+ */
+export function checkHandNearFrameEdges(imageData, width, height, faceBox) {
+    if (!imageData || !width || !height) return { suspicious: false, skinFraction: 0, samples: 0 };
+
+    const bandX = Math.round(width * EDGE_BAND_FRACTION);
+    const bandY = Math.round(height * EDGE_BAND_FRACTION);
+    const innerX0 = faceBox ? Math.round(faceBox.x) : -1;
+    const innerY0 = faceBox ? Math.round(faceBox.y) : -1;
+    const innerX1 = faceBox ? Math.round(faceBox.x + faceBox.width) : -1;
+    const innerY1 = faceBox ? Math.round(faceBox.y + faceBox.height) : -1;
+
+    let skinCount = 0;
+    let sampled = 0;
+    for (let y = 0; y < height; y += SAMPLE_STRIDE) {
+        const inEdgeRow = y < bandY || y >= height - bandY;
+        for (let x = 0; x < width; x += SAMPLE_STRIDE) {
+            const inEdgeCol = x < bandX || x >= width - bandX;
+            if (!inEdgeRow && !inEdgeCol) continue; // only the outer border strip
+            if (x >= innerX0 && x < innerX1 && y >= innerY0 && y < innerY1) continue; // face box itself
+
+            const idx = (y * width + x) * 4;
+            const r = imageData[idx];
+            const g = imageData[idx + 1];
+            const b = imageData[idx + 2];
+            const sum = r + g + b;
+            if (sum === 0) continue;
+            sampled++;
+            const rNorm = r / sum;
+            const gNorm = g / sum;
+            if (rNorm >= SKIN_R_MIN && rNorm <= SKIN_R_MAX && gNorm >= SKIN_G_MIN && gNorm <= SKIN_G_MAX) {
+                skinCount++;
+            }
+        }
+    }
+
+    if (sampled < MIN_SAMPLES) return { suspicious: false, skinFraction: 0, samples: sampled };
+
+    const skinFraction = skinCount / sampled;
+    return { suspicious: skinFraction >= EDGE_SKIN_FRACTION_THRESHOLD, skinFraction, samples: sampled };
+}

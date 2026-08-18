@@ -16,7 +16,7 @@ import { checkTextureSharpness } from '../vision/textureSharpnessHeuristic';
 import { evaluatePassiveLiveness } from '../vision/livenessFusion';
 import { createMicroMotionTracker } from '../vision/microMotionTracker';
 import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMotionHeuristic';
-import { checkHandInFrame } from '../vision/handRegionHeuristic';
+import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
@@ -781,6 +781,12 @@ export default function LoginPage() {
           const deviceEdgeCheck = checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height);
           const fullFrame = ctx.getImageData(0, 0, width, height);
           const handCheck = checkHandInFrame(fullFrame.data, width, height, box);
+          // 🟩 SECURITY FIX (reported live): checkHandInFrame's surround
+          // band only reaches a modest margin past the face box itself --
+          // misses fingers gripping a phone/photo near the outer edges of
+          // the whole camera frame. See handRegionHeuristic.js's own
+          // comment on why this samples a DIFFERENT region.
+          const handEdgeCheck = checkHandNearFrameEdges(fullFrame.data, width, height, box);
           const passiveVote = evaluatePassiveLiveness({
             borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
             pixelFlat: microMotionStats.isSuspiciouslyFlat,
@@ -788,6 +794,7 @@ export default function LoginPage() {
             textureFlat: textureCheck.suspicious,
             deviceEdgeSuspicious: deviceEdgeCheck.suspicious,
             handSuspicious: handCheck.suspicious,
+            handEdgeSuspicious: handEdgeCheck.suspicious,
             pulseSuspicious: pulseStatsForVote.ready ? !pulseStatsForVote.hasPlausiblePulse : null,
           });
 
@@ -818,7 +825,7 @@ export default function LoginPage() {
             } else {
               passiveSuspicionStreakRef.current = 0;
               livenessChallengeRef.current.reset();
-              setBiometricStatus(t(handCheck.suspicious ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
+              setBiometricStatus(t((handCheck.suspicious || handEdgeCheck.suspicious) ? 'login.statusHandDetected' : deviceEdgeCheck.suspicious ? 'login.statusDeviceDetected' : 'login.statusLivenessSuspicious'));
               setChallengeGlyph(null);
             }
             return;
