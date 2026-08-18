@@ -1422,15 +1422,24 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
 
                                     // 🟩 SIMPLIFIED (2026-08-12): same reordering as
                                     // LoginPage.jsx -- the deliberate blink challenge is
-                                    // evaluated FIRST and is the PRIMARY liveness signal; the
-                                    // passive pixel-statistics vote below only runs (and can
-                                    // only block/reset) while the challenge is still pending.
+                                    // evaluated FIRST and is the PRIMARY liveness signal.
                                     if (livenessChallengeRef.current.isExpired()) {
                                         livenessChallengeRef.current.reset();
                                     }
                                     challengeConfirmed = livenessChallengeRef.current.registerFrame(liveDet.landmarks);
 
-                                    if (!challengeConfirmed) {
+                                    // 🟩 SECURITY FIX (reported live): this used to only run
+                                    // (and only ever block/reset) while `!challengeConfirmed`
+                                    // -- meaning the exact tick where the blink challenge
+                                    // FINALLY confirms was never checked for a hand/phone/
+                                    // device-edge in frame at all, since that's precisely the
+                                    // tick someone spoofing would still be holding the thing
+                                    // up. Now runs every tick regardless; the existing
+                                    // debounce below (passiveSuspicionStreakRef, unchanged)
+                                    // still tolerates a single blink-transition false trip the
+                                    // same as before -- this only closes the "never even
+                                    // looked" gap on a SUSTAINED hand/phone/device-edge signal.
+                                    {
                                         const marginX = Math.round(liveDet.box.width * 0.15);
                                         const marginY = Math.round(liveDet.box.height * 0.15);
                                         const borderRegion = ctx.getImageData(

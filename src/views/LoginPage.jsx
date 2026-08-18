@@ -752,7 +752,17 @@ export default function LoginPage() {
         // of the passive votes (see livenessFusion.js's own comment).
         const challengeConfirmed = livenessChallengeRef.current.registerFrame(detection.landmarks);
 
-        if (!challengeConfirmed) {
+        // 🟩 SECURITY FIX (reported live): this whole vote used to live
+        // inside `if (!challengeConfirmed)`, so the exact tick where the
+        // blink challenge FINALLY confirms was never checked for a hand/
+        // phone/device-edge in frame at all -- precisely the tick someone
+        // spoofing would still be holding the thing up. Now computed every
+        // tick regardless of confirmation state; only the "awaiting blink"
+        // UI/early-return below stays confirmation-gated. The existing
+        // debounce (passiveSuspicionStreakRef, unchanged) still tolerates a
+        // single blink-transition false trip the same as before -- this
+        // only closes the "never even looked" gap on a SUSTAINED signal.
+        {
           const marginX = Math.round(box.width * 0.15);
           const marginY = Math.round(box.height * 0.15);
           const borderRegion = ctx.getImageData(
@@ -814,7 +824,9 @@ export default function LoginPage() {
             return;
           }
           passiveSuspicionStreakRef.current = 0;
+        }
 
+        if (!challengeConfirmed) {
           const suffix = CHALLENGE_INSTRUCTION_SUFFIX[livenessChallengeRef.current.challengeType];
           setChallengeGlyph(CHALLENGE_DIRECTION_GLYPH[livenessChallengeRef.current.challengeType]);
           setBiometricStatus(t(`login.statusAwaiting${suffix}`, {

@@ -248,6 +248,7 @@ import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { pipeline as yoloPipeline } from '@huggingface/transformers';
 import { checkLensObstruction } from '../vision/faceQuality';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
+import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 
 // ============================================================
 // DOM/BROWSER ENVIRONMENT STUBS
@@ -418,6 +419,29 @@ describe('AttendanceView', () => {
             await advanceScanTicks(1);
             expect(performClockIn).toHaveBeenCalledTimes(1);
             expect(performClockIn).toHaveBeenCalledWith(expect.objectContaining({ source: 'face-match' }));
+        });
+
+        // 🟩 REGRESSION TEST: reported live -- holding a hand/phone/photo up
+        // to spoof the scan wasn't getting flagged at all. Root cause: the
+        // hand/device-edge/passive-liveness vote only ran (and could only
+        // ever block) while the blink challenge was still UNCONFIRMED --
+        // once confirmed, that whole check was skipped entirely, including
+        // on the very tick that completes it (exactly the tick someone
+        // spoofing would still be holding the thing up in frame). This test
+        // mocks the challenge as instantly confirmed (the default in this
+        // file) specifically BECAUSE that's the scenario the old code
+        // completely blinded itself on -- asserts checkHandInFrame/
+        // checkDeviceEdges are genuinely invoked on that same tick now,
+        // instead of never running at all. (evaluatePassiveLiveness itself
+        // is mocked module-wide here -- its downstream blocking logic has
+        // its own dedicated unit tests in livenessFusion.js.)
+        it('still checks for a hand/device-edge in frame even on the exact tick the blink challenge confirms', async () => {
+            await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+            await advanceScanTicks(1);
+
+            expect(checkHandInFrame).toHaveBeenCalled();
+            expect(checkDeviceEdges).toHaveBeenCalled();
         });
     });
 
