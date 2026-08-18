@@ -179,6 +179,18 @@ const EAR_OPEN_THRESHOLD = 0.28;
 // happens to land during it.
 const SMILE_THRESHOLD = 0.05;
 const MOUTH_OPEN_THRESHOLD = 0.15;
+// 🟩 SECURITY FIX (reported live): tilting a printed/screen photo forward
+// toward the camera foreshortens the eyes in the 2D projection, shrinking
+// EAR exactly like a real blink closing -- then tilting it back pushes EAR
+// back above the open threshold, faking the whole closed->open transition
+// with zero actual blink. A real blink is a ~100-400ms eyelid motion with
+// no meaningful head rotation; a tilt attack always moves the WHOLE face's
+// pitch along with it. See the pitch-stability check in _evaluateStep's
+// BLINK branch below. Not calibrated against real hardware/lighting --
+// tighten if a tilt attack still gets through, loosen if genuine blinks
+// (naturally paired with a little incidental head motion a tick or two
+// apart) start getting rejected.
+const BLINK_PITCH_STABILITY_THRESHOLD = 0.12;
 const MIN_CONSECUTIVE_FRAMES = 1; // frames the triggering condition must hold (see 2026-08-11b above)
 const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed (this step) before confirmation is even possible
 // 🟩 Two independent, unpredictable steps instead of one -- a static
@@ -277,6 +289,9 @@ export class RandomLivenessChallenge {
         this._closedRun = 0;
         this._openRun = 0;
         this._expressionRun = 0;
+        // Pitch reading captured at the moment eyes last read as closed --
+        // see the tilt-vs-blink check in _evaluateStep's BLINK branch.
+        this._closedPitch = null;
     }
 
     /** The challenge type for the CURRENT step -- what the UI should prompt for right now. */
@@ -316,14 +331,27 @@ export class RandomLivenessChallenge {
             const leftEAR = calculateEAR(landmarks.getLeftEye());
             const rightEAR = calculateEAR(landmarks.getRightEye());
             const avgEAR = (leftEAR + rightEAR) / 2;
+            const pitch = calculatePitchRatio(landmarks);
 
             if (avgEAR < EAR_CLOSED_THRESHOLD) {
                 this._closedRun += 1;
                 this._openRun = 0;
-                if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) this.hasBeenClosed = true;
+                if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) {
+                    this.hasBeenClosed = true;
+                    this._closedPitch = pitch;
+                }
             } else if (avgEAR > EAR_OPEN_THRESHOLD) {
                 this._closedRun = 0;
                 if (this.hasBeenClosed) {
+                    // 🟩 SECURITY FIX: reject the open reading if the head's
+                    // pitch swung too far from where it was at the closed
+                    // reading -- see BLINK_PITCH_STABILITY_THRESHOLD's
+                    // comment. A genuine blink leaves this near 0; a tilted-
+                    // photo spoof is exactly what this catches.
+                    const pitchDrift = Math.abs(pitch - this._closedPitch);
+                    if (pitchDrift > BLINK_PITCH_STABILITY_THRESHOLD) {
+                        return false;
+                    }
                     this._openRun += 1;
                     if (this._openRun >= MIN_CONSECUTIVE_FRAMES && enoughFramesSeen) return true;
                 }

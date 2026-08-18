@@ -194,6 +194,34 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         }
     });
 
+    // 🟩 REGRESSION TEST: reported live -- tilting a printed/screen photo
+    // forward toward the camera foreshortens the eyes, shrinking EAR
+    // exactly like a real blink; tilting it back restores EAR above the
+    // open threshold, faking the whole closed->open transition with the
+    // photo never actually blinking. The tilt necessarily moves the whole
+    // face's pitch reading along with it (unlike a real blink, a ~100-
+    // 400ms eyelid motion with no head rotation) -- simulates that exact
+    // attack shape via a large noseY shift between the "closed" and "open"
+    // samples and confirms it's rejected.
+    it('does NOT confirm a blink when the closed->open transition comes with a large pitch swing (tilted-photo spoof)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        // Photo tilted forward: EAR reads closed AND pitch (noseY) shifts hard.
+        expect(challenge.registerFrame(makeLandmarks(closedEye, 0, 30))).toBe(false);
+        // Photo tilted back: EAR reads open again, but pitch swung right back too.
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        expect(challenge.confirmed).toBe(false);
+    });
+
+    it('still confirms a real blink through the pitch-stability check when pitch only jitters a little (natural incidental head motion)', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50));
+        challenge.registerFrame(makeLandmarks(openEye, 0, 50));
+        challenge.registerFrame(makeLandmarks(closedEye, 0, 48)); // tiny incidental drift
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 45))).toBe(true); // still within tolerance
+    });
+
     it('confirms a blink challenge from a soft/partial blink, matching LoginPage.jsx\'s leniency', () => {
         const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
         challenge.registerFrame(makeLandmarks(openEye));
