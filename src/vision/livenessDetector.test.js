@@ -336,6 +336,41 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.confirmed).toBe(false);
     });
 
+    // 🟩 REGRESSION TEST: reported live -- with the checks above only
+    // comparing the OPEN reading against the immediately-preceding CLOSED
+    // snapshot, a patient attacker doing several small tilt-and-hold cycles
+    // could still eventually reach a closed+open pair that looked
+    // consistent with EACH OTHER (small delta) while both were already far
+    // from where the step genuinely started -- each individual "closed"
+    // update just silently overwrote the comparison point, so nothing ever
+    // anchored the check to the TRUE starting geometry. Now the CLOSED
+    // reading itself is checked against a baseline captured once at the
+    // very start of the step (not just the open reading against the
+    // closed one), so hasBeenClosed never even gets set true from a
+    // drifted state in the first place -- confirmed via the class's own
+    // internal flag, not just the final outcome, to prove rejection now
+    // happens at the EARLIER (closed) point, not only the later (open) one.
+    it('rejects a closed reading whose geometry has already drifted from the step\'s own baseline -- catches it before the open side even matters', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        // Baseline: span 80, nose=50.
+        challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50));
+        challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50));
+        expect(challenge.hasBeenClosed).toBe(false);
+
+        // A closed reading with a halved span -- well outside tolerance of
+        // the ORIGINAL baseline, even though it's the very first "closed"
+        // reading this step has seen (nothing stale to compare against).
+        challenge.registerFrame(makeLandmarksWithSpan(closedEye, 40, 80, 55));
+        expect(challenge.hasBeenClosed).toBe(false); // rejected at the closed step itself
+
+        // An open reading at that SAME drifted geometry (zero delta from
+        // the rejected closed sample -- would look perfectly consistent
+        // under a hypothetical closed-vs-immediate-open-only check) still
+        // can't confirm, because hasBeenClosed was never actually set.
+        expect(challenge.registerFrame(makeLandmarksWithSpan(openEye, 40, 80, 55))).toBe(false);
+        expect(challenge.confirmed).toBe(false);
+    });
+
     // 🟩 REGRESSION TEST: further hardening -- a third, independent check
     // (eye width, EAR's own horizontal denominator) catches a closed->open
     // transition where the eye region itself scaled/shifted between the two

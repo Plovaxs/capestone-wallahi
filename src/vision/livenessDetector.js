@@ -387,6 +387,21 @@ export class RandomLivenessChallenge {
         this._closedPitch = null;
         this._closedFaceSpan = null;
         this._closedEyeWidth = null;
+        // 🟩 SECURITY FIX (reported live, follow-up): a slow, deliberate,
+        // multi-tick tilt-and-return could still sneak past the closed-vs-
+        // open comparison above -- each pair of CONSECUTIVE samples stays
+        // within tolerance even as the geometry drifts steadily further
+        // from where it actually started, since nothing anchored the
+        // comparison to a stable reference point ("boiling frog"). This
+        // captures pitch/span/eye-width ONCE, from the first frame of the
+        // step (before any blink/tilt has begun), and the closed reading
+        // itself is now also checked against THIS -- not just the open
+        // reading against the closed one -- so cumulative drift across
+        // many ticks gets caught even when no single tick-to-tick step
+        // looks suspicious on its own.
+        this._baselinePitch = null;
+        this._baselineFaceSpan = null;
+        this._baselineEyeWidth = null;
     }
 
     /** The challenge type for the CURRENT step -- what the UI should prompt for right now. */
@@ -431,6 +446,17 @@ export class RandomLivenessChallenge {
             const faceSpan = calculateFaceVerticalSpan(landmarks);
             const eyeWidth = (calculateEyeWidth(leftEyePoints) + calculateEyeWidth(rightEyePoints)) / 2;
 
+            // 🟩 SECURITY FIX (reported live, further hardening): captured
+            // ONCE, from the first frame of this step -- see its own
+            // comment in _initStepState for why this exists (a slow,
+            // multi-tick tilt can otherwise drift past the closed-vs-open
+            // comparison one small consecutive step at a time).
+            if (this._baselinePitch === null) {
+                this._baselinePitch = pitch;
+                this._baselineFaceSpan = faceSpan;
+                this._baselineEyeWidth = eyeWidth;
+            }
+
             // 🟩 SECURITY FIX (reported live): averaging the two eyes'
             // EAR let a tilt that only foreshortens ONE eye's projection
             // (e.g. tilting the phone down shifts each eye's apparent
@@ -449,10 +475,37 @@ export class RandomLivenessChallenge {
                 this._closedRun += 1;
                 this._openRun = 0;
                 if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) {
-                    this.hasBeenClosed = true;
-                    this._closedPitch = pitch;
-                    this._closedFaceSpan = faceSpan;
-                    this._closedEyeWidth = eyeWidth;
+                    // 🟩 SECURITY FIX (reported live, follow-up): also
+                    // check the CLOSED reading itself against the step's
+                    // stable baseline (not just the open reading against
+                    // this closed snapshot further below) -- a slow,
+                    // incremental tilt can otherwise reach the "closed"
+                    // EAR crossing while every single tick-to-tick delta
+                    // still looked small, drifting the pitch/span/eye-
+                    // width far from where the step actually started
+                    // without any one step tripping the tolerance. If the
+                    // closed moment itself is already this far from
+                    // baseline, don't count it as a real closed phase at
+                    // all -- a genuine blink's closed instant sits right
+                    // where the surrounding open frames do, since nobody
+                    // moves their head mid-blink.
+                    const baselinePitchDrift = Math.abs(pitch - this._baselinePitch);
+                    const baselineSpanRatio = this._baselineFaceSpan > 0 ? faceSpan / this._baselineFaceSpan : 1;
+                    const baselineEyeWidthRatio = this._baselineEyeWidth > 0 ? eyeWidth / this._baselineEyeWidth : 1;
+                    if (
+                        baselinePitchDrift > BLINK_PITCH_STABILITY_THRESHOLD
+                        || baselineSpanRatio < BLINK_FACE_SPAN_MIN_RATIO
+                        || baselineSpanRatio > BLINK_FACE_SPAN_MAX_RATIO
+                        || baselineEyeWidthRatio < BLINK_EYE_WIDTH_MIN_RATIO
+                        || baselineEyeWidthRatio > BLINK_EYE_WIDTH_MAX_RATIO
+                    ) {
+                        this._closedRun = 0;
+                    } else {
+                        this.hasBeenClosed = true;
+                        this._closedPitch = pitch;
+                        this._closedFaceSpan = faceSpan;
+                        this._closedEyeWidth = eyeWidth;
+                    }
                 }
             } else if (bothEyesOpen) {
                 this._closedRun = 0;
@@ -477,12 +530,24 @@ export class RandomLivenessChallenge {
                     // under most tilt/rotation/distance changes. See
                     // BLINK_EYE_WIDTH_*_RATIO's comment.
                     const eyeWidthRatio = this._closedEyeWidth > 0 ? eyeWidth / this._closedEyeWidth : 1;
+                    // 🟩 SECURITY FIX (follow-up): ALSO check the open
+                    // reading against the step's stable baseline, not just
+                    // against the closed snapshot -- belt-and-suspenders
+                    // with the baseline check at the closed side above.
+                    const baselinePitchDrift = Math.abs(pitch - this._baselinePitch);
+                    const baselineSpanRatio = this._baselineFaceSpan > 0 ? faceSpan / this._baselineFaceSpan : 1;
+                    const baselineEyeWidthRatio = this._baselineEyeWidth > 0 ? eyeWidth / this._baselineEyeWidth : 1;
                     if (
                         pitchDrift > BLINK_PITCH_STABILITY_THRESHOLD
                         || spanRatio < BLINK_FACE_SPAN_MIN_RATIO
                         || spanRatio > BLINK_FACE_SPAN_MAX_RATIO
                         || eyeWidthRatio < BLINK_EYE_WIDTH_MIN_RATIO
                         || eyeWidthRatio > BLINK_EYE_WIDTH_MAX_RATIO
+                        || baselinePitchDrift > BLINK_PITCH_STABILITY_THRESHOLD
+                        || baselineSpanRatio < BLINK_FACE_SPAN_MIN_RATIO
+                        || baselineSpanRatio > BLINK_FACE_SPAN_MAX_RATIO
+                        || baselineEyeWidthRatio < BLINK_EYE_WIDTH_MIN_RATIO
+                        || baselineEyeWidthRatio > BLINK_EYE_WIDTH_MAX_RATIO
                     ) {
                         return false;
                     }
