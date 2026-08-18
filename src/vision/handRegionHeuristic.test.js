@@ -27,6 +27,14 @@ function makeFrame(fillFn) {
 const NEUTRAL = [120, 120, 120];
 // A color inside the skin-plausible chromaticity band (see colorLivenessHeuristic.js).
 const SKIN_TONE = [180, 130, 100];
+// Real skin (or a real hand) has natural micro-texture -- blood flow, pores
+// -- even within a tight crop; a coarse (18px, several times wider than the
+// sampler's own 6px stride -- a pixel-level checkerboard would alias to a
+// single constant tone under even-stride sampling) alternation between two
+// nearby skin-plausible tones (varying R-G "redness" specifically, since
+// that's what the texture check measures) gives a synthetic fixture that
+// same "not perfectly flat" property.
+const SKIN_TONE_TEXTURED = (x, y) => ((Math.floor(x / 18) + Math.floor(y / 18)) % 2 === 0 ? [180, 130, 100] : [175, 135, 95]);
 
 describe('checkHandInFrame', () => {
     it('is not suspicious when the area around the face is a neutral (non-skin) background', () => {
@@ -35,18 +43,30 @@ describe('checkHandInFrame', () => {
         expect(result.suspicious).toBe(false);
     });
 
-    it('is suspicious when the area around the face is mostly skin-toned (hand/fingers holding something up)', () => {
-        const frame = makeFrame(() => SKIN_TONE);
+    it('is suspicious when the area around the face is mostly skin-toned WITH natural texture (hand/fingers holding something up)', () => {
+        const frame = makeFrame(SKIN_TONE_TEXTURED);
         const result = checkHandInFrame(frame, WIDTH, HEIGHT, FACE_BOX);
         expect(result.suspicious).toBe(true);
         expect(result.skinFraction).toBeGreaterThan(0.4);
+    });
+
+    // 🟩 REGRESSION TEST: reported live -- unusual (but real) lighting
+    // shifted an ordinary background's chromaticity into the skin-plausible
+    // band, with nothing skin-colored anywhere near the face, falsely
+    // flagging "hand detected." A flat, uniformly-colored surface (unlike
+    // real skin, which always has SOME natural tonal micro-variation) is
+    // exactly what this is meant to filter out.
+    it('is NOT suspicious for a perfectly flat, uniformly-colored surface that merely happens to match skin chromaticity (a lighting-color-cast false positive)', () => {
+        const frame = makeFrame(() => SKIN_TONE);
+        const result = checkHandInFrame(frame, WIDTH, HEIGHT, FACE_BOX);
+        expect(result.suspicious).toBe(false);
     });
 
     it('excludes the face box itself from the sample -- only the surrounding band counts', () => {
         // Skin everywhere INSIDE the face box (expected, it's a face), neutral everywhere else.
         const frame = makeFrame((x, y) => {
             const inFace = x >= FACE_BOX.x && x < FACE_BOX.x + FACE_BOX.width && y >= FACE_BOX.y && y < FACE_BOX.y + FACE_BOX.height;
-            return inFace ? SKIN_TONE : NEUTRAL;
+            return inFace ? SKIN_TONE_TEXTURED(x, y) : NEUTRAL;
         });
         const result = checkHandInFrame(frame, WIDTH, HEIGHT, FACE_BOX);
         expect(result.suspicious).toBe(false);
@@ -70,7 +90,7 @@ describe('checkHandNearFrameEdges', () => {
         expect(result.suspicious).toBe(false);
     });
 
-    it('is suspicious when skin-toned pixels dominate the outer border strip even though the face/surround area stays clean', () => {
+    it('is suspicious when skin-toned pixels WITH natural texture dominate the outer border strip even though the face/surround area stays clean', () => {
         // The edge band is ~16% of each dimension in from every side; the
         // FACE_BOX (40-80 in a 160x160 frame) sits well inside it and never
         // gets sampled by this check either way.
@@ -78,7 +98,7 @@ describe('checkHandNearFrameEdges', () => {
         const bandY = Math.round(HEIGHT * 0.16);
         const frame = makeFrame((x, y) => {
             const inEdgeBand = x < bandX || x >= WIDTH - bandX || y < bandY || y >= HEIGHT - bandY;
-            return inEdgeBand ? SKIN_TONE : NEUTRAL;
+            return inEdgeBand ? SKIN_TONE_TEXTURED(x, y) : NEUTRAL;
         });
         const result = checkHandNearFrameEdges(frame, WIDTH, HEIGHT, FACE_BOX);
         expect(result.suspicious).toBe(true);
@@ -90,7 +110,20 @@ describe('checkHandNearFrameEdges', () => {
         // skin, unlike someone gripping a device out toward the frame edges.
         const frame = makeFrame((x, y) => {
             const nearCenter = x > 50 && x < 110 && y > 50 && y < 110;
-            return nearCenter ? SKIN_TONE : NEUTRAL;
+            return nearCenter ? SKIN_TONE_TEXTURED(x, y) : NEUTRAL;
+        });
+        const result = checkHandNearFrameEdges(frame, WIDTH, HEIGHT, FACE_BOX);
+        expect(result.suspicious).toBe(false);
+    });
+
+    // 🟩 REGRESSION TEST: same lighting-color-cast false positive as
+    // checkHandInFrame's own regression test above.
+    it('is NOT suspicious for a perfectly flat, uniformly-colored border that merely happens to match skin chromaticity', () => {
+        const bandX = Math.round(WIDTH * 0.16);
+        const bandY = Math.round(HEIGHT * 0.16);
+        const frame = makeFrame((x, y) => {
+            const inEdgeBand = x < bandX || x >= WIDTH - bandX || y < bandY || y >= HEIGHT - bandY;
+            return inEdgeBand ? SKIN_TONE : NEUTRAL;
         });
         const result = checkHandNearFrameEdges(frame, WIDTH, HEIGHT, FACE_BOX);
         expect(result.suspicious).toBe(false);

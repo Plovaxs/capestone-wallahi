@@ -32,6 +32,19 @@ const HAND_REGION_SKIN_FRACTION_THRESHOLD = 0.65;
 const MIN_SAMPLES = 20;
 const SAMPLE_STRIDE = 6;
 const SURROUND_MARGIN_RATIO = 0.6;
+// 🟩 BUG FIX (reported live): unusual (but real) lighting -- a color cast
+// from warm/tungsten bulbs, colored ambient light, etc. -- can shift an
+// ordinary wall/fabric/hair's chromaticity into the same skin-plausible
+// band this samples, with nothing skin-colored anywhere near the face.
+// checkColorLiveness (colorLivenessHeuristic.js) already solved this exact
+// problem for its own face-region check by requiring BOTH a chromaticity
+// match AND natural micro-texture (real skin has fine tonal variation --
+// blood flow, pores -- that a flat-colored surface doesn't, regardless of
+// its average color); this reuses that same reasoning here. A real hand
+// has this texture too, so genuine hand detection isn't weakened -- only a
+// flat, uniformly-colored surface that merely happens to read as skin
+// under odd lighting gets filtered out.
+const REDNESS_VARIANCE_FLAT_THRESHOLD = 6;
 
 /**
  * @param {Uint8ClampedArray} imageData - full-frame RGBA pixel data (e.g. from ctx.getImageData(0,0,width,height).data)
@@ -57,6 +70,7 @@ export function checkHandInFrame(imageData, width, height, faceBox) {
 
     let skinCount = 0;
     let sampled = 0;
+    const skinRedness = [];
     for (let y = outerY0; y < outerY1; y += SAMPLE_STRIDE) {
         const insideFaceRow = y >= innerY0 && y < innerY1;
         for (let x = outerX0; x < outerX1; x += SAMPLE_STRIDE) {
@@ -72,6 +86,7 @@ export function checkHandInFrame(imageData, width, height, faceBox) {
             const gNorm = g / sum;
             if (rNorm >= SKIN_R_MIN && rNorm <= SKIN_R_MAX && gNorm >= SKIN_G_MIN && gNorm <= SKIN_G_MAX) {
                 skinCount++;
+                skinRedness.push(r - g);
             }
         }
     }
@@ -79,7 +94,16 @@ export function checkHandInFrame(imageData, width, height, faceBox) {
     if (sampled < MIN_SAMPLES) return { suspicious: false, skinFraction: 0, samples: sampled };
 
     const skinFraction = skinCount / sampled;
-    return { suspicious: skinFraction >= HAND_REGION_SKIN_FRACTION_THRESHOLD, skinFraction, samples: sampled };
+    const rednessMean = skinRedness.length ? skinRedness.reduce((s, v) => s + v, 0) / skinRedness.length : 0;
+    const rednessVariance = skinRedness.length
+        ? skinRedness.reduce((s, v) => s + (v - rednessMean) ** 2, 0) / skinRedness.length
+        : 0;
+    const hasNaturalSkinTexture = rednessVariance >= REDNESS_VARIANCE_FLAT_THRESHOLD;
+    return {
+        suspicious: skinFraction >= HAND_REGION_SKIN_FRACTION_THRESHOLD && hasNaturalSkinTexture,
+        skinFraction,
+        samples: sampled,
+    };
 }
 
 // 🟩 SECURITY FIX (reported live): checkHandInFrame's surround band only
@@ -115,6 +139,7 @@ export function checkHandNearFrameEdges(imageData, width, height, faceBox) {
 
     let skinCount = 0;
     let sampled = 0;
+    const skinRedness = [];
     for (let y = 0; y < height; y += SAMPLE_STRIDE) {
         const inEdgeRow = y < bandY || y >= height - bandY;
         for (let x = 0; x < width; x += SAMPLE_STRIDE) {
@@ -133,6 +158,7 @@ export function checkHandNearFrameEdges(imageData, width, height, faceBox) {
             const gNorm = g / sum;
             if (rNorm >= SKIN_R_MIN && rNorm <= SKIN_R_MAX && gNorm >= SKIN_G_MIN && gNorm <= SKIN_G_MAX) {
                 skinCount++;
+                skinRedness.push(r - g);
             }
         }
     }
@@ -140,5 +166,16 @@ export function checkHandNearFrameEdges(imageData, width, height, faceBox) {
     if (sampled < MIN_SAMPLES) return { suspicious: false, skinFraction: 0, samples: sampled };
 
     const skinFraction = skinCount / sampled;
-    return { suspicious: skinFraction >= EDGE_SKIN_FRACTION_THRESHOLD, skinFraction, samples: sampled };
+    // 🟩 BUG FIX (reported live): same lighting-color-cast false positive
+    // as checkHandInFrame above -- see its own comment. Reused here too.
+    const rednessMean = skinRedness.length ? skinRedness.reduce((s, v) => s + v, 0) / skinRedness.length : 0;
+    const rednessVariance = skinRedness.length
+        ? skinRedness.reduce((s, v) => s + (v - rednessMean) ** 2, 0) / skinRedness.length
+        : 0;
+    const hasNaturalSkinTexture = rednessVariance >= REDNESS_VARIANCE_FLAT_THRESHOLD;
+    return {
+        suspicious: skinFraction >= EDGE_SKIN_FRACTION_THRESHOLD && hasNaturalSkinTexture,
+        skinFraction,
+        samples: sampled,
+    };
 }
