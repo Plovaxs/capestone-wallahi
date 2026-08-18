@@ -41,6 +41,19 @@ const softBlinkEye = [
     { x: 2, y: 5.75 },
 ];
 
+// Same open-eye vertical shape as openEye, but a much narrower horizontal
+// span (eye corners closer together) -- simulates the eye region itself
+// scaling/shifting between samples (camera distance change, a different
+// crop/zoom) rather than a real blink, which never moves the eye corners.
+const narrowOpenEye = [
+    { x: 2, y: 2 },
+    { x: 2.7, y: 0.5 },
+    { x: 3.3, y: 0.5 },
+    { x: 4, y: 2 },
+    { x: 3.3, y: 3.5 },
+    { x: 2.7, y: 3.5 },
+];
+
 // face-api's 20-point mouth (indices 0-11 outer, 12-19 inner); only the
 // points calculateMouthWidthRatio/calculateMouthOpenRatio actually read
 // (0, 6, 12, 14, 16, 18) are meaningfully positioned -- the rest are
@@ -251,6 +264,22 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.registerFrame(makeLandmarksWithSpan(closedEye, 40, 80, 55))).toBe(false);
         // Tilted back toward baseline -- EAR reads open again.
         expect(challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50))).toBe(false);
+        expect(challenge.confirmed).toBe(false);
+    });
+
+    // 🟩 REGRESSION TEST: further hardening -- a third, independent check
+    // (eye width, EAR's own horizontal denominator) catches a closed->open
+    // transition where the eye region itself scaled/shifted between the two
+    // samples (camera-distance change, a different crop) even when pitch
+    // and face-span BOTH happen to read as stable (same browY/chinY/noseY
+    // throughout here, isolating eye width as the only signal that fires).
+    // A real blink never moves the eye corners at all.
+    it('does NOT confirm a blink when eye width itself shifts between the closed and open samples, even with pitch/span stable', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(closedEye, 0, 50))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarks(narrowOpenEye, 0, 50))).toBe(false);
         expect(challenge.confirmed).toBe(false);
     });
 

@@ -17,6 +17,19 @@ export function calculateEAR(eyePoints) {
 }
 
 /**
+ * Raw (un-normalized) eye-corner-to-eye-corner width -- EAR's own
+ * denominator, pulled out on its own. A real blink never moves this (only
+ * the eyelids move vertically); a photo/screen tilted or moved to fake the
+ * EAR crossing changes the whole projected eye region, width included. Used
+ * as a third independent tilt/scale-consistency check alongside pitch and
+ * face-vertical-span -- see their use in the BLINK step below.
+ */
+export function calculateEyeWidth(eyePoints) {
+    const [p1, , , p4] = eyePoints;
+    return distance(p1, p4);
+}
+
+/**
  * Tight bounding box (in the video's own native pixel coordinates, same
  * space as a face-api detection box) around a single eye's 6 landmark
  * points, padded a bit so the drawn box doesn't hug the eyelid line
@@ -226,6 +239,15 @@ const BLINK_PITCH_STABILITY_THRESHOLD = 0.12;
 // away from the camera between ticks) start getting rejected.
 const BLINK_FACE_SPAN_MIN_RATIO = 0.82;
 const BLINK_FACE_SPAN_MAX_RATIO = 1.22;
+// 🟩 SECURITY FIX (reported live, further hardening): a third, differently-
+// computed consistency check alongside pitch and face-span -- eye WIDTH
+// (calculateEyeWidth, EAR's own horizontal denominator) is untouched by a
+// real blink (only the eyelids move vertically) but shifts under most any
+// tilt/rotation/distance change a spoofer might use to fake the EAR
+// crossing, catching combinations the other two signals might individually
+// miss. Ratio-based, same reasoning as the face-span check above.
+const BLINK_EYE_WIDTH_MIN_RATIO = 0.82;
+const BLINK_EYE_WIDTH_MAX_RATIO = 1.22;
 const MIN_CONSECUTIVE_FRAMES = 1; // frames the triggering condition must hold (see 2026-08-11b above)
 const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed (this step) before confirmation is even possible
 // 🟩 Two independent, unpredictable steps instead of one -- a static
@@ -324,11 +346,12 @@ export class RandomLivenessChallenge {
         this._closedRun = 0;
         this._openRun = 0;
         this._expressionRun = 0;
-        // Pitch reading / raw face vertical span captured at the moment eyes
-        // last read as closed -- see the tilt-vs-blink checks in
-        // _evaluateStep's BLINK branch.
+        // Pitch reading / raw face vertical span / raw eye width captured
+        // at the moment eyes last read as closed -- see the tilt-vs-blink
+        // checks in _evaluateStep's BLINK branch.
         this._closedPitch = null;
         this._closedFaceSpan = null;
+        this._closedEyeWidth = null;
     }
 
     /** The challenge type for the CURRENT step -- what the UI should prompt for right now. */
@@ -365,11 +388,14 @@ export class RandomLivenessChallenge {
         const type = this.challengeType;
 
         if (type === CHALLENGE_TYPES.BLINK) {
-            const leftEAR = calculateEAR(landmarks.getLeftEye());
-            const rightEAR = calculateEAR(landmarks.getRightEye());
+            const leftEyePoints = landmarks.getLeftEye();
+            const rightEyePoints = landmarks.getRightEye();
+            const leftEAR = calculateEAR(leftEyePoints);
+            const rightEAR = calculateEAR(rightEyePoints);
             const avgEAR = (leftEAR + rightEAR) / 2;
             const pitch = calculatePitchRatio(landmarks);
             const faceSpan = calculateFaceVerticalSpan(landmarks);
+            const eyeWidth = (calculateEyeWidth(leftEyePoints) + calculateEyeWidth(rightEyePoints)) / 2;
 
             if (avgEAR < EAR_CLOSED_THRESHOLD) {
                 this._closedRun += 1;
@@ -378,6 +404,7 @@ export class RandomLivenessChallenge {
                     this.hasBeenClosed = true;
                     this._closedPitch = pitch;
                     this._closedFaceSpan = faceSpan;
+                    this._closedEyeWidth = eyeWidth;
                 }
             } else if (avgEAR > EAR_OPEN_THRESHOLD) {
                 this._closedRun = 0;
@@ -395,10 +422,19 @@ export class RandomLivenessChallenge {
                     // RAW vertical span to have stayed roughly the same
                     // physical size too. See BLINK_FACE_SPAN_*_RATIO's comment.
                     const spanRatio = this._closedFaceSpan > 0 ? faceSpan / this._closedFaceSpan : 1;
+                    // 🟩 SECURITY FIX (further hardening): a third,
+                    // differently-computed signal -- eye WIDTH is EAR's own
+                    // horizontal denominator and stays put during a real
+                    // blink (only the eyelids move vertically), but shifts
+                    // under most tilt/rotation/distance changes. See
+                    // BLINK_EYE_WIDTH_*_RATIO's comment.
+                    const eyeWidthRatio = this._closedEyeWidth > 0 ? eyeWidth / this._closedEyeWidth : 1;
                     if (
                         pitchDrift > BLINK_PITCH_STABILITY_THRESHOLD
                         || spanRatio < BLINK_FACE_SPAN_MIN_RATIO
                         || spanRatio > BLINK_FACE_SPAN_MAX_RATIO
+                        || eyeWidthRatio < BLINK_EYE_WIDTH_MIN_RATIO
+                        || eyeWidthRatio > BLINK_EYE_WIDTH_MAX_RATIO
                     ) {
                         return false;
                     }
