@@ -71,6 +71,23 @@ const makeLandmarks = (eye, headTurnRatio = 0, noseY = 50, mouth = neutralMouth)
     getMouth: () => mouth,
 });
 
+// Same shape as makeLandmarks but with a fully custom eyebrow-y/chin-y --
+// lets a test independently control the RAW vertical face span (chinY -
+// browY) versus where the nose sits WITHIN that span (pitch ratio), which
+// makeLandmarks can't do (it hardcodes browY=20/chinY=100). Needed to
+// simulate a photo tilted steeply enough to foreshorten (squeeze) the whole
+// face vertically while the nose stays at the same PROPORTIONAL position --
+// i.e. pitch ratio unchanged, only the physical span shrinks.
+const makeLandmarksWithSpan = (eye, browY, chinY, noseY) => ({
+    getLeftEye: () => eye,
+    getRightEye: () => eye,
+    getNose: () => [{ x: 50, y: noseY }],
+    getJawOutline: () => [{ x: 0, y: chinY }, { x: 50, y: chinY }, { x: 100, y: chinY }],
+    getLeftEyeBrow: () => [{ x: 20, y: browY }, { x: 30, y: browY }, { x: 40, y: browY }],
+    getRightEyeBrow: () => [{ x: 60, y: browY }, { x: 70, y: browY }, { x: 80, y: browY }],
+    getMouth: () => neutralMouth,
+});
+
 describe('calculateEAR', () => {
     it('returns a higher ratio for an open eye than a closed one', () => {
         expect(calculateEAR(openEye)).toBeGreaterThan(calculateEAR(closedEye));
@@ -211,6 +228,29 @@ describe('RandomLivenessChallenge (single step, steps: 1 -- isolates the per-ste
         expect(challenge.registerFrame(makeLandmarks(closedEye, 0, 30))).toBe(false);
         // Photo tilted back: EAR reads open again, but pitch swung right back too.
         expect(challenge.registerFrame(makeLandmarks(openEye, 0, 50))).toBe(false);
+        expect(challenge.confirmed).toBe(false);
+    });
+
+    // 🟩 REGRESSION TEST: reported live -- a STEEP tilt (photo "squinted"
+    // hard) still got through the pitch-only check above. calculatePitchRatio
+    // divides by the face's own vertical span, so a uniform vertical squeeze
+    // (exactly what a steep forward tilt produces) barely moves it as long
+    // as the nose stays at the same PROPORTIONAL position within the now-
+    // shrunken span -- which is exactly this scenario: browY/chinY squeeze
+    // from a span of 80 down to 40 (half), nose repositioned to keep the
+    // same relative offset (pitch ratio identical, -0.125, in both frames).
+    // Only the raw vertical-span check (calculateFaceVerticalSpan) can see
+    // this shrink; asserts it's now rejected.
+    it('does NOT confirm a blink from a steep foreshortening tilt even when pitch ratio itself stays unchanged', () => {
+        const challenge = new RandomLivenessChallenge({ challengeType: CHALLENGE_TYPES.BLINK, steps: 1 });
+        // Baseline: browY=20, chinY=100 (span 80), nose=50 -> pitch -0.125.
+        expect(challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50))).toBe(false);
+        expect(challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50))).toBe(false);
+        // Steep tilt: span squeezed to 40 (half), nose repositioned to the
+        // SAME proportional offset -- pitch ratio comes out identical.
+        expect(challenge.registerFrame(makeLandmarksWithSpan(closedEye, 40, 80, 55))).toBe(false);
+        // Tilted back toward baseline -- EAR reads open again.
+        expect(challenge.registerFrame(makeLandmarksWithSpan(openEye, 20, 100, 50))).toBe(false);
         expect(challenge.confirmed).toBe(false);
     });
 

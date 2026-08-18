@@ -102,6 +102,25 @@ export function calculatePitchRatio(landmarks) {
 }
 
 /**
+ * Raw (un-normalized) vertical span of the face -- eyebrow line to chin, in
+ * the same pixel units as the landmarks themselves. Unlike calculatePitchRatio
+ * (which divides BY this same span, so it stays ~constant under a uniform
+ * vertical squeeze/foreshorten and can't see one happening), this is exactly
+ * the measurement a forward/backward photo tilt shrinks or grows -- see its
+ * use in the BLINK step below.
+ */
+export function calculateFaceVerticalSpan(landmarks) {
+    const jaw = landmarks?.getJawOutline?.();
+    const leftBrow = landmarks?.getLeftEyeBrow?.();
+    const rightBrow = landmarks?.getRightEyeBrow?.();
+    if (!jaw?.length || !leftBrow?.length || !rightBrow?.length) return 0;
+
+    const browY = (leftBrow[Math.floor(leftBrow.length / 2)].y + rightBrow[Math.floor(rightBrow.length / 2)].y) / 2;
+    const chinY = jaw[Math.floor(jaw.length / 2)].y;
+    return Math.abs(chinY - browY);
+}
+
+/**
  * Mouth-width ratio: distance between the outer mouth corners (face-api's
  * 20-point mouth, points 0 and 6 of getMouth() = dlib's classic 48/54),
  * normalized by face width. Smiling visibly widens the mouth relative to
@@ -191,6 +210,22 @@ const MOUTH_OPEN_THRESHOLD = 0.15;
 // (naturally paired with a little incidental head motion a tick or two
 // apart) start getting rejected.
 const BLINK_PITCH_STABILITY_THRESHOLD = 0.12;
+// 🟩 SECURITY FIX (reported live, follow-up): a steep enough forward tilt
+// ("squinting" the photo hard) still got through the pitch check above --
+// calculatePitchRatio divides by the face's own vertical span, so it's
+// blind to a UNIFORM vertical squeeze (exactly what foreshortening is);
+// only a lopsided nose-position shift within that span tripped it. This
+// tracks the raw, un-normalized vertical span itself (calculateFaceVerticalSpan)
+// between the closed and open samples instead -- a tilt severe enough to
+// swing EAR across both thresholds necessarily shrinks/grows that raw span
+// by a lot too, which a real blink (the eyelid moving, not the whole face
+// changing size) never does. Ratio-based (not a fixed delta) since it's a
+// physical-scale measurement. Not calibrated against real hardware --
+// tighten if this specific tilt shape still gets through, loosen if
+// genuine blinks (naturally paired with the user leaning slightly toward/
+// away from the camera between ticks) start getting rejected.
+const BLINK_FACE_SPAN_MIN_RATIO = 0.82;
+const BLINK_FACE_SPAN_MAX_RATIO = 1.22;
 const MIN_CONSECUTIVE_FRAMES = 1; // frames the triggering condition must hold (see 2026-08-11b above)
 const MIN_TOTAL_FRAMES_BEFORE_CONFIRM = 4; // frames observed (this step) before confirmation is even possible
 // 🟩 Two independent, unpredictable steps instead of one -- a static
@@ -289,9 +324,11 @@ export class RandomLivenessChallenge {
         this._closedRun = 0;
         this._openRun = 0;
         this._expressionRun = 0;
-        // Pitch reading captured at the moment eyes last read as closed --
-        // see the tilt-vs-blink check in _evaluateStep's BLINK branch.
+        // Pitch reading / raw face vertical span captured at the moment eyes
+        // last read as closed -- see the tilt-vs-blink checks in
+        // _evaluateStep's BLINK branch.
         this._closedPitch = null;
+        this._closedFaceSpan = null;
     }
 
     /** The challenge type for the CURRENT step -- what the UI should prompt for right now. */
@@ -332,6 +369,7 @@ export class RandomLivenessChallenge {
             const rightEAR = calculateEAR(landmarks.getRightEye());
             const avgEAR = (leftEAR + rightEAR) / 2;
             const pitch = calculatePitchRatio(landmarks);
+            const faceSpan = calculateFaceVerticalSpan(landmarks);
 
             if (avgEAR < EAR_CLOSED_THRESHOLD) {
                 this._closedRun += 1;
@@ -339,6 +377,7 @@ export class RandomLivenessChallenge {
                 if (this._closedRun >= MIN_CONSECUTIVE_FRAMES) {
                     this.hasBeenClosed = true;
                     this._closedPitch = pitch;
+                    this._closedFaceSpan = faceSpan;
                 }
             } else if (avgEAR > EAR_OPEN_THRESHOLD) {
                 this._closedRun = 0;
@@ -349,7 +388,18 @@ export class RandomLivenessChallenge {
                     // comment. A genuine blink leaves this near 0; a tilted-
                     // photo spoof is exactly what this catches.
                     const pitchDrift = Math.abs(pitch - this._closedPitch);
-                    if (pitchDrift > BLINK_PITCH_STABILITY_THRESHOLD) {
+                    // 🟩 SECURITY FIX (follow-up): pitch alone missed a
+                    // steep, purely-foreshortening tilt (it's normalized BY
+                    // the face's own vertical span, so a uniform squeeze
+                    // doesn't move it) -- catch that shape by requiring the
+                    // RAW vertical span to have stayed roughly the same
+                    // physical size too. See BLINK_FACE_SPAN_*_RATIO's comment.
+                    const spanRatio = this._closedFaceSpan > 0 ? faceSpan / this._closedFaceSpan : 1;
+                    if (
+                        pitchDrift > BLINK_PITCH_STABILITY_THRESHOLD
+                        || spanRatio < BLINK_FACE_SPAN_MIN_RATIO
+                        || spanRatio > BLINK_FACE_SPAN_MAX_RATIO
+                    ) {
                         return false;
                     }
                     this._openRun += 1;
