@@ -247,6 +247,7 @@ import AttendanceView from './AttendanceView';
 import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { pipeline as yoloPipeline } from '@huggingface/transformers';
 import { checkLensObstruction } from '../vision/faceQuality';
+import { checkHandInFrame } from '../vision/handRegionHeuristic';
 
 // ============================================================
 // DOM/BROWSER ENVIRONMENT STUBS
@@ -529,6 +530,31 @@ describe('AttendanceView', () => {
             await act(async () => { await vi.advanceTimersByTimeAsync(1800); });
 
             expect(screen.getByText('🔍 FACE-API')).toBeInTheDocument();
+        });
+
+        // 🟩 REGRESSION TEST: Test Mode's passive-liveness vote hardcoded
+        // `handSuspicious: false` instead of actually calling
+        // checkHandInFrame like the real clock-in/out loop and LoginPage
+        // both do -- someone holding a phone/photo up close to spoof the
+        // scan could pass Test Mode clean while the real scan would
+        // (correctly) flag it, since Test Mode's own hand signal could
+        // never contribute a vote no matter what the camera actually saw.
+        // evaluatePassiveLiveness itself is mocked module-wide (always
+        // returns not-suspicious, see the top-of-file vi.mock), so this
+        // can't observe the vote's downstream blocking effect -- that
+        // fusion logic has its own dedicated unit tests. What this DOES
+        // prove, and what was actually broken, is that the hand check is
+        // now genuinely invoked with the live frame/face box every tick
+        // instead of being skipped entirely in favor of a literal `false`.
+        it('actually calls checkHandInFrame during a Test Mode scan (previously hardcoded, never invoked)', async () => {
+            await renderAndFlushMount(employeeProfile);
+            expect(getUserMediaMock).toHaveBeenCalled();
+
+            const startButton = screen.getByText(/Start Test Scan/i);
+            await act(async () => { startButton.click(); });
+            await advanceScanTicks(1);
+
+            expect(checkHandInFrame).toHaveBeenCalled();
         });
 
         it('is available to a supervisor too, and still never writes attendance', async () => {

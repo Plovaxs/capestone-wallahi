@@ -1780,6 +1780,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const deviceMotionStats = motionTrackerRef.current.getStats();
                     const microMotionStats = microMotionTrackerRef.current.getStats();
                     const pulseStats = pulseDetectorRef.current.getStats();
+                    // 🟩 BUG FIX: hand-in-frame was hardcoded to `false` here
+                    // (never actually checked) instead of calling
+                    // checkHandInFrame like the real clock-in/out loop does --
+                    // Test Mode's whole point is validating the same pipeline
+                    // a real scan runs, so a spoof someone holding a phone/
+                    // photo up close would pass Test Mode clean while still
+                    // getting (correctly) flagged by the real scan. Needs the
+                    // FULL frame (not just the border region) same as the
+                    // real loop, since it samples the band immediately
+                    // surrounding the face box.
+                    const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
+                    const handCheck = checkHandInFrame(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height, liveDet.box);
                     const livenessSuspicious = evaluatePassiveLiveness({
                         borderUniform: checkReplaySuspicion(borderRegion.data).suspicious,
                         deviceFlat: deviceMotionStats.ready ? deviceMotionStats.isSuspiciouslyFlat : null,
@@ -1787,7 +1799,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         colorSuspicious: latestColorLivenessRef.current.suspicious,
                         textureFlat: checkTextureSharpness(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
                         deviceEdgeSuspicious: checkDeviceEdges(borderRegion.data, borderRegion.width, borderRegion.height).suspicious,
-                        handSuspicious: false,
+                        handSuspicious: handCheck.suspicious,
                         pulseSuspicious: pulseStats.ready ? !pulseStats.hasPlausiblePulse : null,
                     }).suspicious;
                     if (livenessSuspicious) {
