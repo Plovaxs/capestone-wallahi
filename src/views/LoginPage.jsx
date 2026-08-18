@@ -19,7 +19,7 @@ import { calculateBoxShiftRatio, createBoxMotionTracker } from '../vision/boxMot
 import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
-import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
+import { RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, calculateMouthBox, calculateNoseBox, isEyeClosed } from '../vision/livenessDetector';
 import { createPulseDetector, calculateAverageGreenChannel } from '../vision/pulseDetector';
 import { markFaceVerifiedLogin } from '../domain/faceLoginClockInFlag';
 import { detectAutomation } from '../vision/automationDetector';
@@ -159,6 +159,13 @@ export default function LoginPage() {
   }));
   const boxMotionTrackerRef = useRef(createBoxMotionTracker());
   const prevFaceBoxForMotionRef = useRef(null);
+  // 🟩 NEW: same frame-to-frame box-motion tracking as the face box above,
+  // applied to the mouth and nose -- see calculateMouthBox/calculateNoseBox's
+  // own comment.
+  const mouthMotionTrackerRef = useRef(createBoxMotionTracker());
+  const prevMouthBoxForMotionRef = useRef(null);
+  const noseMotionTrackerRef = useRef(createBoxMotionTracker());
+  const prevNoseBoxForMotionRef = useRef(null);
   // 🟩 rPPG PULSE LIVENESS: same additional biometric vote as Attendance --
   // see vision/pulseDetector.js. Fed by a separate ~20Hz sampling loop
   // (decoupled from this page's 350ms detectTick, too slow by Nyquist for
@@ -211,6 +218,12 @@ export default function LoginPage() {
   // from the status text -- real-user feedback that blinking felt
   // undetectable even when it was actually registering correctly.
   const [eyeBoxes, setEyeBoxes] = useState(null); // { left: {x,y,width,height}, right: {...}, leftClosed, rightClosed } | null
+  // 🟩 NEW: mouth/nose boxes -- a photo/screen literally cannot move its
+  // own lips or nostrils, so real movement in EITHER region is strong,
+  // independent proof of a live face (see its use as a passive-suspicion
+  // override further below).
+  const [mouthBox, setMouthBox] = useState(null);
+  const [noseBox, setNoseBox] = useState(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -592,9 +605,15 @@ export default function LoginPage() {
           setScanReadiness(0);
           setFaceOverlayBox(null);
           setEyeBoxes(null);
+          setMouthBox(null);
+          setNoseBox(null);
           microMotionTrackerRef.current.reset();
           boxMotionTrackerRef.current.reset();
           prevFaceBoxForMotionRef.current = null;
+          mouthMotionTrackerRef.current.reset();
+          prevMouthBoxForMotionRef.current = null;
+          noseMotionTrackerRef.current.reset();
+          prevNoseBoxForMotionRef.current = null;
           livenessChallengeRef.current.reset();
           pulseDetectorRef.current.reset();
           setBiometricStatus(t('login.statusNoFace'));
@@ -682,6 +701,34 @@ export default function LoginPage() {
         } else {
           setEyeBoxes(null);
         }
+
+        // 🟩 NEW: same "update every tick regardless of gates" treatment as
+        // the eye boxes above -- a photo/screen literally cannot move its
+        // own lips or nostrils, so real movement in EITHER region is
+        // strong, independent proof of a live face. Read further below to
+        // override a false suspicious vote (e.g. an odd-lighting hand/color
+        // misread) instead of a lone motionless tick silently blocking a
+        // genuinely live user.
+        const mouthGeometry = calculateMouthBox(detection.landmarks);
+        const noseGeometry = calculateNoseBox(detection.landmarks);
+        if (mouthGeometry) {
+          setMouthBox({ ...mouthGeometry, imageWidth: width, imageHeight: height });
+          mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, mouthGeometry));
+          prevMouthBoxForMotionRef.current = mouthGeometry;
+        } else {
+          setMouthBox(null);
+        }
+        if (noseGeometry) {
+          setNoseBox({ ...noseGeometry, imageWidth: width, imageHeight: height });
+          noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, noseGeometry));
+          prevNoseBoxForMotionRef.current = noseGeometry;
+        } else {
+          setNoseBox(null);
+        }
+        const mouthMotionStats = mouthMotionTrackerRef.current.getStats();
+        const noseMotionStats = noseMotionTrackerRef.current.getStats();
+        const landmarkMotionDetected = (mouthMotionStats.ready && mouthMotionStats.hasNaturalMovement && !mouthMotionStats.isErratic)
+          || (noseMotionStats.ready && noseMotionStats.hasNaturalMovement && !noseMotionStats.isErratic);
 
         if (qualityIssue) {
           if (!qualityIssueTolerated) {
@@ -804,7 +851,17 @@ export default function LoginPage() {
             pulseSuspicious: pulseStatsForVote.ready ? !pulseStatsForVote.hasPlausiblePulse : null,
           });
 
-          if (passiveVote.suspicious) {
+          // 🟩 NEW: real, natural mouth/nose movement this tick is strong,
+          // independent evidence of a live face -- a photo/screen literally
+          // cannot move its own lips or nostrils, unlike the other passive
+          // votes (hand/color/border), which can all misread under odd
+          // lighting or incidental scene conditions. Overrides a suspicious
+          // verdict entirely rather than just adding another tolerated
+          // tick, so a confirmed-live user isn't stuck waiting out someone
+          // else's false positive.
+          if (passiveVote.suspicious && landmarkMotionDetected) {
+            passiveSuspicionStreakRef.current = 0;
+          } else if (passiveVote.suspicious) {
             // 🟩 BUG FIX: a blink's closing eyelid/eyelash creates a brief,
             // real luminance edge right in the border region this samples --
             // easily mistaken for deviceEdgeSuspicious (or nudging color/
@@ -1470,6 +1527,25 @@ export default function LoginPage() {
                 style={getEyeOverlayStyle(eyeBoxes.right) || { display: 'none' }}
               />
             </>
+          )}
+
+          {/* 🟩 NEW: mouth/nose boxes -- a photo/screen literally cannot
+              move its own lips or nostrils, so these light up on real
+              movement as one more visible sign the scan is reading a live
+              face, not just a status message. */}
+          {mouthBox && (
+            <div
+              aria-hidden="true"
+              className="absolute border-2 rounded-md z-[16] pointer-events-none transition-all duration-75 border-violet-300/70"
+              style={getEyeOverlayStyle(mouthBox) || { display: 'none' }}
+            />
+          )}
+          {noseBox && (
+            <div
+              aria-hidden="true"
+              className="absolute border-2 rounded-md z-[16] pointer-events-none transition-all duration-75 border-violet-300/70"
+              style={getEyeOverlayStyle(noseBox) || { display: 'none' }}
+            />
           )}
         </div>
 

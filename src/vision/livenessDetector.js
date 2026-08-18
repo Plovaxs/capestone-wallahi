@@ -31,12 +31,13 @@ export function calculateEyeWidth(eyePoints) {
 
 /**
  * Tight bounding box (in the video's own native pixel coordinates, same
- * space as a face-api detection box) around a single eye's 6 landmark
- * points, padded a bit so the drawn box doesn't hug the eyelid line
- * exactly. Shared by whichever view wants to render "boxes around the
- * eyes" -- feed the result through faceOverlayGeometry.js's
- * calculateFaceOverlayStyle (it already accepts any {x,y,width,height}
- * box, not just a face box) to get mirrored/scaled CSS position.
+ * space as a face-api detection box) around a set of landmark points,
+ * padded by a fraction of the box's own width/height so the drawn box
+ * doesn't hug the feature's outline exactly. Shared by whichever view wants
+ * to render "boxes around a facial feature" -- feed the result through
+ * faceOverlayGeometry.js's calculateFaceOverlayStyle (it already accepts
+ * any {x,y,width,height} box, not just a face box) to get mirrored/scaled
+ * CSS position.
  */
 function eyeBoundingBox(eyePoints) {
     const xs = eyePoints.map((p) => p.x);
@@ -56,6 +57,26 @@ function eyeBoundingBox(eyePoints) {
 }
 
 /**
+ * Tight bounding box around any set of landmark points, padded by a
+ * fraction of the box's own width/height. Used for mouth/nose boxes below
+ * -- unlike eyes, these features aren't flat, so padding proportional to
+ * their own actual height (not width) is the right shape.
+ */
+function pointsBoundingBox(points, padXRatio, padYRatio) {
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const padX = width * padXRatio;
+    const padY = height * padYRatio;
+    return { x: minX - padX, y: minY - padY, width: width + padX * 2, height: height + padY * 2 };
+}
+
+/**
  * Both eyes' bounding boxes for a detection's landmarks, or null if the
  * landmarks object doesn't expose eye points (e.g. a stale/malformed read).
  */
@@ -64,6 +85,20 @@ export function calculateEyeBoxes(landmarks) {
     const rightEye = landmarks?.getRightEye?.();
     if (!leftEye?.length || !rightEye?.length) return null;
     return { left: eyeBoundingBox(leftEye), right: eyeBoundingBox(rightEye) };
+}
+
+/** Bounding box around the mouth's own landmark points (face-api's 20-point mouth), or null if unavailable. */
+export function calculateMouthBox(landmarks) {
+    const mouth = landmarks?.getMouth?.();
+    if (!mouth?.length) return null;
+    return pointsBoundingBox(mouth, 0.15, 0.15);
+}
+
+/** Bounding box around the nose's own landmark points, or null if unavailable. */
+export function calculateNoseBox(landmarks) {
+    const nose = landmarks?.getNose?.();
+    if (!nose?.length) return null;
+    return pointsBoundingBox(nose, 0.3, 0.15);
 }
 
 /** Whether a single eye's own landmark points currently read as closed -- same threshold RandomLivenessChallenge's blink step uses, so the visual feedback always agrees with what's actually being counted. */

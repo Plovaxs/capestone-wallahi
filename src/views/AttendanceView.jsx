@@ -15,7 +15,7 @@ import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { isWeekend } from '../domain/attendanceDayPolicy';
 import { checkRateLimit, formatRateLimitMessage } from '../utils/rateLimit';
 import { deviceHealthRepository } from '../data/repositories/deviceHealthRepository';
-import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, isEyeClosed } from '../vision/livenessDetector';
+import { calculateHeadTurnRatio, calculatePitchRatio, RandomLivenessChallenge, CHALLENGE_TYPES, CHALLENGE_INSTRUCTION_SUFFIX, CHALLENGE_DIRECTION_GLYPH, calculateEyeBoxes, calculateMouthBox, calculateNoseBox, isEyeClosed } from '../vision/livenessDetector';
 import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionHeuristic';
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
@@ -283,6 +283,12 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     // loop, so a blink is visibly confirmed on screen instead of only
     // being inferred from the status text.
     const [eyeBoxes, setEyeBoxes] = useState(null);
+    // 🟩 NEW: mouth/nose boxes + frame-to-frame motion tracking -- a photo
+    // or screen literally cannot move its own lips or nostrils, so real
+    // movement in EITHER region is strong, independent proof of a live
+    // face (see its use as a passive-suspicion override further below).
+    const [mouthBox, setMouthBox] = useState(null);
+    const [noseBox, setNoseBox] = useState(null);
     const [hasStoredFace, setHasStoredFace] = useState(false);
     const [, setFaceMatchDistance] = useState(null); // write-only, never displayed
     const [, setFaceDetectionMode] = useState('idle'); // write-only, never displayed
@@ -331,6 +337,13 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     }));
     const boxMotionTrackerRef = useRef(createBoxMotionTracker());
     const prevFaceBoxForMotionRef = useRef(null);
+    // 🟩 NEW: same frame-to-frame box-motion tracking as the face box
+    // above, applied to the mouth and nose -- see calculateMouthBox/
+    // calculateNoseBox's own comment.
+    const mouthMotionTrackerRef = useRef(createBoxMotionTracker());
+    const prevMouthBoxForMotionRef = useRef(null);
+    const noseMotionTrackerRef = useRef(createBoxMotionTracker());
+    const prevNoseBoxForMotionRef = useRef(null);
     // 🟩 rPPG PULSE LIVENESS: an additional, independent biometric vote --
     // see vision/pulseDetector.js for the full rationale. Deliberately
     // decoupled from the main ~1.2s scan tick below (a pulse needs ~20Hz
@@ -1183,6 +1196,36 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         setEyeBoxes(null);
                     }
 
+                    // 🟩 NEW: same "update every tick regardless of gates"
+                    // treatment as the eye boxes above -- a photo/screen
+                    // literally cannot move its own lips or nostrils, so
+                    // real movement in EITHER region (tracked the exact
+                    // same way as the mandatory face-box motion check) is
+                    // strong, independent proof of a live face. Read further
+                    // below to override a false suspicious vote (e.g. an
+                    // odd-lighting hand/color misread) instead of a lone
+                    // motionless tick silently blocking a genuinely live user.
+                    const mouthGeometry = liveDet.landmarks ? calculateMouthBox(liveDet.landmarks) : null;
+                    const noseGeometry = liveDet.landmarks ? calculateNoseBox(liveDet.landmarks) : null;
+                    if (mouthGeometry) {
+                        setMouthBox({ ...mouthGeometry, imageWidth, imageHeight });
+                        mouthMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevMouthBoxForMotionRef.current, mouthGeometry));
+                        prevMouthBoxForMotionRef.current = mouthGeometry;
+                    } else {
+                        setMouthBox(null);
+                    }
+                    if (noseGeometry) {
+                        setNoseBox({ ...noseGeometry, imageWidth, imageHeight });
+                        noseMotionTrackerRef.current.addSample(calculateBoxShiftRatio(prevNoseBoxForMotionRef.current, noseGeometry));
+                        prevNoseBoxForMotionRef.current = noseGeometry;
+                    } else {
+                        setNoseBox(null);
+                    }
+                    const mouthMotionStats = mouthMotionTrackerRef.current.getStats();
+                    const noseMotionStats = noseMotionTrackerRef.current.getStats();
+                    const landmarkMotionDetected = (mouthMotionStats.ready && mouthMotionStats.hasNaturalMovement && !mouthMotionStats.isErratic)
+                        || (noseMotionStats.ready && noseMotionStats.hasNaturalMovement && !noseMotionStats.isErratic);
+
                     // 🟩 QUALITY GATES: framing/size, single-face, lighting, and
                     // detector-confidence (occlusion proxy) are all checked BEFORE
                     // trusting a match — a low-quality read shouldn't silently
@@ -1529,7 +1572,19 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                 // here either (see livenessFusion.js) -- every vote, including
                                 // pulse, now shares the same debounce tolerance.
                                 let treatAsSuspicious = false;
-                                if (livenessSuspicious) {
+                                // 🟩 NEW: real, natural mouth/nose movement this tick is
+                                // strong, independent evidence of a live face -- a photo/
+                                // screen literally cannot move its own lips or nostrils,
+                                // unlike the other passive votes (hand/color/border), which
+                                // can all misread under odd lighting or incidental scene
+                                // conditions. Overrides a suspicious verdict entirely rather
+                                // than just adding another tolerated tick, so a confirmed-
+                                // live user isn't stuck waiting out someone else's false
+                                // positive.
+                                if (livenessSuspicious && landmarkMotionDetected) {
+                                    passiveSuspicionStreakRef.current = 0;
+                                    livenessSuspicious = false; // let the branches below fall through to the challenge/motion/success checks, not the "tolerated, keep waiting" one
+                                } else if (livenessSuspicious) {
                                     // 🟩 Lower raw tick count than LoginPage's equivalent (8) --
                                     // this view's scan interval (FACE_SCAN_INTERVAL_MS, 1.8s) is
                                     // already ~5x slower per tick than Login's (350ms), so the
@@ -1643,12 +1698,18 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                 } else {
                     setFaceOverlayBox(null);
                     setEyeBoxes(null);
+                    setMouthBox(null);
+                    setNoseBox(null);
                     setFaceMatchDistance(null);
                     setIsFaceVerified(false);
                     setScanReadiness(0);
                     microMotionTrackerRef.current.reset(); // face gone -- don't compare the next face's frames against a stale/unrelated buffer
                     boxMotionTrackerRef.current.reset();
                     prevFaceBoxForMotionRef.current = null;
+                    mouthMotionTrackerRef.current.reset();
+                    prevMouthBoxForMotionRef.current = null;
+                    noseMotionTrackerRef.current.reset();
+                    prevNoseBoxForMotionRef.current = null;
                     latestColorLivenessRef.current = { suspicious: false };
                     livenessChallengeRef.current.reset();
                     pulseDetectorRef.current.reset();
@@ -1675,6 +1736,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
             clearInterval(timer);
             setFaceOverlayBox(null);
             setEyeBoxes(null);
+            setMouthBox(null);
+            setNoseBox(null);
         };
         // Intentional: detectFaceFromImage and handleClockIn are redefined every
         // render (not memoized), so listing them here would tear down and
@@ -1887,6 +1950,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         setChallengeGlyph(null);
         setFaceOverlayBox(null);
         setEyeBoxes(null);
+        setMouthBox(null);
+        setNoseBox(null);
         setIsTestScanning(true);
     };
 
@@ -1897,6 +1962,8 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
         setChallengeGlyph(null);
         setFaceOverlayBox(null);
         setEyeBoxes(null);
+        setMouthBox(null);
+        setNoseBox(null);
     };
 
     // Keeps latestFaceBoxRef in sync with the box the main scan loop above
@@ -2661,10 +2728,16 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         setChallengeGlyph(null);
                                         setFaceOverlayBox(null);
                                         setEyeBoxes(null);
+                                        setMouthBox(null);
+                                        setNoseBox(null);
                                         setIsFaceVerified(false);
                                         pulseDetectorRef.current.reset();
                                         boxMotionTrackerRef.current.reset();
                                         prevFaceBoxForMotionRef.current = null;
+                                        mouthMotionTrackerRef.current.reset();
+                                        prevMouthBoxForMotionRef.current = null;
+                                        noseMotionTrackerRef.current.reset();
+                                        prevNoseBoxForMotionRef.current = null;
                                         microMotionTrackerRef.current.reset();
                                         lensObstructedStreakRef.current = 0;
                                         setIsClockingOut(true);
@@ -2894,6 +2967,25 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                             style={getEyeOverlayStyle(eyeBoxes.right) || { display: 'none' }}
                                         />
                                     </>
+                                )}
+
+                                {/* 🟩 NEW: mouth/nose boxes -- a photo/screen literally
+                                    cannot move its own lips or nostrils, so these light up
+                                    on real movement as one more visible sign the scan is
+                                    reading a live face, not just a status message. */}
+                                {mouthBox && isCameraReady && enrollmentStepIndex < 0 && (
+                                    <div
+                                        aria-hidden="true"
+                                        className="absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 border-violet-300/70"
+                                        style={getEyeOverlayStyle(mouthBox) || { display: 'none' }}
+                                    />
+                                )}
+                                {noseBox && isCameraReady && enrollmentStepIndex < 0 && (
+                                    <div
+                                        aria-hidden="true"
+                                        className="absolute border-2 rounded-md z-20 pointer-events-none transition-all duration-75 border-violet-300/70"
+                                        style={getEyeOverlayStyle(noseBox) || { display: 'none' }}
+                                    />
                                 )}
 
                             </div>

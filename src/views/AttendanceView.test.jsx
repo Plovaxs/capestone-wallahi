@@ -197,6 +197,8 @@ vi.mock('../vision/livenessDetector', () => {
         calculateHeadTurnRatio: vi.fn(() => 0),
         calculatePitchRatio: vi.fn(() => 0),
         calculateEyeBoxes: vi.fn(() => null),
+        calculateMouthBox: vi.fn(() => null),
+        calculateNoseBox: vi.fn(() => null),
         isEyeClosed: vi.fn(() => false),
     };
 });
@@ -255,6 +257,8 @@ import { checkLensObstruction } from '../vision/faceQuality';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
+import { evaluatePassiveLiveness } from '../vision/livenessFusion';
+import { calculateMouthBox } from '../vision/livenessDetector';
 
 // ============================================================
 // DOM/BROWSER ENVIRONMENT STUBS
@@ -461,6 +465,42 @@ describe('AttendanceView', () => {
             await advanceScanTicks(1);
 
             expect(checkScreenGlare).toHaveBeenCalled();
+        });
+
+        // 🟩 REGRESSION TEST: reported live -- odd (but real) lighting could
+        // falsely flag "hand detected" and block a genuinely live user.
+        // Real, natural mouth/nose movement is strong independent evidence
+        // of a live face (a photo/screen literally cannot move its own lips
+        // or nostrils), so it should override a false-positive passive-
+        // suspicion vote entirely rather than making a genuinely live user
+        // wait out someone else's misread. Forces evaluatePassiveLiveness
+        // (mocked module-wide to always return not-suspicious elsewhere in
+        // this file) suspicious for this one test, and gives
+        // calculateMouthBox a real box so the shared mocked box-motion
+        // tracker (mockBoxMotionStats, already ready/hasNaturalMovement by
+        // default) has something to track -- asserts clock-in still
+        // completes on the very first tick despite the "suspicious" vote,
+        // instead of being blocked/debounced like an ordinary false trip.
+        it('overrides a false-positive suspicious vote when real mouth/nose movement is detected (e.g. an odd-lighting hand misread)', async () => {
+            evaluatePassiveLiveness.mockReturnValue({ suspicious: true, votes: 2, total: 5 });
+            calculateMouthBox.mockReturnValue({ x: 10, y: 60, width: 20, height: 10 });
+
+            try {
+                await renderAndFlushMount(employeeProfile);
+                expect(getUserMediaMock).toHaveBeenCalled();
+                await advanceScanTicks(1);
+
+                expect(performClockIn).toHaveBeenCalledTimes(1);
+            } finally {
+                // 🟩 clearAllMocks/restoreAllMocks (beforeEach/afterEach)
+                // don't reset a vi.fn()'s mockReturnValue back to its
+                // module-mock factory default -- only mock.calls history --
+                // so this would otherwise silently poison every later test
+                // in the file with an always-suspicious/always-has-a-mouth-
+                // box world.
+                evaluatePassiveLiveness.mockReturnValue({ suspicious: false });
+                calculateMouthBox.mockReturnValue(null);
+            }
         });
     });
 

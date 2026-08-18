@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
     calculateEAR, calculateHeadTurnRatio, calculatePitchRatio,
     calculateMouthWidthRatio, calculateMouthOpenRatio,
-    calculateEyeBoxes, isEyeClosed,
+    calculateEyeBoxes, calculateMouthBox, calculateNoseBox, isEyeClosed,
     RandomLivenessChallenge, CHALLENGE_TYPES,
 } from './livenessDetector';
 
@@ -157,6 +157,46 @@ describe('calculateEyeBoxes', () => {
     it('returns null when landmarks are missing eye accessors', () => {
         expect(calculateEyeBoxes({})).toBeNull();
         expect(calculateEyeBoxes(null)).toBeNull();
+    });
+});
+
+// 🟩 NEW: mouth/nose motion boxes -- a photo/screen literally cannot move
+// its lips or nostrils, so real frame-to-frame movement in EITHER region is
+// strong, independent evidence of a live face, drawn on screen the same way
+// the eye boxes already are. See their use as an AttendanceView.jsx/
+// LoginPage.jsx passive-suspicion override.
+describe('calculateMouthBox / calculateNoseBox', () => {
+    it('calculateMouthBox returns a box that contains every mouth landmark point', () => {
+        const box = calculateMouthBox(makeLandmarks(openEye, 0, 50, neutralMouth));
+        expect(box).not.toBeNull();
+        for (const p of neutralMouth) {
+            expect(p.x).toBeGreaterThanOrEqual(box.x);
+            expect(p.x).toBeLessThanOrEqual(box.x + box.width);
+            expect(p.y).toBeGreaterThanOrEqual(box.y);
+            expect(p.y).toBeLessThanOrEqual(box.y + box.height);
+        }
+    });
+
+    it('calculateMouthBox returns null when landmarks are missing the mouth accessor', () => {
+        expect(calculateMouthBox({})).toBeNull();
+        expect(calculateMouthBox(null)).toBeNull();
+    });
+
+    it('calculateNoseBox returns a box that contains every nose landmark point', () => {
+        const landmarks = makeLandmarks(openEye, 0, 50);
+        const box = calculateNoseBox(landmarks);
+        expect(box).not.toBeNull();
+        for (const p of landmarks.getNose()) {
+            expect(p.x).toBeGreaterThanOrEqual(box.x);
+            expect(p.x).toBeLessThanOrEqual(box.x + box.width);
+            expect(p.y).toBeGreaterThanOrEqual(box.y);
+            expect(p.y).toBeLessThanOrEqual(box.y + box.height);
+        }
+    });
+
+    it('calculateNoseBox returns null when landmarks are missing the nose accessor', () => {
+        expect(calculateNoseBox({})).toBeNull();
+        expect(calculateNoseBox(null)).toBeNull();
     });
 });
 
