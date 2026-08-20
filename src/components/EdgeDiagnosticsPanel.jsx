@@ -3,9 +3,9 @@ import DiagnosticTile from './DiagnosticTile';
 
 /**
  * Local-only readout of the IoT/edge sensor signals AttendanceView's scan
- * loop is already computing every tick (camera, geofence, lens, ambient
- * light, device + pixel motion, color liveness, network, battery, model
- * tier) -- nothing here is sent anywhere, it just surfaces state that
+ * loop is already computing every tick (camera, geofence, ambient light,
+ * device + pixel motion, color liveness, network, battery, model tier) --
+ * nothing here is sent anywhere, it just surfaces state that
  * already exists so that sensor-fusion work is actually visible instead of
  * running silently in the background. Extracted out of AttendanceView.jsx
  * (which was otherwise carrying its entire render tree in one file) since
@@ -29,11 +29,6 @@ const EdgeDiagnosticsPanel = ({ t, cameraError, isCameraReady, isInRange, sensor
                 label={t('attendance.diagGeofence')}
                 value={isInRange ? t('attendance.diagInRange') : t('attendance.diagOutOfRange')}
                 ok={isInRange}
-            />
-            <DiagnosticTile
-                label={t('attendance.diagLens')}
-                value={sensorDiagnostics.lensClear ? t('attendance.diagClear') : t('attendance.diagObstructed')}
-                ok={sensorDiagnostics.lensClear}
             />
             <DiagnosticTile
                 label={t('attendance.diagLighting')}

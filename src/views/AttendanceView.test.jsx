@@ -69,7 +69,6 @@ vi.mock('../vision/faceQuality', () => ({
     checkBrightness: vi.fn(() => ({ ok: true, reason: null })),
     checkOcclusion: vi.fn(() => ({ ok: true, reason: null })),
     checkSingleFace: vi.fn(() => ({ ok: true, reason: null })),
-    checkLensObstruction: vi.fn(() => ({ ok: true, reason: null })),
 }));
 
 vi.mock('../vision/primaryFaceSelector', () => ({
@@ -254,7 +253,6 @@ vi.mock('../supabaseClient', () => ({
 import AttendanceView from './AttendanceView';
 import { performClockIn, performClockOut } from '../domain/attendanceClockIn';
 import { pipeline as yoloPipeline } from '@huggingface/transformers';
-import { checkLensObstruction } from '../vision/faceQuality';
 import { checkHandInFrame } from '../vision/handRegionHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
@@ -747,49 +745,6 @@ describe('AttendanceView', () => {
 
             expect(performClockOut).not.toHaveBeenCalled();
 
-            globalThis.__mockChallengeConfirmed = true;
-            await advanceScanTicks(1);
-
-            expect(performClockOut).toHaveBeenCalledTimes(1);
-        });
-
-        // 🟩 REGRESSION TEST: reported live -- a genuinely clean webcam got
-        // flagged "camera lens looks foggy or dirty" and blocked from
-        // scanning entirely, even after the percentile-based sharpness fix
-        // in faceQuality.js. The lens check only actually recomputes every
-        // LENS_CHECK_INTERVAL_TICKS (5) ticks, caching the verdict in
-        // between -- a single unlucky recompute (autofocus hunting, one
-        // motion-blurred frame right as the user leans in) used to block
-        // for the whole ~6s cache window with zero tolerance, unlike every
-        // other quality gate. Drives the loop past exactly one real lens
-        // recheck that fails, confirms clock-out still completes instead
-        // of getting stuck on it.
-        it('does not block clock-out on a single transient lens-obstructed reading', async () => {
-            checkLensObstruction.mockReturnValueOnce({ ok: false, reason: 'lens-obstructed' });
-            globalThis.__mockChallengeConfirmed = false;
-
-            const { container } = await renderAndFlushMount(employeeProfile, { attendance: openClockInToday() });
-            expect(getUserMediaMock).toHaveBeenCalled();
-
-            await act(async () => { screen.getByText('Clock Out Shift').click(); });
-            markVideoReady(container);
-
-            // The main loop ticks every 1200ms; LENS_CHECK_INTERVAL_TICKS=5
-            // means the first REAL (non-cached) lens recheck -- the one
-            // failing reading -- lands on the 5th tick (t=6000ms). Blink
-            // stays unconfirmed through it, so this alone can't complete
-            // clock-out yet either way; not a distinguishing step on its
-            // own, just gets the bad reading "in effect".
-            await advanceByMs(6100);
-            expect(performClockOut).not.toHaveBeenCalled();
-
-            // Now confirm the blink and drive exactly one more tick (the
-            // 6th, reusing the CACHED verdict from the 5th tick's real
-            // recheck -- not due to recompute again until the 10th). Old
-            // code cached the raw failing verdict and stayed blocked here
-            // until the 10th tick's recheck; the debounced fix caches an
-            // "ok" verdict instead (a lone failure never reaches the
-            // 2-in-a-row threshold), so clock-out completes on this tick.
             globalThis.__mockChallengeConfirmed = true;
             await advanceScanTicks(1);
 

@@ -20,7 +20,7 @@ import { checkHandInFrame, checkHandNearFrameEdges } from '../vision/handRegionH
 import { checkScreenGlare } from '../vision/screenGlareHeuristic';
 import { checkDeviceEdges } from '../vision/deviceEdgeHeuristic';
 import { getLocalDateString } from '../utils/dateOnly';
-import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace, checkLensObstruction } from '../vision/faceQuality';
+import { checkFraming, checkBrightness, checkOcclusion, checkSingleFace } from '../vision/faceQuality';
 import { selectPrimaryFace } from '../vision/primaryFaceSelector';
 import { normalizeStoredTemplates, matchAgainstTemplates } from '../vision/multiTemplateMatcher';
 import { classifyMatch } from '../vision/matchConfidence';
@@ -95,7 +95,6 @@ const QUALITY_HINT_KEYS = {
     'too-dark': 'attendance.statusTooDark',
     'too-bright': 'attendance.statusTooBright',
     'low-confidence': 'attendance.statusLowConfidence',
-    'lens-obstructed': 'attendance.statusLensObstructed',
 };
 
 const ENROLL_QUALITY_HINT_KEYS = {
@@ -305,15 +304,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
     const qualityIssueStreakRef = useRef(0); // 🟩 BUG FIX: see the qualityIssue block below -- debounces a single bad-quality tick so it doesn't swallow the one frame a blink transition needed
     const passiveSuspicionStreakRef = useRef(0); // 🟩 BUG FIX: see the livenessSuspicious block below -- a blink's eyelid/eyelash edge can trip deviceEdgeSuspicious for exactly one frame
     const [torchActive, setTorchActive] = useState(false);
-    // 🟩 Throttles the expensive full-frame lens-obstruction scan (see below)
-    // to once every 5 ticks instead of every scan tick.
-    const lensCheckTickRef = useRef(0);
-    const cachedLensResultRef = useRef({ ok: true, reason: null });
-    const LENS_CHECK_INTERVAL_TICKS = 5;
-    // 🟩 BUG FIX: counts consecutive *real* (non-cached) obstructed
-    // verdicts -- see the lens-check block below for why a single one is
-    // never enough to block on its own.
-    const lensObstructedStreakRef = useRef(0);
     // 🟩 SENSOR FUSION: fuses devicemotion's x/y/z accelerometer axes into a
     // rolling stability signal — mobile-only (desktop webcams have no
     // accelerometer, so this just never becomes `ready` there, which is the
@@ -1246,7 +1236,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     // trusting a match — a low-quality read shouldn't silently
                     // count toward liveness or clock-in either way.
                     let brightness = { ok: true, reason: null };
-                    let lensObstruction = { ok: true, reason: null };
                     if (liveDet.box && liveDet.sourceCanvas) {
                         try {
                             const ctx = liveDet.sourceCanvas.getContext('2d');
@@ -1299,40 +1288,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                             } else {
                                 lowLightStreakRef.current = 0;
                             }
-
-                            // 🟩 LENS FOG/DIRT DETECTION: sampled across the *whole* frame
-                            // (not just the face box) — a fogged or smudged lens blurs
-                            // the background too, which is what distinguishes it from a
-                            // face that's merely soft-focused or backlit. A dirty lens is
-                            // a slow-changing physical condition (doesn't appear/clear
-                            // within one 1.2s tick), so the full-frame getImageData + scan
-                            // only actually runs every Nth tick instead of every single
-                            // one — the cached verdict is reused in between, cutting this
-                            // check's CPU cost by ~80% for the same responsiveness.
-                            lensCheckTickRef.current += 1;
-                            if (lensCheckTickRef.current % LENS_CHECK_INTERVAL_TICKS === 0) {
-                                const fullFrame = ctx.getImageData(0, 0, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
-                                const lensCheckResult = checkLensObstruction(fullFrame.data, liveDet.sourceCanvas.width, liveDet.sourceCanvas.height);
-                                // 🟩 BUG FIX: reported live -- a genuinely clean webcam
-                                // got flagged "camera lens looks foggy or dirty" and
-                                // blocked from scanning entirely, even after the
-                                // percentile-based sharpness fix. One-off causes (autofocus
-                                // hunting, a motion-blurred frame right as the user leans
-                                // in for clock-out) can still land a single real recheck
-                                // below the threshold — a physically dirty/fogged lens
-                                // (the thing this is actually meant to catch) stays
-                                // obstructed on every recheck, so requiring 2 CONSECUTIVE
-                                // real (non-cached) failures before blocking filters out
-                                // the one-off case without giving up on the real one.
-                                lensObstructedStreakRef.current = lensCheckResult.ok ? 0 : lensObstructedStreakRef.current + 1;
-                                lensObstruction = lensObstructedStreakRef.current >= 2 ? lensCheckResult : { ok: true, reason: null };
-                                cachedLensResultRef.current = lensObstruction;
-                                // Diagnostics readout only — setState bails out for free when
-                                // the value hasn't actually changed (same object reference).
-                                setSensorDiagnostics((prev) => (prev.lensClear === lensObstruction.ok ? prev : { ...prev, lensClear: lensObstruction.ok }));
-                            } else {
-                                lensObstruction = cachedLensResultRef.current;
-                            }
                         } catch (_err) {
                             // getImageData can throw on a tainted canvas in some browsers — skip the check, don't crash the loop.
                         }
@@ -1340,7 +1295,7 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                     const framing = checkFraming(liveDet.box, imageWidth, imageHeight);
                     const singleFace = checkSingleFace(liveDet.faceCount ?? 1, liveDet.isAmbiguous);
                     const occlusion = checkOcclusion(liveDet.detection?.score);
-                    const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !lensObstruction.ok ? lensObstruction : !occlusion.ok ? occlusion : null;
+                    const qualityIssue = !singleFace.ok ? singleFace : !framing.ok ? framing : !brightness.ok ? brightness : !occlusion.ok ? occlusion : null;
 
                     // 🟩 BUG FIX: closing your eyes mid-blink is itself a
                     // transient partial-occlusion pattern -- the detector's
@@ -1373,7 +1328,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                         singleFace: singleFace.ok,
                         framing: framing.ok,
                         brightness: brightness.ok,
-                        lensObstruction: lensObstruction.ok,
                         occlusion: occlusion.ok || qualityIssueTolerated
                     }));
 
@@ -2754,7 +2708,6 @@ const AttendanceView = ({ userProfile, attendance = [], allUsers = [], fetchAtte
                                         noseMotionTrackerRef.current.reset();
                                         prevNoseBoxForMotionRef.current = null;
                                         microMotionTrackerRef.current.reset();
-                                        lensObstructedStreakRef.current = 0;
                                         setIsClockingOut(true);
                                     }}
                                     disabled={isLoading || !isCameraReady || isTestScanning}
